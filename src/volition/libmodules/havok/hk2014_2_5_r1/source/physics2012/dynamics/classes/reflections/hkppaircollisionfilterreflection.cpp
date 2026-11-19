@@ -51,7 +51,7 @@ static void cleanupLoadedObjecthkpPairCollisionFilterMapPairFilterKeyOverrideTyp
 {
     static_cast<hkpPairCollisionFilter::MapPairFilterKeyOverrideType*>(p)->~MapPairFilterKeyOverrideType();
 }
-static_assert(sizeof(hkpPairCollisionFilter::MapPairFilterKeyOverrideType) == 12, "hkpPairCollisionFilter::MapPairFilterKeyOverrideType size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpPairCollisionFilter::MapPairFilterKeyOverrideType) == 12, "hkpPairCollisionFilter::MapPairFilterKeyOverrideType size");
 extern const hkTypeInfo hkpPairCollisionFilterMapPairFilterKeyOverrideTypeTypeInfo;
 const hkTypeInfo hkpPairCollisionFilterMapPairFilterKeyOverrideTypeTypeInfo(
     "hkpPairCollisionFilterMapPairFilterKeyOverrideType",
@@ -116,7 +116,7 @@ static const void* getVtablehkpPairCollisionFilter()
     ::new (u.buf) hkpPairCollisionFilter(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpPairCollisionFilter) == 64, "hkpPairCollisionFilter size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpPairCollisionFilter) == 64, "hkpPairCollisionFilter size");
 extern const hkTypeInfo hkpPairCollisionFilterTypeInfo;
 const hkTypeInfo hkpPairCollisionFilterTypeInfo(
     "hkpPairCollisionFilter",

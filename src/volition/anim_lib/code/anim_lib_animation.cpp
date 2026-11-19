@@ -739,7 +739,7 @@ float anim_animation::find_animation_morph_weight(int morph_index, int current_t
     afc_morph_key* keys = (afc_morph_key*)morph->data;
     void* times = (void*)((const char*)morph + 6 + num_keys);
     if (time_as_shorts) {
-        times = (void*)(((unsigned int)times + 1) & ~1u);
+        times = (void*)(((uintptr_t)times + 1) & ~(uintptr_t)1);
     }
     if (num_keys == 0) {
         return 1.0f;

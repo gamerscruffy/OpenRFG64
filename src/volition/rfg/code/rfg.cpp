@@ -28,6 +28,7 @@
 //   preload pools.
 // - localized_packfile_init returns false (no packfile added) for an audio language outside the table.
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGSTRA
 #include "volition/rfg/code/rfg.h"
 
 #include "keen/base/language.hpp"
@@ -913,8 +914,10 @@ void rfg_init_stage_2_done_2()
 }
 
 // 0x005D2500 (:5273)
+void openrfg_heartbeat();
 bool rfg_do_frame()
 {
+    openrfg_heartbeat();
     // While the window is in the background the controller vibration is off.
     static bool Lost_focus; // 0x01D651F1
     static bool Vibe_state; // 0x01D651F0
@@ -1828,7 +1831,12 @@ static void boot_stage_1_pools()
     Cloth_sim_mempool.init(mempool_init_alloc(0x19000), 0x19000, "cloth sim", 4, 8);
     Stream_cloth_sim_preload_allocator.init(&Cloth_sim_mempool);
     Cloth_sim_runtime_mempool.init(mempool_init_alloc(0x34800), 0x34800, 0x400, "cloth sim runtime", 4, 0);
+    #ifdef OPENRFG_X64
+    // X64: Havok objects are ~2x bigger with 64-bit pointers; the 75 MB pool ran out (allocationFailure hang)
+    Havok_mempool.init(mempool_init_alloc(0x20000000), 0x20000000, "Havok", 4, 8);
+#else
     Havok_mempool.init(mempool_init_alloc(0x4B00000), 0x4B00000, "Havok", 4, 8);
+#endif
     Script_mempool.init(mempool_init_alloc(0x64000), 0x64000, "Script mempool", 4, 8);
     Remote_file_cache.init(mempool_init_alloc(0x10000), 0x10000, "Remote file cache", 4, 8);
     // The level memory manager over memory system block 6: tiny buckets of 16 byte pages up to 4 KB and 1 KB pages up
@@ -1844,7 +1852,12 @@ static void boot_stage_1_pools()
     tiny_buckets[1].largest_alloc = 0x40000;
     tiny_buckets[1].hash_pool = &Level_memmgr_header_pool;
     tiny_buckets[1].num_hash_entries = 0x800;
+#ifdef OPENRFG_X64
+    // 64-bit hash entries/pointers are larger than the 32-bit ones the 0x95010 size was made for.
+    Level_memmgr_header_pool.init(mempool_init_alloc(0x95010 * 3), 0x95010 * 3, "Level memmgr headers", 4, 8);
+#else
     Level_memmgr_header_pool.init(mempool_init_alloc(0x95010), 0x95010, "Level memmgr headers", 4, 8);
+#endif
     Level_memmgr.init(s_levelMemoryBlock.pStart, (unsigned int)s_levelMemoryBlock.size, 2, tiny_buckets, Level_memmgr_header_pool, 0x800, Level_memmgr_header_pool, 0xC00);
     Stream_world_allocator.init(&Level_memmgr, &Level_memmgr);
     RFG_scratch_pool.init(mempool_init_alloc(0x130000), 0x130000, "thread scratch space", 4, 8);
@@ -1883,7 +1896,7 @@ static void boot_stage_1_pools()
     int small_weapon_slots[3] = {0x800000, 0, 1};
     Stream_small_weapon_allocator.init(mempool_init_alloc_aligned, 0x800, vram_mempool_init_alloc_aligned, 0x800, small_weapon_slots, 1, "small weapon slots");
     int vehicle_slots[3] = {0x4400000, 0, 7};
-    Stream_vehicle_allocator.init(mempool_init_alloc_aligned, 0x800, vram_mempool_init_alloc_aligned, 0x800, vehicle_slots, 1, "Vehicle slots");
+    { bool vok_ = Stream_vehicle_allocator.init(mempool_init_alloc_aligned, 0x800, vram_mempool_init_alloc_aligned, 0x800, vehicle_slots, 1, "Vehicle slots"); GAME_TRACE("stralloc", "vehicle allocator init ok=%d", (int)vok_); } // DBGSTRA
     // The audio slots, both halves from the audio bank allocator (16 byte aligned CPU half, no GPU alignment).
     int audio_slots[3] = {0x300000, 0, 7};
     Stream_audio_slot_allocator.init(audio_mempool_init_alloc_aligned, 0x10, audio_mempool_init_alloc_aligned, 0, audio_slots, 1, "audio slots");

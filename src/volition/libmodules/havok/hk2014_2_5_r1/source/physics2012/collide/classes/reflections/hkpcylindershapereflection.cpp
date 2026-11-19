@@ -99,7 +99,7 @@ static const void* getVtablehkpCylinderShape()
     ::new (u.buf) hkpCylinderShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpCylinderShape) == 96, "hkpCylinderShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpCylinderShape) == 96, "hkpCylinderShape size");
 extern const hkTypeInfo hkpCylinderShapeTypeInfo;
 const hkTypeInfo hkpCylinderShapeTypeInfo(
     "hkpCylinderShape",

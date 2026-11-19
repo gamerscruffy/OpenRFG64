@@ -18,7 +18,7 @@ set(MAIN_SOURCES
     ${OPENRFG_STUBS_RENDER}
     ${OPENRFG_STUBS_COMMON})
 
-add_executable(OpenRFG WIN32 main_hooks.cpp main_game_trace.cpp main_ui_command_line.cpp ${MAIN_SOURCES})
+add_executable(OpenRFG WIN32 crash_early.cpp main_hooks.cpp main_game_trace.cpp main_ui_command_line.cpp ${MAIN_SOURCES})
 # The Windows resources of rfg.exe (window icon 101, the framework's message texts). They belong to the executable:
 # the program loads them from its own module, and a static library would not carry them into the link.
 target_sources(OpenRFG PRIVATE
@@ -43,4 +43,7 @@ target_link_libraries(OpenRFG PRIVATE
     rfg_nvidia_highlights)
 target_compile_definitions(OpenRFG PRIVATE OPENRFG_MULTI_CORE)
 # rfg.exe is large address aware (its memory layout takes about 2.3 GB, orig_main.md 2.8).
-target_link_options(OpenRFG PRIVATE /LARGEADDRESSAWARE)
+if(NOT OPENRFG_X64)
+    target_link_options(OpenRFG PRIVATE /LARGEADDRESSAWARE)
+endif()
+target_link_options(OpenRFG PRIVATE /MAP) # symbol map so crash addresses can be named

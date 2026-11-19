@@ -10,9 +10,9 @@
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/math/hkmath.h"
 
-static_assert(sizeof(hkpBallAndSocketConstraintData) == 0x60, "hkpBallAndSocketConstraintData");
-static_assert(sizeof(hkpBallAndSocketConstraintData::Atoms) == 0x50, "hkpBallAndSocketConstraintData::Atoms");
-static_assert(offsetof(hkpBallAndSocketConstraintData::Atoms, m_ballSocket) == 0x40, "Atoms::m_ballSocket");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBallAndSocketConstraintData) == 0x60, "hkpBallAndSocketConstraintData");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBallAndSocketConstraintData::Atoms) == 0x50, "hkpBallAndSocketConstraintData::Atoms");
+OPENRFG_SIZE_ASSERT(offsetof(hkpBallAndSocketConstraintData::Atoms, m_ballSocket) == 0x40, "Atoms::m_ballSocket");
 
 // 0x00D6F2E0: zero pivots, the old ball socket, no stabilization
 hkpBallAndSocketConstraintData::hkpBallAndSocketConstraintData()

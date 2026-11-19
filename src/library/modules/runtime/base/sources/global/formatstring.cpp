@@ -34,7 +34,11 @@ namespace keen
     static T formatStringNextArgument(char*& arguments)
     {
         const T value = *(const T*)arguments;
+#ifdef OPENRFG_X64
+        arguments += 8u; // x64 varargs: every argument takes one 8-byte slot
+#else
         arguments += (sizeof(T) + 3u) & ~3u;
+#endif
         return value;
     }
 
@@ -196,7 +200,7 @@ namespace keen
                 // Magic numbers: a pointer is 10 characters, zero filled ("0x" and 8 digits).
                 options.outputWidth = 10;
                 options.fillChar = '0';
-                writer.outputInteger(options, formatStringNextArgument<uint32>(arguments), 16u, '\0', "0x");
+                writer.outputInteger(options, (uint64)formatStringNextArgument<uintptr_t>(arguments), 16u, '\0', "0x");
                 break;
             case 's':
                 writer.outputString(formatStringNextArgument<const char*>(arguments), options.quoteString);
@@ -220,16 +224,16 @@ namespace keen
                 {
                 case 'u':
                     ++pFormat;
-                    writer.outputInteger(options, (uint64)formatStringNextArgument<uint32>(arguments), 10u, '\0', "");
+                    writer.outputInteger(options, (uint64)formatStringNextArgument<size_t>(arguments), 10u, '\0', "");
                     break;
                 case 'x':
                     ++pFormat;
-                    writer.outputInteger(options, (uint64)formatStringNextArgument<uint32>(arguments), 16u, '\0', alternateForm ? "0x" : "");
+                    writer.outputInteger(options, (uint64)formatStringNextArgument<size_t>(arguments), 16u, '\0', alternateForm ? "0x" : "");
                     break;
                 case 'X':
                     ++pFormat;
                     options.bigHexDigits = true;
-                    writer.outputInteger(options, (uint64)formatStringNextArgument<uint32>(arguments), 16u, '\0', alternateForm ? "0X" : "");
+                    writer.outputInteger(options, (uint64)formatStringNextArgument<size_t>(arguments), 16u, '\0', alternateForm ? "0X" : "");
                     break;
                 default:
                     debug::nativePrintArgs("invalid input format\n");

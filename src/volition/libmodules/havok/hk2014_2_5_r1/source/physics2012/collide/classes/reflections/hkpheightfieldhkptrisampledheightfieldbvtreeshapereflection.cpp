@@ -72,7 +72,7 @@ static const void* getVtablehkpTriSampledHeightFieldBvTreeShape()
     ::new (u.buf) hkpTriSampledHeightFieldBvTreeShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpTriSampledHeightFieldBvTreeShape) == 48, "hkpTriSampledHeightFieldBvTreeShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpTriSampledHeightFieldBvTreeShape) == 48, "hkpTriSampledHeightFieldBvTreeShape size");
 extern const hkTypeInfo hkpTriSampledHeightFieldBvTreeShapeTypeInfo;
 const hkTypeInfo hkpTriSampledHeightFieldBvTreeShapeTypeInfo(
     "hkpTriSampledHeightFieldBvTreeShape",

@@ -17,8 +17,14 @@ typedef int hkInt32;
 typedef unsigned int hkUint32;
 typedef long long hkInt64;
 typedef unsigned long long hkUint64;
+#ifdef OPENRFG_X64
+// Pointer-sized on 64-bit (Windows 'long' is only 32 bits).
+typedef unsigned long long hkUlong;
+typedef long long hkLong;
+#else
 typedef unsigned long hkUlong;
 typedef long hkLong;
+#endif
 typedef unsigned int hkBool32;
 typedef hkUint16 hkFloat16Storage;
 typedef float hkTime;

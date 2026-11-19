@@ -5,7 +5,9 @@
 // free ones at low priority, and a mission replaces all reservations with its own set. A vehicle family shares one loaded
 // variant. object_spawn_do_spawn and object_spawn_vehicle hand a request over to spawn placement once its resources are in.
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGAMBV
 #include "volition/rfg/code/spawn/spawn_resource_manager.h"
+#include "volition/stream2/code/stream2_container.h" // DBGAMBV
 
 #include "volition/rfg/code/gameplay/activities/activity.h"
 #include "volition/rfg/code/gameplay/gameflow/squad_progression.h"
@@ -372,6 +374,7 @@ static void allocate_ambient_spawn_slots_vehicle()
             candidates.add(v_info);
         }
     }
+    { static int d4_ = 0; if ((d4_++ % 200) == 0) { GAME_TRACE("ambveh", "alloc veh slots: group=%d candidates=%d free=%d", group->v_info_list.size(), candidates.size(), Vehicle_records_list.count_free_slots()); } } // DBGAMBV
     if (candidates.size() < 1)
     {
         return;
@@ -888,6 +891,8 @@ static void free_unused_slots(resource_slot_list& list, base_array<resource_slot
         resource_slot_record* record = copy[i];
         if (!record->is_reserved() && !record_on_list<T>(record, obj_info_list) && record->get_object_count() < 1)
         {
+            // OpenRFG: vehicle files are queued behind many human files; freeing a vehicle slot while it still waits restarts it forever.
+            if (record->get_obj_type() == OT_VEHICLE && stream2_get_status(record->get_srid()) == ST_LOADING) { continue; }
             list.destroy_slot(record);
         }
     }
@@ -1513,8 +1518,11 @@ bool resource_slot_list::allocate_slot(resource_slot_record* record)
     }
     if (other_variant_loaded(record) || !record->stream_request())
     {
+        { static int d5_ = 0; if (obj_type == record->get_obj_type() && (d5_++ % 50) == 0) { GAME_TRACE("ambveh", "allocate_slot FAIL srid=%u otherVariant=%d streamReq=%d status=%d", record->get_srid(), (int)other_variant_loaded(record), (int)record->stream_requested(), (int)stream2_get_status(record->get_srid())); } } // DBGAMBV
         return false;
     }
+    { static int d6_ = 0; if ((d6_++ % 20) == 0) { GAME_TRACE("ambveh", "allocate_slot OK srid=%u status=%d listsize=%d", record->get_srid(), (int)stream2_get_status(record->get_srid()), streamed_records_list.size()); } }
+    { static int d7_ = 0; if (obj_type == record->get_obj_type() && (d7_++ % 6) == 0) { stream2_container* sc_ = stream2_sc_ptr(record->get_srid()); GAME_TRACE("ambveh", "slot srid=%u flags=0x%x ref=%d err=%s", record->get_srid(), sc_ ? (unsigned)sc_->flags : 0u, sc_ ? (int)sc_->get_ref_count() : -1, (sc_ && sc_->last_error) ? sc_->last_error->error_str : "-"); } } // DBGAMBV
     record->set_allocated_flag();
     streamed_records_list.add_unique(record);
     return true;

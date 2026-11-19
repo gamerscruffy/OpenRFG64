@@ -769,11 +769,11 @@ static void ui_process_save_data(float dtime)
     {
         // Original: the session is read without a null check. Private members of LocalGameSession, at their offsets:
         // m_pSaveDataHandler (0x04), m_userData.m_pData (0x18); the user's state (0x110) and save profile (0x11C).
-        unsigned char* user = *(unsigned char**)((unsigned char*)session + 0x18);
-        if (*(int*)(user + 0x110) == 3) // LocalUserState_Savedata
+        const unit4::LocalGameSession::LocalUserData* user = session->uiGetFirstUser();
+        if (user->state == unit4::LocalGameSession::LocalUserState_Savedata) // LocalUserState_Savedata
         {
-            keen::SaveDataHandler* handler = *(keen::SaveDataHandler**)((unsigned char*)session + 0x04);
-            if (!handler->isSaveEnabled(*(unsigned int*)(user + 0x11C)))
+            keen::SaveDataHandler* handler = session->uiGetSaveDataHandler();
+            if (!handler->isSaveEnabled(user->saveProfileIndex))
             {
                 shown = false;
             }
@@ -814,11 +814,11 @@ void ui_show_save_icon(save_icon_type icon_type)
 {
     unit4::LocalGameSession* session = rfg_get_local_game_session();
     // LocalGameSession's private m_userData.m_pData (0x18) and m_pSaveDataHandler (0x04), as above.
-    unsigned char* user = *(unsigned char**)((unsigned char*)session + 0x18);
-    if (*(int*)(user + 0x110) == 3) // LocalUserState_Savedata
+    const unit4::LocalGameSession::LocalUserData* user = session->uiGetFirstUser();
+    if (user->state == unit4::LocalGameSession::LocalUserState_Savedata) // LocalUserState_Savedata
     {
-        keen::SaveDataHandler* handler = *(keen::SaveDataHandler**)((unsigned char*)session + 0x04);
-        if (!handler->isSaveEnabled(*(unsigned int*)(user + 0x11C)))
+        keen::SaveDataHandler* handler = session->uiGetSaveDataHandler();
+        if (!handler->isSaveEnabled(user->saveProfileIndex))
         {
             Autosave_icon_type = icon_type;
             return;
@@ -1424,7 +1424,7 @@ int ui_add_msgbox(msgbox_type type, const char* title, const char* description, 
             if (item != nullptr)
             {
                 // m_updated (protected; 0x42C) as the inlined set writes it.
-                *(bool*)((unsigned char*)item + 0x42C) = true;
+                item->set_updated();
             }
         }
     }

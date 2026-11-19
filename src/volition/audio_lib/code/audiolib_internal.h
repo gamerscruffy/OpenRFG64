@@ -48,7 +48,7 @@ struct audiolib_multi_sound_instance
     vector pos; // 0x08
     bool in_use; // 0x14
 };
-static_assert(sizeof(audiolib_multi_sound_instance) == 0x18, "audiolib_multi_sound_instance");
+OPENRFG_SIZE_ASSERT(sizeof(audiolib_multi_sound_instance) == 0x18, "audiolib_multi_sound_instance");
 
 // size 0x184
 struct audiolib_multi_sound_info_struct
@@ -61,7 +61,7 @@ struct audiolib_multi_sound_info_struct
     bool in_use; // 0x00
     audiolib_multi_sound_instance data[16]; // 0x04
 };
-static_assert(sizeof(audiolib_multi_sound_info_struct) == 0x184, "audiolib_multi_sound_info_struct");
+OPENRFG_SIZE_ASSERT(sizeof(audiolib_multi_sound_info_struct) == 0x184, "audiolib_multi_sound_info_struct");
 
 // File-local to audiolib_music.cpp in rfg.pdb; here because audiolib.cpp holds Audiolib_Music (unity TU order).
 // size 0x1C
@@ -77,7 +77,7 @@ struct audiolib_interactive_music_data
     int fade_time; // 0x14
     float fade_volume; // 0x18
 };
-static_assert(sizeof(audiolib_interactive_music_data) == 0x1C, "audiolib_interactive_music_data");
+OPENRFG_SIZE_ASSERT(sizeof(audiolib_interactive_music_data) == 0x1C, "audiolib_interactive_music_data");
 
 // size 0x74
 struct audiolib_stream_info

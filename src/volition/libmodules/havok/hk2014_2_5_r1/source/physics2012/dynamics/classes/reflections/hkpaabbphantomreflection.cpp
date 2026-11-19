@@ -71,7 +71,7 @@ static const void* getVtablehkpAabbPhantom()
     ::new (u.buf) hkpAabbPhantom(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpAabbPhantom) == 208, "hkpAabbPhantom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpAabbPhantom) == 208, "hkpAabbPhantom size");
 extern const hkTypeInfo hkpAabbPhantomTypeInfo;
 const hkTypeInfo hkpAabbPhantomTypeInfo(
     "hkpAabbPhantom",

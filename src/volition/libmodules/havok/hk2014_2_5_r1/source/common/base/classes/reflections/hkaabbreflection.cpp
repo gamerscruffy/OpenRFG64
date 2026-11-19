@@ -48,7 +48,7 @@ static void cleanupLoadedObjecthkAabb(void* p)
 {
     static_cast<hkAabb*>(p)->~hkAabb();
 }
-static_assert(sizeof(hkAabb) == 32, "hkAabb size");
+OPENRFG_SIZE_ASSERT(sizeof(hkAabb) == 32, "hkAabb size");
 extern const hkTypeInfo hkAabbTypeInfo;
 const hkTypeInfo hkAabbTypeInfo(
     "hkAabb",
@@ -98,7 +98,7 @@ static void cleanupLoadedObjecthkAabbUint32(void* p)
 {
     static_cast<hkAabbUint32*>(p)->~hkAabbUint32();
 }
-static_assert(sizeof(hkAabbUint32) == 32, "hkAabbUint32 size");
+OPENRFG_SIZE_ASSERT(sizeof(hkAabbUint32) == 32, "hkAabbUint32 size");
 extern const hkTypeInfo hkAabbUint32TypeInfo;
 const hkTypeInfo hkAabbUint32TypeInfo(
     "hkAabbUint32",

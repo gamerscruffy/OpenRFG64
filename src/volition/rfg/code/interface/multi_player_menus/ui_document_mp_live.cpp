@@ -54,7 +54,7 @@ struct menu_option_info_live
     bool m_enabled; // 0x08
     int m_index; // 0x0C
 };
-static_assert(sizeof(menu_option_info_live) == 0x10, "menu_option_info_live");
+OPENRFG_SIZE_ASSERT(sizeof(menu_option_info_live) == 0x10, "menu_option_info_live");
 
 enum mp_menu_exit_actions_live
 {
@@ -93,7 +93,7 @@ struct mp_live_shell_info
     unsigned int control_id; // 0x6C
     int input_id; // 0x70
 };
-static_assert(sizeof(mp_live_shell_info) == 0x74, "mp_live_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_live_shell_info) == 0x74, "mp_live_shell_info");
 
 // ---- file-static globals
 static void live_process_data_item_hint_text(vint_data_item* vdi);

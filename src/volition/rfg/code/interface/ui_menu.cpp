@@ -44,7 +44,7 @@ struct alloc_info
     farray<ui_menu_item_incr*,48> menu_item_incr_free_vector; // 0x160
     farray<document_info*,8> menu_document_info_free_vector; // 0x230
 };
-static_assert(sizeof(alloc_info) == 0x260, "alloc_info");
+OPENRFG_SIZE_ASSERT(sizeof(alloc_info) == 0x260, "alloc_info");
 
 // ---- file-static globals
 int Doc_handle_main = -1; // 0x016631AC
@@ -121,7 +121,7 @@ static T* free_vector_take(base_array<T*>& vector)
 // The data item's m_updated (protected; 0x42C) as rfg.exe's inlined code writes it.
 static void data_item_set_updated(vint_data_item* item)
 {
-    *(bool*)((unsigned char*)item + 0x42C) = true;
+    item->set_updated();
 }
 
 // ---- hint_info, document_info
@@ -1557,6 +1557,42 @@ void ui_menu::process(float, bool)
         adjust_selected_item();
     }
     process_data_items();
+    {
+        void openrfg_log(const char*);
+        static int calls = 0;
+        calls++;
+        if (calls % 200 == 1 && calls < 1500)
+        {
+            char m[] = "DBGMENU doc=? uimen=? multi=? awaitFade=? awaitSel=? items=?";
+            m[12] = m_doc_info != nullptr ? '1' : '0';
+            m[20] = Input_enabled_uimen ? '1' : '0';
+            m[28] = multi_core_platform_ui_is_active() ? '1' : '0';
+            m[40] = m_awaiting_tween_fade_in_end ? '1' : '0';
+            m[51] = m_awaiting_tween_on_select_end ? '1' : '0';
+            m[59] = (char)('0' + (m_num_items > 9 ? 9 : m_num_items));
+            openrfg_log(m);
+        }
+    }
+#ifdef OPENRFG_X64
+    // WORKAROUND (x64): the fade-in end signal of the menu animation can arrive before the menu is re-armed and then
+    // never comes again, which leaves the menu without input. After about 3 s of waiting it is released.
+    {
+        static int waited = 0;
+        if (m_awaiting_tween_fade_in_end && m_num_items > 1)
+        {
+            if (++waited > 180)
+            {
+                waited = 0;
+                m_awaiting_tween_fade_in_end = false;
+                force_data_item_update();
+            }
+        }
+        else
+        {
+            waited = 0;
+        }
+    }
+#endif
     if (Input_enabled_uimen)
     {
         process_input();
@@ -1824,7 +1860,7 @@ static ui_menu_item_incr* new_incr_item(ui_menu* menu, menu_incr_type type, cons
     vmin.m_int = min;
     vmax.m_int = max;
     vincr.m_int = incr;
-    *(menu_incr_type*)((unsigned char*)item + 0xA0) = type; // m_incr_type (protected)
+    item->set_incr_type(type);
     item->set_info(vmin, vmax, vincr);
     return item;
 }
@@ -2183,7 +2219,7 @@ void ui_menu::process_mouse_click(int index, bool leftArrow, bool rightArrow)
     if (type != MI_BOOL && (type != MI_CHAR_LIST || ((ui_menu_item_char_list*)item)->get_num_chars() != 2))
     {
         // Original: the slider test reads the item's 0xA0 field for every type (a char list's selection callback).
-        if (*(int*)((unsigned char*)item + 0xA0) != MIT_SLIDER)
+        if (!(type == MI_INCR && ((ui_menu_item_incr*)item)->get_incr_type() == MIT_SLIDER))
         {
             audiolib_cue_play(Audio_info[leftArrow ? MENU_SOUND_SCROLL_LEFT : MENU_SOUND_SCROLL_RIGHT], nullptr, nullptr);
             return;
@@ -2397,7 +2433,7 @@ void ui_menu_set_tween_on_select_end(int menu_handle)
     ui_menu* menu = find_menu(menu_handle);
     if (menu != nullptr && !menu->get_awaiting_on_select_end())
     {
-        *(bool*)((unsigned char*)menu + 0x06) = true; // m_awaiting_tween_on_select_end (private)
+        menu->start_awaiting_on_select_end();
     }
 }
 
@@ -2424,6 +2460,10 @@ void ui_menu_tween_on_select_end(int vint_doc_handle)
 void ui_menu_tween_fade_in_end(int vint_doc_handle)
 {
     const int doc_handle = ui_get_doc_handle_from_vint_doc_handle(vint_doc_handle);
+    {
+        void openrfg_log(const char*);
+        openrfg_log(doc_handle == -1 ? "DBGFADE doc_handle lookup FAILED (-1)" : "DBGFADE doc_handle found");
+    }
     for (int i = Menus.size() - 1; i > -1; i--)
     {
         ui_menu* menu = Menus[i];

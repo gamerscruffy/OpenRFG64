@@ -173,13 +173,13 @@ mover_human_special_collision_event::mover_human_special_collision_event()
 // ---- MyCharacterListener
 
 // 0x00814C20 (:154)
-void* MyCharacterListener::operator new(unsigned int nbytes)
+void* MyCharacterListener::operator new(size_t nbytes)
 {
     return hkMemoryRouter::getInstance().heap().blockAlloc(nbytes);
 }
 
 // 0x00814DB0 (:154): the object's own memory size when it has one
-void MyCharacterListener::operator delete(void* p, unsigned int nbytes)
+void MyCharacterListener::operator delete(void* p, size_t nbytes)
 {
     const unsigned short memSize = (unsigned short)((hkReferencedObject*)p)->getMemorySizeAndFlags();
     if (memSize != 0xFFFF)

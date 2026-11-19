@@ -9,6 +9,47 @@
 
 #include "volition/rfg/code/os/dlmalloc/dmalloc.h"
 
+#ifdef OPENRFG_X64
+// 64-bit build: Doug Lea's malloc below is configured for a fixed 32-bit heap, so the public API is served by the
+// CRT aligned allocator instead (heap/level hooks become no-ops). The original implementation is in the #else part.
+#include <malloc.h>
+#include <stdlib.h>
+#include <string.h>
+
+void* dlmalloc(size_t bytes) { return _aligned_malloc(bytes != 0 ? bytes : 1, 64); }
+void dlfree(void* m) { if (m != nullptr) { _aligned_free(m); } }
+void* dlrealloc(void* m, size_t bytes)
+{
+    if (m == nullptr) { return dlmalloc(bytes); }
+    if (bytes == 0) { dlfree(m); return nullptr; }
+    return _aligned_realloc(m, bytes, 64);
+}
+void* dlmemalign(size_t alignment, size_t bytes) { return _aligned_malloc(bytes != 0 ? bytes : 1, alignment < 64 ? 64 : alignment); }
+void* dlvalloc(size_t bytes) { return dlmemalign(4096, bytes); }
+void* dlpvalloc(size_t bytes) { return dlmemalign(4096, (bytes + 4095) & ~(size_t)4095); }
+void* dlcalloc(size_t n, size_t elem_size)
+{
+    void* p = dlmalloc(n * elem_size);
+    if (p != nullptr) { memset(p, 0, n * elem_size); }
+    return p;
+}
+void** dlindependent_calloc(size_t, size_t, void**) { return nullptr; }
+void** dlindependent_comalloc(size_t, size_t*, void**) { return nullptr; }
+void dlcfree(void* m) { dlfree(m); }
+int dlmalloc_trim(size_t) { return 0; }
+size_t dlmalloc_usable_size(void* m) { return m != nullptr ? _aligned_msize(m, 64, 0) : 0; }
+void dlmalloc_stats() {}
+mallinfo dlmallinfo() { mallinfo mi; memset(&mi, 0, sizeof(mi)); return mi; }
+int dlmallopt(int, int) { return 1; }
+void dl_system_init(void*, int) {}
+void dl_level_init() {}
+void dl_level_deinit() {}
+int dl_get_allocated_bytes() { return 0; }
+bool dl_get_next_free_chunk(free_chunk_out*, free_chunk_in*) { return false; }
+int dl_get_heap_size() { return 0; }
+int dl_get_size(void* p) { return (int)dlmalloc_usable_size(p); }
+#else
+
 #include "volition/rfg/code/rfg.h"
 #include "volition/vlib/code/memory/split_memmgr.h"
 #include "volition/vlib/code/os/cs_wrapper.h"
@@ -5812,3 +5853,4 @@ int dl_get_size(void* p)
     }
     return 0;
 }
+#endif // OPENRFG_X64

@@ -21,7 +21,7 @@ namespace keen
         const void* pData; // 0x20
         uint32 dataSize; // 0x24
     };
-    static_assert(sizeof(SoundFileInitializationData) == 0x28, "SoundFileInitializationData size");
+    OPENRFG_SIZE_ASSERT(sizeof(SoundFileInitializationData) == 0x28, "SoundFileInitializationData size");
 
     // 0x00C32F20 (:10)
     SoundFileFactory::SoundFileFactory()

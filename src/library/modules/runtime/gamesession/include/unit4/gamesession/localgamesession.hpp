@@ -136,6 +136,9 @@ namespace unit4
         bool hasLocalPlayerSkippedSignIn(const keen::LocalPlayerIdStructureType* playerId); // 0x009702D0 (:213)
         bool isSavingDisabledForUser(const keen::LocalPlayerIdStructureType* playerId); // 0x007CAF90 (:222)
         const keen::LocalPlayerIdStructureType* getFirstSignedInUser(); // 0x00970300 (:231)
+        // Accessors for the UI (replace raw 32-bit offset reads of the private members).
+        const LocalUserData* uiGetFirstUser() const { return m_userData.getStart(); }
+        keen::SaveDataHandler* uiGetSaveDataHandler() const { return m_pSaveDataHandler; }
 
     protected:
         void fillInteractionUserNameParam(kaiko::GameSessionInteractionParameter& param, const char* pUserName) const; // 0x00C11010 (:246)

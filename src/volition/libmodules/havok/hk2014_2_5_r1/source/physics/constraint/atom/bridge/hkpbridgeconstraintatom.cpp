@@ -5,7 +5,7 @@
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics/constraint/atom/bridge/hkpbridgeconstraintatom.h"
 
-static_assert(sizeof(hkpBridgeConstraintAtom) == 0x10, "hkpBridgeConstraintAtom");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBridgeConstraintAtom) == 0x10, "hkpBridgeConstraintAtom");
 
 // 0x00D71090: the data's buildJacobian
 static void hkBridgeConstraintAtom_callData(hkpConstraintData* m_constraintData, const hkpConstraintQueryIn& in, hkpConstraintQueryOut& out)

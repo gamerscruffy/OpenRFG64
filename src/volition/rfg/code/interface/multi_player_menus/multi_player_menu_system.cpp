@@ -85,7 +85,7 @@ struct mp_shell_data_item_active_info
 {
     int handle; // 0x00
 };
-static_assert(sizeof(mp_shell_data_item_active_info) == 0x4, "mp_shell_data_item_active_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_shell_data_item_active_info) == 0x4, "mp_shell_data_item_active_info");
 
 // size 0x8
 struct mp_shell_data_item_setup_info
@@ -93,7 +93,7 @@ struct mp_shell_data_item_setup_info
     const char* name; // 0x00
     bool can_hide; // 0x04
 };
-static_assert(sizeof(mp_shell_data_item_setup_info) == 0x8, "mp_shell_data_item_setup_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_shell_data_item_setup_info) == 0x8, "mp_shell_data_item_setup_info");
 
 // size 0x10
 struct party_up_offer
@@ -102,7 +102,7 @@ struct party_up_offer
     multi_player_uid uid; // 0x00
     timestamp offered_time; // 0x0C
 };
-static_assert(sizeof(party_up_offer) == 0x10, "party_up_offer");
+OPENRFG_SIZE_ASSERT(sizeof(party_up_offer) == 0x10, "party_up_offer");
 
 enum playcard_options
 {

@@ -103,7 +103,7 @@ static const void* getVtablehkpSimulation()
     ::new (u.buf) hkpSimulation(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpSimulation) == 44, "hkpSimulation size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSimulation) == 44, "hkpSimulation size");
 extern const hkTypeInfo hkpSimulationTypeInfo;
 const hkTypeInfo hkpSimulationTypeInfo(
     "hkpSimulation",

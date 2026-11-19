@@ -53,7 +53,7 @@ static void cleanupLoadedObjecthkpCdBody(void* p)
 {
     static_cast<hkpCdBody*>(p)->~hkpCdBody();
 }
-static_assert(sizeof(hkpCdBody) == 16, "hkpCdBody size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpCdBody) == 16, "hkpCdBody size");
 extern const hkTypeInfo hkpCdBodyTypeInfo;
 const hkTypeInfo hkpCdBodyTypeInfo(
     "hkpCdBody",

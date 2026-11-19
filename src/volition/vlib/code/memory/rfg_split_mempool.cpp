@@ -61,6 +61,13 @@ void rfg_split_mempool::init_rfg_split_mempool(const char* pool_name, const void
 {
     char gpu_name[32];
     make_gpu_pool_name(gpu_name, pool_name);
+    {
+        void openrfg_log(const char*);
+        char m[64]; int n=0; const char* t="DBGINIT "; while(*t) m[n++]=*t++;
+        t=pool_name; while(*t && n<40) m[n++]=*t++;
+        m[n++]=' '; unsigned long long x=(unsigned long long)cpu_mem; for(int d=15;d>=0;d--){ m[n+d]="0123456789ABCDEF"[x&15]; x>>=4;} n+=16; m[n]=0;
+        openrfg_log(m);
+    }
     static_mempool_base::init_static_mempool(cpu_mem, cpu_mem_size, pool_name, cpu_align, mp_flags);
     end_pos = cpu_mem_size;
     if (gpu_mem != nullptr)

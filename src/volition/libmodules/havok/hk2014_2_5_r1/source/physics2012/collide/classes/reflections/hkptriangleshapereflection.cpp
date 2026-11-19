@@ -88,7 +88,7 @@ static const void* getVtablehkpTriangleShape()
     ::new (u.buf) hkpTriangleShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpTriangleShape) == 96, "hkpTriangleShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpTriangleShape) == 96, "hkpTriangleShape size");
 extern const hkTypeInfo hkpTriangleShapeTypeInfo;
 const hkTypeInfo hkpTriangleShapeTypeInfo(
     "hkpTriangleShape",

@@ -68,7 +68,7 @@ static const void* getVtablehkpConvexTranslateShape()
     ::new (u.buf) hkpConvexTranslateShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpConvexTranslateShape) == 48, "hkpConvexTranslateShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpConvexTranslateShape) == 48, "hkpConvexTranslateShape size");
 extern const hkTypeInfo hkpConvexTranslateShapeTypeInfo;
 const hkTypeInfo hkpConvexTranslateShapeTypeInfo(
     "hkpConvexTranslateShape",

@@ -54,7 +54,11 @@ void hkpTypedBroadPhaseDispatcher::removePairs(hkpTypedBroadPhaseHandlePair* del
 {
     for (int i = numDeletedPairs - 1; i >= 0; i--, deletedPairs++)
     {
-        m_broadPhaseListeners[deletedPairs->getElementA()->m_type][deletedPairs->getElementB()->m_type]->removeCollisionPair(*deletedPairs);
+        // OpenRFG: a deleted pair with a missing handle/listener crashed here (read address 4) when entering a safehouse; skip it.
+        if (deletedPairs->getElementA() == nullptr || deletedPairs->getElementB() == nullptr) { continue; }
+        hkpBroadPhaseListener* l_ = m_broadPhaseListeners[deletedPairs->getElementA()->m_type][deletedPairs->getElementB()->m_type];
+        if (l_ == nullptr) { continue; }
+        l_->removeCollisionPair(*deletedPairs);
     }
 }
 

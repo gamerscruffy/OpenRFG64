@@ -67,7 +67,7 @@ static const void* getVtablehkReferencedObject()
     ::new (u.buf) hkReferencedObject(f);
     return u.ptr;
 }
-static_assert(sizeof(hkReferencedObject) == 8, "hkReferencedObject size");
+OPENRFG_SIZE_ASSERT(sizeof(hkReferencedObject) == 8, "hkReferencedObject size");
 extern const hkTypeInfo hkReferencedObjectTypeInfo;
 const hkTypeInfo hkReferencedObjectTypeInfo(
     "hkReferencedObject",

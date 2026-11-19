@@ -17,5 +17,9 @@ public:
     static void setTimersDisabled();
     static unsigned int atomicExchangeAdd(unsigned int* var, int increment); // 0x00CFE310
 
+#ifdef OPENRFG_X64
+    alignas(8) unsigned char m_section[0x28]; /* _RTL_CRITICAL_SECTION, 40 bytes in 64-bit */
+#else
     unsigned char m_section[0x18]; /* _RTL_CRITICAL_SECTION */ // 0x00
+#endif
 };

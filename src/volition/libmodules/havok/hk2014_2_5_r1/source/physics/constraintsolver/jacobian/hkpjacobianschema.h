@@ -107,9 +107,17 @@ namespace hkpJacobianSchemaInfo
     struct End { enum { Sizeof = 16 }; };
     struct Friction1D { enum { Temps = 2, Sizeof = 64 }; };
     struct Friction2D { enum { Temps = 3, Sizeof = 112 }; };
+    #ifdef OPENRFG_X64
+    struct Friction3D { enum { Temps = 4, Sizeof_Ptr4 = 144, Sizeof_Ptr8 = 160, Sizeof = 160 }; };
+#else
     struct Friction3D { enum { Temps = 4, Sizeof_Ptr4 = 144, Sizeof_Ptr8 = 160, Sizeof = 144 }; };
+#endif
     struct Goto { enum { Temps = 0, Sizeof = 16 }; };
+    #ifdef OPENRFG_X64
+    struct Header { enum { Sizeof = 32 }; };
+#else
     struct Header { enum { Sizeof = 16 }; };
+#endif
     struct LinearLimits1D { enum { Temps = 1, Sizeof = 64 }; };
     struct LinearMotor1D { enum { Temps = 2, Sizeof = 80 }; };
     struct NpDeformableAngular3D { enum { Temps = 3, Sizeof = 192 }; };
@@ -120,7 +128,11 @@ namespace hkpJacobianSchemaInfo
     struct PairContact { enum { Temps = 2, Sizeof = 112 }; };
     struct PoweredChain { enum { Sizeof = 32 }; };
     struct Pulley1D { enum { Temps = 1, Sizeof = 64 }; };
+    #ifdef OPENRFG_X64
+    struct RollingFriction2D { enum { Temps = 3, Sizeof_Ptr4 = 80, Sizeof_Ptr8 = 96, Sizeof = 96 }; };
+#else
     struct RollingFriction2D { enum { Temps = 3, Sizeof_Ptr4 = 80, Sizeof_Ptr8 = 96, Sizeof = 80 }; };
+#endif
     struct SetCenterOfMass { enum { Temps = 0, Sizeof = 96 }; };
     struct SetMass { enum { Temps = 0, Sizeof = 32 }; };
     struct ShiftSolverResults { enum { Temps = 0, Sizeof = 16 }; };
@@ -160,6 +172,9 @@ public:
     unsigned short m_bodyBIndex; // 0x06
     hkpSolverResults* m_solverResultInMainMemory; // 0x08
     hkpConstraintInstance* m_constraintInstance; // 0x0C
+#ifdef OPENRFG_X64
+    unsigned char m_pad64[8]; // keeps the schema stream 16-byte aligned (header is 32 bytes on x64)
+#endif
 };
 
 // size 0x30: one non-penetration row
@@ -212,7 +227,9 @@ public:
     float m_invJac01; // 0x60
     float m_maxImpulse; // 0x64
     hkpSolverResults* m_solverResults; // 0x68
+#ifndef OPENRFG_X64
     float m_padding55; // 0x6C
+#endif
 };
 
 // size 0x90
@@ -260,6 +277,9 @@ public:
     hkHalf m_originalRollingFrictionMultiplier; // 0x48
     hkHalf m_padding1; // 0x4A
     unsigned int m_padding2; // 0x4C
+#ifdef OPENRFG_X64
+    unsigned char m_pad64[8]; // rolling friction schema is 96 bytes on x64
+#endif
 };
 
 // size 0x20: replaces the inverse masses of the constraint's two accumulators (mass changer modifier)

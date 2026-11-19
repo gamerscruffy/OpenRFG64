@@ -24,11 +24,11 @@ public:
 
         struct DefaultStruct; // no definition in PDB
 
-        static void* operator new(unsigned int, void*);
-        static void* operator new(unsigned int);
+        static void* operator new(size_t, void*);
+        static void* operator new(size_t);
         static void operator delete(void*, void*);
-        static void operator delete(void*, unsigned int);
-        static void* operator new[](unsigned int, void*);
+        static void operator delete(void*, size_t);
+        static void* operator new[](size_t, void*);
         static void operator delete[](void*, void*);
         static const hkClass& staticClass(); // 0x00812720 (havok_mesh_shapereflection.cpp:47)
 
@@ -45,11 +45,11 @@ public:
 
         struct DefaultStruct; // no definition in PDB
 
-        static void* operator new(unsigned int, void*);
-        static void* operator new(unsigned int);
+        static void* operator new(size_t, void*);
+        static void* operator new(size_t);
         static void operator delete(void*, void*);
-        static void operator delete(void*, unsigned int);
-        static void* operator new[](unsigned int, void*);
+        static void operator delete(void*, size_t);
+        static void* operator new[](size_t, void*);
         static void operator delete[](void*, void*);
         static const hkClass& staticClass(); // 0x00812740 (havok_mesh_shapereflection.cpp:94)
 

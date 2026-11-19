@@ -1,3 +1,4 @@
+#include <cstdint>
 // Original: volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/constraint/hkpconstraintinstance.cpp
 //
 // Havok 2014.2.5 (havok_impl.md HK7, HK8): the constraint instance, from rfg.exe (what a contact constraint uses; the
@@ -143,7 +144,7 @@ void hkpConstraintInstance::pointNullsToFixedRigidBody()
             continue;
         }
         // with one body null, the xor of the two is the other one
-        hkpEntity* other = (hkpEntity*)((unsigned int)m_entities[0] ^ (unsigned int)m_entities[1]);
+        hkpEntity* other = (hkpEntity*)((uintptr_t)m_entities[0] ^ (uintptr_t)m_entities[1]);
         if (other != nullptr && other->m_world != nullptr)
         {
             m_entities[i] = other->m_world->m_fixedRigidBody;

@@ -43,7 +43,7 @@ static void cleanupLoadedObjecthkFourTransposedPointsf(void* p)
 {
     static_cast<hkFourTransposedPointsf*>(p)->~hkFourTransposedPointsf();
 }
-static_assert(sizeof(hkFourTransposedPointsf) == 48, "hkFourTransposedPointsf size");
+OPENRFG_SIZE_ASSERT(sizeof(hkFourTransposedPointsf) == 48, "hkFourTransposedPointsf size");
 extern const hkTypeInfo hkFourTransposedPointsfTypeInfo;
 const hkTypeInfo hkFourTransposedPointsfTypeInfo(
     "hkFourTransposedPointsf",

@@ -615,7 +615,7 @@ rl_dev_texture get_dev_texture(const int texture)
             bitmap_entry* entry_p = bm_get_entry(texture, true);
             if (entry_p != nullptr && entry_p->current_peg_entry != nullptr)
             {
-                return rl_dev_texture((keen::TextureData*)entry_p->current_peg_entry->cache[0]);
+                return rl_dev_texture((keen::TextureData*)entry_p->current_peg_entry->get_cache_ptr());
             }
         }
         else

@@ -686,15 +686,15 @@ bool rl_render_lib::load_texture(bitmap_entry& be)
 {
     peg_entry* peg_p = be.current_peg_entry;
     const unsigned char* data_p = nullptr;
-    if (peg_p->cache[0] != 0)
+    if (peg_p->get_cache_ptr() != nullptr)
     {
         if (peg_p->data.get_offset() == 0)
         {
-            data_p = (const unsigned char*)peg_p->cache[0];
-            peg_p->cache[0] = 0;
+            data_p = (const unsigned char*)peg_p->get_cache_ptr();
+            peg_p->set_cache_ptr(nullptr);
             peg_p->data.set_offset(1);
         }
-        if (peg_p->cache[0] != 0)
+        if (peg_p->get_cache_ptr() != nullptr)
         {
             VLIB_CRITICAL_FAILURE();
             return true;
@@ -753,7 +753,7 @@ bool rl_render_lib::load_texture(bitmap_entry& be)
         }
     }
     keen::TextureData* texture_p = create_keen_texture_data(Init_params.m_pKeenGraphicsSystem, desc, format, data_p, false, be.filename_ptr);
-    peg_p->cache[0] = (unsigned int)texture_p;
+    peg_p->set_cache_ptr(texture_p);
     return true;
 }
 
@@ -761,8 +761,8 @@ bool rl_render_lib::load_texture(bitmap_entry& be)
 bool rl_render_lib::unload_texture(bitmap_entry& be)
 {
     peg_entry* peg_p = be.current_peg_entry;
-    keen::graphics::freeTextureData((keen::TextureData*)peg_p->cache[0], Init_params.m_pKeenGraphicsSystem, nullptr);
-    delete (keen::TextureData*)peg_p->cache[0];
+    keen::graphics::freeTextureData((keen::TextureData*)peg_p->get_cache_ptr(), Init_params.m_pKeenGraphicsSystem, nullptr);
+    delete (keen::TextureData*)peg_p->get_cache_ptr();
     return true;
 }
 
@@ -990,8 +990,8 @@ rl_shader_header_runtime* rl_render_lib::load_shader(const char* const shader_fn
             if (vertex_shader.m_platform_state_p == nullptr)
             {
                 // Magic number: one input binding slot per vertex format (50).
-                vertex_shader.m_platform_state_p = (const keen::VertexInputBinding**)m_shader_base_mempool.alloc(200, 0);
-                memset(vertex_shader.m_platform_state_p, 0, 200);
+                vertex_shader.m_platform_state_p = (const keen::VertexInputBinding**)m_shader_base_mempool.alloc(RLVF_NUM_FORMATS * sizeof(void*), 0);
+                memset(vertex_shader.m_platform_state_p, 0, RLVF_NUM_FORMATS * sizeof(void*));
             }
             runtime.bindings_p = vertex_shader.m_platform_state_p;
         }
@@ -1042,8 +1042,8 @@ rl_shader_header_runtime* rl_render_lib::createKgShader(const keen::ShaderPipeli
     unsigned int flags = 1;
     for (int i = 0; i < 3; i++)
     {
-        const keen::VertexInputBinding** bindings_p = (const keen::VertexInputBinding**)m_shader_base_mempool.alloc(200, 0);
-        memset(bindings_p, 0, 200);
+        const keen::VertexInputBinding** bindings_p = (const keen::VertexInputBinding**)m_shader_base_mempool.alloc(RLVF_NUM_FORMATS * sizeof(void*), 0);
+        memset(bindings_p, 0, RLVF_NUM_FORMATS * sizeof(void*));
         rl_shader_technique_runtime& runtime = shader_runtime->shader_techniques[i];
         runtime.pipeline = *pPipelines[i];
         runtime.bindings_p = bindings_p;

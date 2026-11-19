@@ -87,13 +87,13 @@
 #include <string.h>
 #include <wchar.h>
 
-static_assert(sizeof(fullscreen) == 0x1CA8, "fullscreen");
-static_assert(sizeof(zone_map_information) == 0x18, "zone_map_information");
-static_assert(sizeof(stream_information) == 0x10, "stream_information");
-static_assert(sizeof(fsm_poi) == 0x23, "fsm_poi");
-static_assert(offsetof(fullscreen, map_center) == 0xC0, "fullscreen::map_center");
-static_assert(offsetof(fullscreen, stream_information) == 0x194, "fullscreen::stream_information");
-static_assert(offsetof(fullscreen, mission_infos) == 0x1B7C, "fullscreen::mission_infos");
+OPENRFG_SIZE_ASSERT(sizeof(fullscreen) == 0x1CA8, "fullscreen");
+OPENRFG_SIZE_ASSERT(sizeof(zone_map_information) == 0x18, "zone_map_information");
+OPENRFG_SIZE_ASSERT(sizeof(stream_information) == 0x10, "stream_information");
+OPENRFG_SIZE_ASSERT(sizeof(fsm_poi) == 0x23, "fsm_poi");
+OPENRFG_SIZE_ASSERT(offsetof(fullscreen, map_center) == 0xC0, "fullscreen::map_center");
+OPENRFG_SIZE_ASSERT(offsetof(fullscreen, stream_information) == 0x194, "fullscreen::stream_information");
+OPENRFG_SIZE_ASSERT(offsetof(fullscreen, mission_infos) == 0x1B7C, "fullscreen::mission_infos");
 
 // ---- globals
 fullscreen Fs_info; // 0x02BD9328

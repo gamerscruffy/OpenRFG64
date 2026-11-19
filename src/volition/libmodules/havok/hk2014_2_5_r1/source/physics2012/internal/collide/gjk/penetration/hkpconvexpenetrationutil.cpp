@@ -537,7 +537,7 @@ struct alignas(16) hkMultiPenetrationBlock
     hkcdWingedEdge m_polytope; // 0x0140
     hkcdWingedEdge::Triangle* m_nearest; // 0x2FF0
 };
-static_assert(sizeof(hkMultiPenetrationBlock) == 0x3000, "hkMultiPenetrationBlock");
+OPENRFG_SIZE_ASSERT(sizeof(hkMultiPenetrationBlock) == 0x3000, "hkMultiPenetrationBlock");
 }
 
 // 0x00E894A0

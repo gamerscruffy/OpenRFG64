@@ -103,7 +103,7 @@ static const void* getVtablehkpMoppBvTreeShape()
     ::new (u.buf) hkpMoppBvTreeShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpMoppBvTreeShape) == 64, "hkpMoppBvTreeShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpMoppBvTreeShape) == 64, "hkpMoppBvTreeShape size");
 extern const hkTypeInfo hkpMoppBvTreeShapeTypeInfo;
 const hkTypeInfo hkpMoppBvTreeShapeTypeInfo(
     "hkpMoppBvTreeShape",

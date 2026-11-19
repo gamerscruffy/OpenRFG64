@@ -356,7 +356,7 @@ struct vfx_data_hack
 {
     unsigned char data[BACKPACK_VFX_DATA_SIZE]; // 0x00
 };
-static_assert(sizeof(vfx_data_hack) == 0x8000, "vfx_data_hack");
+OPENRFG_SIZE_ASSERT(sizeof(vfx_data_hack) == 0x8000, "vfx_data_hack");
 
 // The table part's (see the header comment).
 extern unsigned int Effects_preload_srid; // 0x02182CEC

@@ -13,7 +13,11 @@ namespace keen
     public:
         enum
         {
+#ifdef OPENRFG_X64
+            CriticalSectionDataSize = 10, // 64-bit CRITICAL_SECTION is 40 bytes
+#else
             CriticalSectionDataSize = 6,
+#endif
         };
 
         Mutex(); // 0x00BED800
@@ -26,6 +30,6 @@ namespace keen
 
     private:
         char m_name[32]; // 0x00
-        uint32 m_criticalSectionData[6]; // 0x20
+        alignas(8) uint32 m_criticalSectionData[CriticalSectionDataSize]; // 0x20
     };
 }

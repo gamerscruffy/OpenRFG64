@@ -64,7 +64,7 @@ static const void* getVtablehkpFixedRigidMotion()
     ::new (u.buf) hkpFixedRigidMotion(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpFixedRigidMotion) == 288, "hkpFixedRigidMotion size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpFixedRigidMotion) == 288, "hkpFixedRigidMotion size");
 extern const hkTypeInfo hkpFixedRigidMotionTypeInfo;
 const hkTypeInfo hkpFixedRigidMotionTypeInfo(
     "hkpFixedRigidMotion",

@@ -45,6 +45,9 @@ rl_decal_deferred_info::~rl_decal_deferred_info()
 // 0x004E3F80 (:62)
 rl_decal::rl_decal()
 {
+    // x64: pool memory is not zeroed, so the links and owner start empty (a garbage owner crashed a virtual call).
+    sys_prev = nullptr; sys_next = nullptr; next = nullptr; prev = nullptr; m_owner = nullptr;
+    m_generic_ri_handle = 0xFFFFFFFF; m_handle = 0xFFFFFFFF;
 }
 
 // 0x004BD9D0 (:66)

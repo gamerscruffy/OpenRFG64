@@ -15,7 +15,7 @@
 #include "volition/vlib/code/memory/vmemory.h"
 #include "keen/base/memoryallocator.hpp"
 
-static_assert(sizeof(rl_fog_volume) == 0x180, "rl_fog_volume is 0x180 bytes in rfg.exe (its factory pool stride)");
+OPENRFG_SIZE_ASSERT(sizeof(rl_fog_volume) == 0x180, "rl_fog_volume is 0x180 bytes in rfg.exe (its factory pool stride)");
 
 // :11, the factory class expansion. The class id, name, size and the default maximum (256; game_render_system_init
 // sets 1) are rfg.exe's constant-initialized rl_class_factory_info at 0x01514AB0.

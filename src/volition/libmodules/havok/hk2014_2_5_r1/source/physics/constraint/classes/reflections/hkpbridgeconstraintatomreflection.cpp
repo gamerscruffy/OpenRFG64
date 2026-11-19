@@ -58,7 +58,7 @@ static void cleanupLoadedObjecthkpBridgeAtoms(void* p)
 {
     static_cast<hkpBridgeAtoms*>(p)->~hkpBridgeAtoms();
 }
-static_assert(sizeof(hkpBridgeAtoms) == 16, "hkpBridgeAtoms size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBridgeAtoms) == 16, "hkpBridgeAtoms size");
 extern const hkTypeInfo hkpBridgeAtomsTypeInfo;
 const hkTypeInfo hkpBridgeAtomsTypeInfo(
     "hkpBridgeAtoms",
@@ -112,7 +112,7 @@ static void cleanupLoadedObjecthkpBridgeConstraintAtom(void* p)
 {
     static_cast<hkpBridgeConstraintAtom*>(p)->~hkpBridgeConstraintAtom();
 }
-static_assert(sizeof(hkpBridgeConstraintAtom) == 16, "hkpBridgeConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBridgeConstraintAtom) == 16, "hkpBridgeConstraintAtom size");
 extern const hkTypeInfo hkpBridgeConstraintAtomTypeInfo;
 const hkTypeInfo hkpBridgeConstraintAtomTypeInfo(
     "hkpBridgeConstraintAtom",

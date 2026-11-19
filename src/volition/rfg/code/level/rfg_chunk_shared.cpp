@@ -453,7 +453,7 @@ void chunk_system_init()
     {
         if (srid->cdef->container_type == CONTAINER_TYPE_CHUNKS_PRELOAD)
         {
-            stream2_preload((unsigned int)srid);
+            stream2_preload(stream2_sc_id(srid));
         }
         srid = srid->next;
         if (srid == Stream_containers)
@@ -477,7 +477,7 @@ void chunk_system_shutdown()
         stream2_container* next = srid->next != Stream_containers ? srid->next : nullptr;
         if (srid->cdef->container_type == CONTAINER_TYPE_CHUNKS_PRELOAD)
         {
-            stream2_release((unsigned int)srid);
+            stream2_release(stream2_sc_id(srid));
         }
         srid = next;
     }
@@ -573,7 +573,7 @@ void chunk_level_shutdown()
         stream2_container* next = srid->next != Stream_containers ? srid->next : nullptr;
         if (srid->cdef->container_type == CONTAINER_TYPE_CHUNKS)
         {
-            stream2_container_delete((unsigned int)srid);
+            stream2_container_delete(stream2_sc_id(srid));
         }
         srid = next;
     }

@@ -55,14 +55,24 @@ namespace
     // Static storage of the three Havok memory objects (16-byte aligned blocks, as in the Havok demos).
     struct FreeList
     {
+#ifdef OPENRFG_X64
+        // 64-bit objects are bigger than the 32-bit sizes (220 / 2752 / 20204): use the real sizes.
+        static constexpr size_t LargeBlockSize = (sizeof(hkLargeBlockAllocator) + 15) & ~(size_t)15;
+        static constexpr size_t AllocatorSize = (sizeof(hkFreeListAllocator) + 15) & ~(size_t)15;
+        static constexpr size_t SystemSize = (sizeof(hkFreeListMemorySystem) + 15) & ~(size_t)15;
+        alignas(16) unsigned char m_largeBlock[LargeBlockSize];
+        alignas(16) unsigned char m_allocator[AllocatorSize];
+        alignas(16) unsigned char m_system[SystemSize];
+#else
         alignas(16) unsigned char m_largeBlock[220]; // 0x00, hkLargeBlockAllocator
         alignas(16) unsigned char m_allocator[2752]; // 0xE0, hkFreeListAllocator
         alignas(16) unsigned char m_system[20204]; // 0xBA0, hkFreeListMemorySystem
+#endif
     };
-    static_assert(sizeof(FreeList) == 0x5A90, "FreeList size");
-    static_assert(sizeof(hkLargeBlockAllocator) == 220, "hkLargeBlockAllocator size");
-    static_assert(sizeof(hkFreeListAllocator) == 2752, "hkFreeListAllocator size");
-    static_assert(sizeof(hkFreeListMemorySystem) == 20204, "hkFreeListMemorySystem size");
+    OPENRFG_SIZE_ASSERT(sizeof(FreeList) == 0x5A90, "FreeList size");
+    OPENRFG_SIZE_ASSERT(sizeof(hkLargeBlockAllocator) == 220, "hkLargeBlockAllocator size");
+    OPENRFG_SIZE_ASSERT(sizeof(hkFreeListAllocator) == 2752, "hkFreeListAllocator size");
+    OPENRFG_SIZE_ASSERT(sizeof(hkFreeListMemorySystem) == 20204, "hkFreeListMemorySystem size");
 
     FreeList s_buffer; // 0x02767820
     hkMemorySystem* s_system; // 0x02B82298
@@ -90,9 +100,9 @@ namespace
 static hkMemorySystem* Havok_memory; // 0x02B822A0
 static hkWorldMemoryAvailableWatchDog* Havok_memory_watch_dog; // 0x02B822A8
 static havok_memory_listener* Havok_memory_listener; // 0x02B822A4
-alignas(4) static unsigned char Havok_memory_listener_local[4]; // 0x02642F90, the havok_memory_listener
+alignas(16) static unsigned char Havok_memory_listener_local[16]; /* X64: was [4] (32-bit vptr only); the 8-byte vptr overflowed into the neighbour */ // 0x02642F90, the havok_memory_listener
 static hkDefaultError* Havok_error_handler; // 0x02B822AC
-alignas(16) static unsigned char Havok_error_handler_memory[68]; // 0x026677D0, the hkDefaultError
+alignas(16) static unsigned char Havok_error_handler_memory[256]; // 0x026677D0, the hkDefaultError
 static bool s_showHavokMemory; // 0x02B82288
 static int Garbage_collect_framecount = -1; // 0x0165FDEC, frame of the last watch dog removal (-1: none pending)
 unsigned int Havok_mem_largest_runtime_block; // 0x02B8229C
@@ -215,14 +225,17 @@ havok_memory_listener::~havok_memory_listener()
 // The large block allocator is out of memory: free what the game can spare.
 void havok_memory_listener::cannotAllocate(unsigned int size)
 {
+    openrfg_log("DBGHAVOKFAIL cannotAllocate"); // DBGHAVOKFAIL
     havok_set_status(HAVOK_SYSTEM_MEMORY, HAVOK_STATUS_ERROR); // inlined
     havok_reclaim_memory(); // inlined
 }
 
 // 0x0083C1C0 (:414)
 // Out of memory even after cannotAllocate: report and hang rather than crash.
+void openrfg_log(const char*);
 void havok_memory_listener::allocationFailure(unsigned int size)
 {
+    openrfg_log("DBGHAVOKFAIL allocationFailure entered"); // DBGHAVOKFAIL
     char buffer[512];
     hkMemorySystem* system = hkMemorySystem::getInstancePtr();
     if (system != nullptr)
@@ -241,6 +254,7 @@ void havok_memory_listener::allocationFailure(unsigned int size)
                                entry.m_allocatorName.cString(), str_commas((uint64_t)entry.m_allocatorStats.m_inUse),
                                str_commas((uint64_t)entry.m_allocatorStats.m_totalAvailable), str_commas((uint64_t)(unsigned int)largest),
                                str_commas((uint64_t)size));
+            openrfg_log(buffer); // DBGHAVOKFAIL
         }
     }
     keen::debug::nativePrintArgs("*** hkLimitedMemoryListener::allocationFailure() just hit, entering infinite loop to avoid hard crash ***");
@@ -478,10 +492,14 @@ void havok_memory_shutdown()
     }
     if (Havok_memory_listener != nullptr)
     {
+#ifndef OPENRFG_X64
         Havok_memory_listener->~havok_memory_listener(); // the deleting destructor, which does not free
+#endif
         Havok_memory_listener = nullptr;
     }
-    hkBaseSystem::quit();
+#ifndef OPENRFG_X64
+    hkBaseSystem::quit(); // x64: skipped, crashes in the Havok teardown (size mismatches); the process is exiting anyway
+#endif
     hkError::replaceInstance(Havok_error_handler);
     if (s_onQuitFunc != nullptr)
     {

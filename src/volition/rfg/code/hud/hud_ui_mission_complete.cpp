@@ -3,6 +3,7 @@
 // The mission results screen: a won mission tallies salvage and morale, then cleans the mission up behind a fade; a
 // failed one reloads, or from a checkpoint offers to cancel the mission. Placement of mission_complete_info inferred.
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGMCT
 #include "volition/rfg/code/hud/hud_ui_mission_complete.h"
 
 #include "volition/audio_lib/code/audiolib_api.h"
@@ -258,6 +259,7 @@ static void process_mission_information(float dtime)
 static void process_mission_tallies(float dtime)
 {
     vint_data_item* item = vint_data_item::find(Mc_info.data_handles[1]);
+    { static int n_ = 0; if (n_++ < 3 || n_ % 120 == 0) GAME_TRACE("mctally", "process item=%p t=%.2f,%.2f,%.2f amts=%d,%d,%d allow=%d", (void*)item, Mc_info.tally_times[0], Mc_info.tally_times[1], Mc_info.tally_times[2], Mc_info.tally_amts[0], Mc_info.tally_amts[1], Mc_info.tally_amts[2], (int)Mc_info.allow_input); } // DBGMCT
     if (item == nullptr)
     {
         return;
@@ -633,5 +635,6 @@ void hud_ui_mission_complete_start_tally(int num)
     if ((unsigned int)num < 3) // Magic number: 3, the tallies.
     {
         Mc_info.tally_times[num] = 0.0f;
+        GAME_TRACE("mctally", "start_tally %d salvage=%d", num, Mc_info.reward_salvage); // DBGMCT
     }
 }

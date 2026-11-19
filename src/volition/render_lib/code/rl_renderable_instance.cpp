@@ -55,6 +55,17 @@ rl_renderable_instance::~rl_renderable_instance()
     {
         get_scene()->remove_renderable_instance(this);
     }
+    {   // x64 safety: a bogus decal list (seen on terrain skirts) must not be walked
+        rl_decal* h = m_decal_list; bool bad = false;
+        if (h != nullptr)
+        {
+            if ((uintptr_t)h < 0x10000) bad = true;
+            else { rl_decal* d = h; int n = 0;
+                do { if ((uintptr_t)d->next < 0x10000 || (uintptr_t)d->prev < 0x10000 || d->get_owner() != this || d->next->prev != d) { bad = true; break; }
+                     d = d->next; } while (d != h && ++n < 100000); }
+        }
+        if (bad) { extern void openrfg_log(const char*); openrfg_log("DBGDECALDTOR: bad decal list in destructor, ignored"); m_decal_list = nullptr; }
+    }
     rl_decal* decal_p = m_decal_list;
     while (decal_p != nullptr)
     {

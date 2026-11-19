@@ -23,6 +23,20 @@
 #include "volition/vfxlib/code/vfx_particle_system_emitter_instance.h"
 #include "volition/vfxlib/code/vfx_particle_system_manager.h"
 #include "volition/vlib/code/math/matrix.h"
+#include <stdio.h>
+
+// DBGTRC: if a file named notracers.txt exists in the game folder, bullet tracers are skipped (test only).
+static bool dbg_tracers_off()
+{
+    static int state = -1;
+    if (state < 0)
+    {
+        FILE* f = fopen("notracers.txt", "rb");
+        state = f ? 1 : 0;
+        if (f) fclose(f);
+    }
+    return state == 1;
+}
 
 // ---- globals
 tracer Tracer_buf[64]; // 0x01E14310
@@ -150,6 +164,7 @@ static tracer* tracer_alloc(unsigned int owner, const vector& start_pos, const v
 // 0x006EDBE0 (:102)
 void tracers_create(unsigned int owner, const vector& start_pos, const vector& end_pos, unsigned int tracer_effect, weapon_tracer_type w_tracer_type)
 {
+    if (dbg_tracers_off()) return; // DBGTRC
     if (tracer_effect == 0xFFFFFFFF)
     {
         tracer_effect = Tracer_effect_handle;
@@ -252,6 +267,7 @@ void tracers_create(unsigned int owner, const vector& start_pos, const vector& e
 // 0x006EE0E0 (:263)
 void curved_tracers_create(unsigned int owner, const vector& start_pos, const vector& inner_spline_pos, const vector& inner_spline_pos2, const vector& end_pos, unsigned int tracer_effect, weapon_tracer_type w_tracer_type)
 {
+    if (dbg_tracers_off()) return; // DBGTRC
     if (tracer_effect == 0xFFFFFFFF)
     {
         tracer_effect = Curved_tracer_effect_handle;

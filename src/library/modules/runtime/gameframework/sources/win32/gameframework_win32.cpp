@@ -66,7 +66,7 @@ namespace keen
     // sizes are truncated.
     // Original behaviour kept: WM_WINDOWPOSCHANGED is handled for any size change, even the one its own SetWindowPos
     // makes (that one already has the ratio, so it is not handled again).
-    static bool constrainWindowGeometry(HWND hwnd, uint32 message, uint32 wParam, long lParam, const WindowAspectRatioConstraintData* pData)
+    static bool constrainWindowGeometry(HWND hwnd, uint32 message, uint32 wParam, LPARAM lParam, const WindowAspectRatioConstraintData* pData)
     {
         if (message == WM_WINDOWPOSCHANGED)
         {
@@ -207,7 +207,7 @@ namespace keen
             {
                 if (lParam == VK_RETURN)
                 {
-                    GameFrameworkSystem* pGameFramework = (GameFrameworkSystem*)GetWindowLongW(hwnd, 0);
+                    GameFrameworkSystem* pGameFramework = (GameFrameworkSystem*)GetWindowLongPtrW(hwnd, 0);
                     if (pGameFramework != nullptr)
                     {
                         pGameFramework->triggerAltEnter++;
@@ -222,14 +222,14 @@ namespace keen
         }
         else if (uMsg == WM_WINDOWPOSCHANGED)
         {
-            if (s_windowAspectRatioConstraintData.isConstrained && constrainWindowGeometry(hwnd, WM_WINDOWPOSCHANGED, (uint32)wParam, (long)lParam, &s_windowAspectRatioConstraintData))
+            if (s_windowAspectRatioConstraintData.isConstrained && constrainWindowGeometry(hwnd, WM_WINDOWPOSCHANGED, (uint32)wParam, (LPARAM)lParam, &s_windowAspectRatioConstraintData))
             {
                 return 0;
             }
         }
         else if (uMsg == WM_SIZING)
         {
-            if (s_windowAspectRatioConstraintData.isConstrained && constrainWindowGeometry(hwnd, WM_SIZING, (uint32)wParam, (long)lParam, &s_windowAspectRatioConstraintData))
+            if (s_windowAspectRatioConstraintData.isConstrained && constrainWindowGeometry(hwnd, WM_SIZING, (uint32)wParam, (LPARAM)lParam, &s_windowAspectRatioConstraintData))
             {
                 return 1;
             }
@@ -489,7 +489,7 @@ namespace keen
                 {
                     return;
                 }
-                SetWindowLongW(hWnd, 0, (LONG)pGameFramework);
+                SetWindowLongPtrW(hWnd, 0, (LONG_PTR)pGameFramework);
             }
             s_languageFamily = getLanguageFamily(getSystemLanguage(pGameFramework));
         }

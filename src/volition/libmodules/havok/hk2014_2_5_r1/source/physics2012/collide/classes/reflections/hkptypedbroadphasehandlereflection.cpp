@@ -59,7 +59,7 @@ static void cleanupLoadedObjecthkpTypedBroadPhaseHandle(void* p)
 {
     static_cast<hkpTypedBroadPhaseHandle*>(p)->~hkpTypedBroadPhaseHandle();
 }
-static_assert(sizeof(hkpTypedBroadPhaseHandle) == 12, "hkpTypedBroadPhaseHandle size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpTypedBroadPhaseHandle) == 12, "hkpTypedBroadPhaseHandle size");
 extern const hkTypeInfo hkpTypedBroadPhaseHandleTypeInfo;
 const hkTypeInfo hkpTypedBroadPhaseHandleTypeInfo(
     "hkpTypedBroadPhaseHandle",

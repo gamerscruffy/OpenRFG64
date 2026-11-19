@@ -32,7 +32,7 @@ namespace keen
             debug::nativePrintArgs("[base] not enough memory given to BasePoolAllocator::create()!\n");
             return true;
         }
-        if ((uint8*)((uint32)memoryBlock.pStart & ~(alignment - 1)) != memoryBlock.pStart)
+        if ((uint8*)((uintptr_t)memoryBlock.pStart & ~(uintptr_t)(alignment - 1)) != memoryBlock.pStart)
         {
             debug::nativePrintArgs("[base] alignment error in BasePoolAllocator::create()!\n");
             return false;

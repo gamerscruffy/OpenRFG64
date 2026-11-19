@@ -38,7 +38,7 @@
 // Magic numbers: 12 save slots, the room of RfgSaveFile::data.
 static const unsigned int Num_save_slots = 12;
 static const int Max_save_file_size = 0x280010;
-static_assert(sizeof(keen::rfg::RfgSaveFile::data) == Max_save_file_size, "RfgSaveFile::data");
+OPENRFG_SIZE_ASSERT(sizeof(keen::rfg::RfgSaveFile::data) == Max_save_file_size, "RfgSaveFile::data");
 
 // ---- globals
 keen::rfg::RfgSaveData* Save_system_save_data; // 0x025338E4

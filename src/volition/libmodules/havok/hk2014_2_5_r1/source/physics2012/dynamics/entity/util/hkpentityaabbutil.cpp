@@ -61,6 +61,7 @@ void hkpEntityAabbUtil::entityBatchRecalcAabb(const hkpCollisionInput* collision
     {
         hkpEntity* entity = entityBatch[e];
         const hkpShape* shape = entity->m_collidable.m_shape;
+        if (shape == nullptr) { continue; } // OpenRFG: skip an entity with no shape (crashed here once)
         hkpCollidable::BoundingVolumeData& bv = entity->m_collidable.m_boundingVolumeData;
         const hkMotionState& motionState = entity->m_motion.m_motionState;
 

@@ -8,6 +8,7 @@
 // Statics of rfg.exe's interface unity that live in other files here are external there (loading.h, ui_message_box.h)
 // or declared below.
 
+#include <stdio.h>
 #include "volition/rfg/code/interface/ui_document_manager.h"
 
 #include "keen/base/language.hpp"
@@ -186,8 +187,8 @@ int ui_get_font(const char* font_name)
 
 // ---- file-private types (rfg.pdb)
 // button_info and ui_button_info are in ui_document_manager.h since UI4.
-static_assert(sizeof(button_info) == 0x18, "button_info");
-static_assert(sizeof(ui_button_info) == 0x31C, "ui_button_info");
+OPENRFG_SIZE_ASSERT(sizeof(button_info) == 0x18, "button_info");
+OPENRFG_SIZE_ASSERT(sizeof(ui_button_info) == 0x31C, "ui_button_info");
 
 // size 0x10
 struct screen_blur
@@ -200,7 +201,7 @@ struct screen_blur
     bool paused_game; // 0x08
     float screen_blur_time; // 0x0C
 };
-static_assert(sizeof(screen_blur) == 0x10, "screen_blur");
+OPENRFG_SIZE_ASSERT(sizeof(screen_blur) == 0x10, "screen_blur");
 
 // size 0x2
 struct internal_flags
@@ -208,7 +209,7 @@ struct internal_flags
     bool has_processed; // 0x00
     bool has_rendered; // 0x01
 };
-static_assert(sizeof(internal_flags) == 0x2, "internal_flags");
+OPENRFG_SIZE_ASSERT(sizeof(internal_flags) == 0x2, "internal_flags");
 
 // ---- globals
 // fonts_are_initializing (0x02C08091) is defined with the fonts above.
@@ -619,6 +620,7 @@ float ui_get_menu_action_input(control_button_action choice, unsigned int contro
     return (float)controls_is_button_down(choice, controller_id);
 }
 
+void openrfg_log(const char*);
 // 0x008B4200 (:752)
 // Each button's input for the menus: in the boot, the main menu and its option states any controller counts (the
 // first found), else the player's controller; a held button repeats after 0.4 s every 0.1 s; a button that is held
@@ -735,6 +737,8 @@ static void ui_process_input()
         b.m_button_input = input;
         b.m_button_actual_input = actual;
         b.m_button_repeat_time = repeat_time;
+        if (fabsf(actual) > 0.0f) { static int n = 0; if (n < 10) { n++; openrfg_log("DBGUI actual input >0"); } }
+        if (fabsf(input) > 0.0f) { static int n2 = 0; if (n2 < 10) { n2++; openrfg_log("DBGUI input >0 (passes gating)"); } }
         Button_info.m_received_input = Button_info.m_received_input || fabsf(input) > 0.0f;
         if (i == 0 || (i > 8 && i < Num_buttons))
         {
@@ -1875,7 +1879,7 @@ void ui_show_loading_screen(bool pause_music, const char* display_string)
                 if (item != nullptr)
                 {
                     // m_updated (protected; 0x42C) as the inlined set writes it.
-                    *(bool*)((unsigned char*)item + 0x42C) = true;
+                    item->set_updated();
                 }
             }
         }
@@ -3050,6 +3054,16 @@ void ui_fade_to_black_init()
 // The black's alpha moves one unit a second; a fade that paused the game unpauses it once clear.
 void ui_fade_to_black_process()
 {
+    { // DBGFADE2 temp
+        extern void openrfg_log(const char*);
+        static int dbgn = 0;
+        if ((dbgn++ % 400) == 0 && dbgn < 8000)
+        {
+            char b[200];
+            sprintf(b, "DBGFADE2 out=%d ref=%d alpha=%f frametime_real=%f", (int)Fade_out, (int)Fade_ref, (double)Fade_alpha, (double)Frametime_real);
+            openrfg_log(b);
+        }
+    }
     if (Fade_out)
     {
         Fade_alpha = Frametime_real + Fade_alpha;
@@ -3553,7 +3567,7 @@ static ui_menu* ui_find_menu(int menu_handle)
 {
     for (int i = 0; i < Menus.size(); i++)
     {
-        if (*(const int*)((const unsigned char*)Menus[i] + 0x10) == menu_handle)
+        if (Menus[i]->get_handle() == menu_handle)
         {
             return Menus[i];
         }
@@ -3563,7 +3577,7 @@ static ui_menu* ui_find_menu(int menu_handle)
 
 static ui_menu_item_base* ui_menu_item(ui_menu* menu, unsigned int index)
 {
-    return ((ui_menu_item_base* const*)((const unsigned char*)menu + 0x24))[index];
+    return menu->get_menu_item_via_index((int)index);
 }
 
 // 0x008DB210 (:4416)
@@ -3629,13 +3643,14 @@ int ui_menu_process_mouseover_extend(int docHandle, int menu_handle, const char*
         {
             continue;
         }
-        const unsigned int num_items = *(const unsigned int*)((const unsigned char*)menu + 0x20);
+        const unsigned int num_items = (unsigned int)menu->get_num_items();
         if ((unsigned int)index >= num_items)
         {
             continue;
         }
         // The item by its handle (rfg.exe looks the index's handle up again).
-        const int item_handle = *(const int*)((const unsigned char*)ui_menu_item(menu, index) + 0x08);
+        ui_menu_item_base* first_item = ui_menu_item(menu, index);
+        const int item_handle = first_item != nullptr ? first_item->get_handle() : -1;
         if (item_handle == -1)
         {
             continue;
@@ -3643,9 +3658,9 @@ int ui_menu_process_mouseover_extend(int docHandle, int menu_handle, const char*
         for (unsigned int i = 0; i < num_items; i++)
         {
             ui_menu_item_base* item = ui_menu_item(menu, i);
-            if (*(const int*)((const unsigned char*)item + 0x08) == item_handle)
+            if (item != nullptr && item->get_handle() == item_handle)
             {
-                if (*(const bool*)((const unsigned char*)item + 0x06) && ui_menu_is_menu_item_visible(menu_handle, index))
+                if (item->get_enabled() && ui_menu_is_menu_item_visible(menu_handle, index))
                 {
                     ui_menu_handle_mouseover(menu_handle, index);
                     return index;
@@ -3686,7 +3701,7 @@ void ui_menu_collect_obj_handles(int docHandle, int menu_handle, const char* gro
 void ui_menu_handle_mouseover(int menu_handle, int index)
 {
     ui_menu* menu = ui_find_menu(menu_handle);
-    const int selected = menu != nullptr ? *(const int*)((const unsigned char*)menu + 0x1C) : -1;
+    const int selected = menu != nullptr ? menu->get_selected_item() : -1;
     if (selected != index)
     {
         ui_menu_select_item_by_index(menu_handle, index);

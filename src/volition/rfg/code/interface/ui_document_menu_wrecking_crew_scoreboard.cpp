@@ -85,7 +85,7 @@ struct mp_match_scoreboard_shell_info_wcsco
     unsigned int control_id; // 0x84
     int input_id; // 0x88
 };
-static_assert(sizeof(mp_match_scoreboard_shell_info_wcsco) == 0x8C, "mp_match_scoreboard_shell_info_wcsco");
+OPENRFG_SIZE_ASSERT(sizeof(mp_match_scoreboard_shell_info_wcsco) == 0x8C, "mp_match_scoreboard_shell_info_wcsco");
 
 enum my_leaderboard_state_wcsco
 {

@@ -139,8 +139,8 @@ script_function* script_function_create(xml_element* elt, action_script* script)
     {
         count++;
     }
-    const unsigned int size = count * 4 + 4;
-    script_node** dest = (script_node**)Script_mempool.alloc(size, 4);
+    const unsigned int size = (count + 1) * sizeof(script_node*);
+    script_node** dest = (script_node**)Script_mempool.alloc(size, sizeof(script_node*));
     memset(dest, 0, size);
     function->params = dest;
     if (script_arg_list_parse(dest, definition->args, elt, script))

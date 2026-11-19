@@ -17,14 +17,21 @@
 
 #include <new>
 
+#ifdef OPENRFG_X64
+#define AGENT1N_TRACK_OFFSET 8
+#define AGENT1N_END_OFFSET 0x20
+#else
+#define AGENT1N_TRACK_OFFSET 4
+#define AGENT1N_END_OFFSET 0x10
+#endif
 static inline hkpAgent1nTrack& hkListAgent3_track(void* agentData)
 {
-    return *reinterpret_cast<hkpAgent1nTrack*>(static_cast<char*>(agentData) + 4);
+    return *reinterpret_cast<hkpAgent1nTrack*>(static_cast<char*>(agentData) + AGENT1N_TRACK_OFFSET);
 }
 
 static inline void* hkListAgent3_end(void* agentData)
 {
-    return static_cast<char*>(agentData) + 0x10;
+    return static_cast<char*>(agentData) + AGENT1N_END_OFFSET;
 }
 
 // 0x00DCFB30

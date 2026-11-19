@@ -7,6 +7,7 @@
 // The world's update modes are only forward declared here (hkpworld.h, which includes this header, defines them):
 // MSVC sizes a forward declared enum as int, as the 4-byte AddEntity::m_activation needs.
 #pragma once
+#include <cstdint>
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/memoryclasses/hkmemoryclasses.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/container/array/hkarray.h"
@@ -403,7 +404,11 @@ namespace hkWorldOperation
     struct BiggestOperation : public BaseOperation
     {
         BiggestOperation() : BaseOperation(OPERATION_ID_INVALID) {}
+#ifdef OPENRFG_X64
+        uintptr_t dummy[6 + 1]; // 0x08 on x64 (operations hold 8-byte pointers; slot is 64 bytes)
+#else
         unsigned long dummy[6 + 1]; // 0x04
+#endif
     };
 }
 

@@ -20,7 +20,7 @@
 hkpPhantom::hkpPhantom(const hkpShape* shape)
     : hkpWorldObject(shape, BROAD_PHASE_PHANTOM)
 {
-    m_collidable.m_ownerOffset = -0x10;
+    m_collidable.m_ownerOffset = (signed char)((char*)this - (char*)&m_collidable); // -0x10 on 32-bit
 }
 
 // 0x00DEE0C0

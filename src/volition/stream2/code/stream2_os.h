@@ -96,7 +96,7 @@ public:
     void unpause_processing(); // 0x004AA740 (:203)
     bool is_paused(); // 0x004AA710 (:137)
 
-private:
+public: // was private; x64 handle helpers in stream2_os.cpp read request_pool
     sync_event trigger_event; // 0x00
     cs_wrapper cs; // 0x04
     unsigned int thread; // 0x40

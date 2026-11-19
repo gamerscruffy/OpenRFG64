@@ -3,6 +3,7 @@
 // Havok 2014.2.5 (havok_impl.md HK7): agents between world entities (created on new broadphase pairs, in the
 // island of the non-fixed entity, with the contact manager of the two materials' response types), from rfg.exe.
 
+#include <stdio.h>
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/world/util/hkpworldagentutil.h"
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/collide/agent/collidable/hkpcollidable.h"
@@ -156,6 +157,28 @@ void hkpWorldAgentUtil::removeAgent(hkpAgentNnEntry* agent)
         islandA->m_splitCheckRequested = true;
         entityB->m_simulationIsland->m_splitCheckRequested = true;
     }
+#if 0
+    {
+        extern void openrfg_log(const char*); char b[400];
+        snprintf(b,sizeof b,"DBGRM agent=%p cA=%p cB=%p eA=%p eB=%p iA=%p iB=%p isl=%p world=%p disp=%p cmd=%d type=%d track=%d size=%d",(void*)agent,(void*)agent->m_collidable[0],(void*)agent->m_collidable[1],(void*)entityA,(void*)entityB,(void*)islandA,(void*)islandB,(void*)theIsland,(void*)0,(void*)0,(int)agent->m_streamCommand,(int)agent->m_agentType,(int)agent->m_nnTrackType.m_storage,(int)agent->m_size);
+        openrfg_log(b);
+        { size_t off=(size_t)((char*)&entityA->m_simulationIsland-(char*)entityA); size_t offB=(size_t)((char*)&entityB->m_simulationIsland-(char*)entityB);
+          snprintf(b,sizeof b,"DBGRM2 islOff=%zu sizeofEntity=%zu offColl=%zu offMot=%zu",off,sizeof(hkpEntity),(size_t)((char*)&entityA->m_collidable-(char*)entityA),(size_t)((char*)&entityA->m_motion-(char*)entityA)); openrfg_log(b);
+          const unsigned* w=(const unsigned*)entityA; char*q=b; q+=snprintf(q,200,"DBGRM3+64:");
+          for(int i=64;i<128;i++){ q+=snprintf(q,12," %08X",w[i]); if(i%16==15){openrfg_log(b); q=b; q+=snprintf(q,20,"DBGRM3+%d:",i+1);} }
+          const unsigned* v=(const unsigned*)entityB; q=b; q+=snprintf(q,200,"DBGRM4+64:");
+          for(int i=64;i<128;i++){ q+=snprintf(q,12," %08X",v[i]); if(i%16==15){openrfg_log(b); q=b; q+=snprintf(q,20,"DBGRM4+%d:",i+1);} }
+          { const unsigned* c=(const unsigned*)agent->m_collidable[0]; q=b; q+=snprintf(q,200,"DBGRM5 own=%d cAwords-8..+23:",(int)agent->m_collidable[0]->m_ownerOffset);
+            for(int i=-8;i<24;i++) q+=snprintf(q,12," %08X",c[i]); openrfg_log(b);
+            const unsigned* e=(const unsigned*)entityA; q=b; q+=snprintf(q,200,"DBGRM6 eA words0..31:"); for(int i=0;i<32;i++) q+=snprintf(q,12," %08X",e[i]); openrfg_log(b); }
+          { hkpWorld* w=entityA->m_world; int where=-1,wb=-1; int nAct=w->m_activeSimulationIslands.getSize(), nIn=w->m_inactiveSimulationIslands.getSize();
+            for(int pass=0;pass<3;pass++){ int n= pass==0? nAct : pass==1? nIn : 1;
+              for(int i=0;i<n;i++){ hkpSimulationIsland* is= pass==0? w->m_activeSimulationIslands[i] : pass==1? w->m_inactiveSimulationIslands[i] : w->m_fixedIsland; if(!is) continue;
+                for(int j=0;j<is->m_entities.getSize();j++){ if(is->m_entities[j]==entityA) where=pass*1000+i; if(is->m_entities[j]==entityB) wb=pass*1000+i; } } }
+            snprintf(b,sizeof b,"DBGRM7 world=%p nAct=%d nInact=%d fixedIsl=%p eAfoundIn=%d eBfoundIn=%d motionTypeA=%d motionTypeB=%d btypeA=%d btypeB=%d",(void*)w,nAct,nIn,(void*)w->m_fixedIsland,where,wb,(int)entityA->m_motion.m_type.m_storage,(int)entityB->m_motion.m_type.m_storage,(int)agent->m_collidable[0]->m_broadPhaseHandle.m_type,(int)agent->m_collidable[1]->m_broadPhaseHandle.m_type); openrfg_log(b); }
+          (void)offB; }
+    }
+#endif
     hkpAgentNnTrack& track = hkWorldAgentUtil_track(theIsland, agent->m_nnTrackType.m_storage);
     hkpContactMgr* mgr = agent->m_contactMgr;
     hkAgentNnMachine_DestroyAgent(track, agent, theIsland->m_world->m_collisionDispatcher, *theIsland);

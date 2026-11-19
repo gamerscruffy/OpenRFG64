@@ -71,7 +71,7 @@ static const void* getVtablehkcdShape()
     ::new (u.buf) hkcdShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkcdShape) == 12, "hkcdShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkcdShape) == 12, "hkcdShape size");
 extern const hkTypeInfo hkcdShapeTypeInfo;
 const hkTypeInfo hkcdShapeTypeInfo(
     "hkcdShape",
@@ -126,7 +126,7 @@ static void cleanupLoadedObjecthkcdShapeDispatchType(void* p)
 {
     static_cast<hkcdShapeDispatchType*>(p)->~hkcdShapeDispatchType();
 }
-static_assert(sizeof(hkcdShapeDispatchType) == 1, "hkcdShapeDispatchType size");
+OPENRFG_SIZE_ASSERT(sizeof(hkcdShapeDispatchType) == 1, "hkcdShapeDispatchType size");
 extern const hkTypeInfo hkcdShapeDispatchTypeTypeInfo;
 const hkTypeInfo hkcdShapeDispatchTypeTypeInfo(
     "hkcdShapeDispatchType",
@@ -178,7 +178,7 @@ static void cleanupLoadedObjecthkcdShapeInfoCodecType(void* p)
 {
     static_cast<hkcdShapeInfoCodecType*>(p)->~hkcdShapeInfoCodecType();
 }
-static_assert(sizeof(hkcdShapeInfoCodecType) == 1, "hkcdShapeInfoCodecType size");
+OPENRFG_SIZE_ASSERT(sizeof(hkcdShapeInfoCodecType) == 1, "hkcdShapeInfoCodecType size");
 extern const hkTypeInfo hkcdShapeInfoCodecTypeTypeInfo;
 const hkTypeInfo hkcdShapeInfoCodecTypeTypeInfo(
     "hkcdShapeInfoCodecType",
@@ -266,7 +266,7 @@ static void cleanupLoadedObjecthkcdShapeType(void* p)
 {
     static_cast<hkcdShapeType*>(p)->~hkcdShapeType();
 }
-static_assert(sizeof(hkcdShapeType) == 1, "hkcdShapeType size");
+OPENRFG_SIZE_ASSERT(sizeof(hkcdShapeType) == 1, "hkcdShapeType size");
 extern const hkTypeInfo hkcdShapeTypeTypeInfo;
 const hkTypeInfo hkcdShapeTypeTypeInfo(
     "hkcdShapeType",

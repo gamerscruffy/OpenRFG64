@@ -14,6 +14,9 @@
 #include "volition/vlib/code/vlib_core/vlib_assert.h"
 
 #include <stdio.h>
+#include <string.h>
+#include <windows.h>
+#include <dbghelp.h>
 
 // 0x007EB110 (:39)
 static farray<tweak_table_item*, 350>& get_tweak_table()
@@ -23,12 +26,41 @@ static farray<tweak_table_item*, 350>& get_tweak_table()
     return The_tweak_table;
 }
 
+#ifdef OPENRFG_X64
+void openrfg_watch(void* p, size_t n); // crash_early.cpp
+static const char* Last_init_name = nullptr;
+#endif
 // 0x007EB160 (:51)
 static int tweak_table_find(const char* name)
 {
     farray<tweak_table_item*, 350>& table = get_tweak_table();
     for (int i = 0; i < table.size(); ++i)
     {
+#ifdef OPENRFG_X64
+        if (IsBadReadPtr(table[i]->get_name(), 1) || IsBadReadPtr(name, 1))
+        {
+            static bool logged = false;
+            if (!logged)
+            {
+                logged = true;
+                char symbuf[sizeof(SYMBOL_INFO) + 256] = {};
+                SYMBOL_INFO* sym = (SYMBOL_INFO*)symbuf;
+                sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+                sym->MaxNameLen = 255;
+                DWORD64 disp = 0;
+                SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+                SymInitialize(GetCurrentProcess(), nullptr, TRUE);
+                const char* symname = SymFromAddr(GetCurrentProcess(), (DWORD64)(uintptr_t)table[i], &disp, sym) ? sym->Name : "?";
+                char dbg[900];
+                snprintf(dbg, sizeof(dbg), "tweak_table_find BAD: i=%d size=%d item=%p symbol=%s+%llu item_name=%p\r\n  now constructing: %s\r\n  previous constructed: %s\r\n  item[i-1]=%s item[size-1]=%s\r\n",
+                         i, table.size(), (void*)table[i], symname, (unsigned long long)disp, (const void*)table[i]->get_name(), name, Last_init_name != nullptr ? Last_init_name : "-",
+                         i > 0 ? table[i - 1]->get_name() : "-", table[table.size() - 1]->get_name());
+                HANDLE f = CreateFileA("openrfg_crash.txt", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                DWORD w; WriteFile(f, dbg, (DWORD)strlen(dbg), &w, nullptr); CloseHandle(f);
+            }
+            return -1;
+        }
+#endif
         if (v_stricmp(table[i]->get_name(), name) == 0)
         {
             return i;
@@ -85,8 +117,17 @@ void tweak_table_item::init(const char* in_name, void* in_value, tweak_value_typ
         if (table.size() < 350)
         {
             table.add(this);
+#ifdef OPENRFG_X64
+            if (table.size() == 295)
+            {
+                openrfg_watch(this, sizeof(*this));
+            }
+#endif
         }
     }
+#ifdef OPENRFG_X64
+    Last_init_name = in_name;
+#endif
 }
 
 // 0x007C91D0 (:211)

@@ -49,6 +49,11 @@ static inline short& hkConvexListAgent3_counter(void* agentData)
     return *reinterpret_cast<short*>(static_cast<char*>(agentData) + 0xC);
 }
 
+#ifdef OPENRFG_X64
+#define AGENT1N_CONVEX_END 0x20
+#else
+#define AGENT1N_CONVEX_END 0x1C
+#endif
 static inline hkpAgent1nTrack& hkConvexListAgent3_track(void* agentData)
 {
     return *reinterpret_cast<hkpAgent1nTrack*>(static_cast<char*>(agentData) + 0x10);
@@ -285,7 +290,7 @@ streamMode:
         hitList[size] = 0xFFFFFFFF; // HK_INVALID_SHAPE_KEY
         hkAgent1nMachine_Process(hkConvexListAgent3_track(agentData), input, cls, hitList, output);
         stack.fastBlockFree(hitList, bytes);
-        end = static_cast<char*>(agentData) + 0x1C; // counter and track after the cache
+        end = static_cast<char*>(agentData) + AGENT1N_CONVEX_END; // counter and track after the cache
     }
 
 done:

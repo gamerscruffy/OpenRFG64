@@ -35,7 +35,7 @@ struct hkStringMapOperations
 template<typename V, typename Allocator = hkContainerHeapAllocator>
 class hkStringMap
 {
-    static_assert(sizeof(V) <= sizeof(hkUlong), "hkStringMap values must fit in a pointer");
+    OPENRFG_SIZE_ASSERT(sizeof(V) <= sizeof(hkUlong), "hkStringMap values must fit in a pointer");
 
 public:
     HK_DECLARE_NONVIRTUAL_CLASS_ALLOCATOR(hkStringMap);

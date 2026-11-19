@@ -5,6 +5,7 @@
 // the previous point (vel) and the side offset (v_trans.x = +-size, v_trans.y = size at the head, 0 after); u runs
 // along the streak by 1 / (tail_length / 100) / 9 per segment.
 
+#include <string.h>
 #include "volition/render_lib/code/rl_particle_renderer.h"
 
 #include "volition/render_lib/code/rl_renderable_particles.h"
@@ -66,8 +67,8 @@ void rl_particle_renderer::drop_add_particle(const rl_particle_iterative& partic
     side_b.v_trans.x = -current_size;
 
     drop_vertex* vertices_p = (drop_vertex*)vertex_p;
-    vertices_p[0] = side_a;
-    vertices_p[1] = side_b;
+    memcpy(&vertices_p[0], &side_a, sizeof(side_a)); // OpenRFG: unaligned dest (SSE store faulted)
+    memcpy(&vertices_p[1], &side_b, sizeof(side_b)); // OpenRFG: unaligned dest (SSE store faulted)
 
     // Magic numbers: the u step per segment (tail_length in hundredths, nine segments).
     const float u_step = (1.0f / ((float)tail_length / 100.0f)) * 0.11111111f;
@@ -80,8 +81,8 @@ void rl_particle_renderer::drop_add_particle(const rl_particle_iterative& partic
     side_b.v_trans.y = 0.0f;
     side_a.uvs.x = u;
     side_b.uvs.x = u;
-    vertices_p[2] = side_a;
-    vertices_p[3] = side_b;
+    memcpy(&vertices_p[2], &side_a, sizeof(side_a)); // OpenRFG: unaligned dest (SSE store faulted)
+    memcpy(&vertices_p[3], &side_b, sizeof(side_b)); // OpenRFG: unaligned dest (SSE store faulted)
     for (int point = 1; point < DROP_POINT_COUNT; point++)
     {
         const vector& previous = point == 1 ? points[0] : points[point - 1];
@@ -94,8 +95,8 @@ void rl_particle_renderer::drop_add_particle(const rl_particle_iterative& partic
         side_b.pos = side_a.pos;
         side_b.vel = side_a.vel;
         side_b.uvs.x = u;
-        vertices_p[point * 2 + 2] = side_a;
-        vertices_p[point * 2 + 3] = side_b;
+        memcpy(&vertices_p[point * 2 + 2], &side_a, sizeof(side_a));
+        memcpy(&vertices_p[point * 2 + 3], &side_b, sizeof(side_b));
     }
     // Magic numbers: 20 vertices, 22 strip indices (with the degenerate joins between drops).
     num_verts += 0x14;

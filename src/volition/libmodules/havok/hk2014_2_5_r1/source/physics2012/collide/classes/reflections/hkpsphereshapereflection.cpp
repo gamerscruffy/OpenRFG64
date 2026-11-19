@@ -68,7 +68,7 @@ static const void* getVtablehkpSphereShape()
     ::new (u.buf) hkpSphereShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpSphereShape) == 32, "hkpSphereShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSphereShape) == 32, "hkpSphereShape size");
 extern const hkTypeInfo hkpSphereShapeTypeInfo;
 const hkTypeInfo hkpSphereShapeTypeInfo(
     "hkpSphereShape",

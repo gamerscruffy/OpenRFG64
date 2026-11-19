@@ -113,7 +113,7 @@ struct mp_matchmaking_menu_info
     timestamp_realtime exit_time; // 0xD0
     unsigned int multi_purpose_mempool_bookmark; // 0xD4
 };
-static_assert(sizeof(mp_matchmaking_menu_info) == 0xD8, "mp_matchmaking_menu_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_matchmaking_menu_info) == 0xD8, "mp_matchmaking_menu_info");
 
 // ---- file-static globals
 static void mm_process_data_item_hint_info(vint_data_item* vdi);

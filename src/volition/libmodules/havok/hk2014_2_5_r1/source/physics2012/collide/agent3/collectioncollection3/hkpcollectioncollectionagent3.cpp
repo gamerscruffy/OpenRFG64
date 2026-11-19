@@ -36,9 +36,16 @@
 // 0x03A29D70: set once the midphase agent is registered
 bool hkpCollectionCollectionAgent3::g_agentRegistered;
 
+#ifdef OPENRFG_X64
+#define AGENT1N_TRACK_OFFSET 8
+#define AGENT1N_END_OFFSET 0x20
+#else
+#define AGENT1N_TRACK_OFFSET 4
+#define AGENT1N_END_OFFSET 0x10
+#endif
 static inline hkpAgent1nTrack& hkCollectionCollectionAgent3_track(void* agentData)
 {
-    return *reinterpret_cast<hkpAgent1nTrack*>(static_cast<char*>(agentData) + 4);
+    return *reinterpret_cast<hkpAgent1nTrack*>(static_cast<char*>(agentData) + AGENT1N_TRACK_OFFSET);
 }
 
 // The box list of one side: (n + 4) boxes of 0x20 bytes (four end markers for the sweep), from the LIFO stack
@@ -387,7 +394,7 @@ void* hkpCollectionCollectionAgent3::process(const hkpAgent3ProcessInput& input,
         }
     }
     stack.fastBlockFree(shapeKeyPairs, pairBytes);
-    return static_cast<char*>(agentData) + 0x10;
+    return static_cast<char*>(agentData) + AGENT1N_END_OFFSET;
 }
 
 // 0x00DB7A70

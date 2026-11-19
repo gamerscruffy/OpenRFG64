@@ -10,6 +10,7 @@
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/world/hkpworld.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <xmmintrin.h>
 
@@ -770,6 +771,14 @@ void hkpWorld::unlockIslandForConstraintUpdate(hkpSimulationIsland* island)
 hkpStepResult hkpWorld::stepDeltaTime(float physicsDeltaTime)
 {
     lock();
+    { // DBGCHK: find entities whose island link is corrupt before the step
+        static int frame=0, logged=0; ++frame; int bad=0, total=0;
+        for(int pass=0;pass<2;pass++){ auto& arr = pass? m_inactiveSimulationIslands : m_activeSimulationIslands;
+          for(int i=0;i<arr.getSize();i++){ hkpSimulationIsland* isl=arr[i]; if(!isl) continue;
+            for(int j=0;j<isl->m_entities.getSize();j++){ hkpEntity* e=isl->m_entities[j]; total++;
+              if(e->m_simulationIsland!=isl){ bad++; if(logged<12){ logged++; extern void openrfg_log(const char*); char b[300];
+                snprintf(b,sizeof b,"DBGCHK frame=%d e=%p isl=%p expect=%p pass=%d idx=%d vt=%p type=%d",frame,(void*)e,(void*)e->m_simulationIsland,(void*)isl,pass,j,*(void**)e,(int)e->m_motion.m_type.m_storage); openrfg_log(b);} } } } }
+        if(frame<=3 || (bad && logged<=12)){ extern void openrfg_log(const char*); char b[120]; snprintf(b,sizeof b,"DBGCHK2 frame=%d total=%d bad=%d",frame,total,bad); openrfg_log(b);} }
     hkpWorldMemoryUtil::watchHeapMemory(this);
     const hkpStepResult result = m_simulation->stepDeltaTime(physicsDeltaTime);
     if (m_broadPhase->getType() == 2)

@@ -3,6 +3,7 @@
 // The oriented filler of rl_particle_renderer (VFX.md FX2): quads stretched along a direction (the particle's velocity;
 // for a tail point, the step from the previous point). Corner uvs (0,0), (0,1), (1,0), (1,1).
 
+#include <string.h>
 #include "volition/render_lib/code/rl_particle_renderer.h"
 
 #include "volition/render_lib/code/rl_renderable_particles.h"
@@ -40,7 +41,7 @@ static void oriented_write(rl_particle_renderer::oriented_vertex vertex, unsigne
     {
         vertex.uvs.x = (i & 2) != 0 ? 1.0f : 0.0f;
         vertex.uvs.y = (i & 1) != 0 ? 1.0f : 0.0f;
-        vertices_p[i] = vertex;
+        memcpy(&vertices_p[i], &vertex, sizeof(vertex)); // OpenRFG: unaligned dest (SSE store faulted)
     }
     num_verts += 4;
     vertex_p += current_vertex_stride * 4;
@@ -96,7 +97,7 @@ void rl_particle_renderer::filler_oriented(rl_renderable_particles_instance* ins
             parametric_vertex* vertices_p = (parametric_vertex*)vertex_p;
             for (int i = 0; i < 4; i++)
             {
-                vertices_p[i] = vertex;
+                memcpy(&vertices_p[i], &vertex, sizeof(vertex)); // OpenRFG: unaligned dest (SSE store faulted)
             }
             num_verts += 4;
             vertex_p += current_vertex_stride * 4;

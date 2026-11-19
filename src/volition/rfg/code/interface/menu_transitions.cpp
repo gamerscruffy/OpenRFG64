@@ -18,7 +18,7 @@ struct transition_fx_funcs
     bool (*transition_in)(bool*, bool); // 0x00
     bool (*transition_out)(bool*); // 0x04
 };
-static_assert(sizeof(transition_fx_funcs) == 0x8, "transition_fx_funcs");
+OPENRFG_SIZE_ASSERT(sizeof(transition_fx_funcs) == 0x8, "transition_fx_funcs");
 
 static bool transition_in_screen_fade(bool* finished, bool out_in_progress);
 static bool transition_out_screen_fade(bool* finished);

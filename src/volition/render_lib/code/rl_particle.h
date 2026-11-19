@@ -56,7 +56,7 @@ public:
     vector4 random; // 0x20
     float lifetime; // 0x30
     int emit_number; // 0x34
-    float* pad[2]; // 0x38
+    unsigned int pad[2]; // 0x38 (was float*[2]; 8 bytes on x86, must stay 8 on x64)
 };
 
 // size 0x80

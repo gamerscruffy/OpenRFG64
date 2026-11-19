@@ -84,7 +84,7 @@ static void cleanupLoadedObjecthkpMaterial(void* p)
 {
     static_cast<hkpMaterial*>(p)->~hkpMaterial();
 }
-static_assert(sizeof(hkpMaterial) == 12, "hkpMaterial size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpMaterial) == 12, "hkpMaterial size");
 extern const hkTypeInfo hkpMaterialTypeInfo;
 const hkTypeInfo hkpMaterialTypeInfo(
     "hkpMaterial",

@@ -38,11 +38,11 @@ class character_proxy_cd_point_collector : public hkpAllCdPointCollector
 public:
     struct MustEndWithSemiColon; // no definition in PDB
 
-    static void* operator new(unsigned int, void*);
-    static void* operator new(unsigned int);
+    static void* operator new(size_t, void*);
+    static void* operator new(size_t);
     static void operator delete(void*, void*);
-    static void operator delete(void* p, unsigned int nbytes); // 0x00833820 (.h:57)
-    static void* operator new[](unsigned int, void*);
+    static void operator delete(void* p, size_t nbytes); // 0x00833820 (.h:57)
+    static void* operator new[](size_t, void*);
     static void operator delete[](void*, void*);
     virtual void addCdPoint(const hkpCdPoint& event); // vtbl+0x04 0x00830250 (:240)
     character_proxy_cd_point_collector(); // 0x008337F0

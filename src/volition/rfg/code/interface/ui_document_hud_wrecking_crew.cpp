@@ -45,7 +45,7 @@ struct wc_hud_doc_info
     bool (*should_render)(); // 0x0C
     void (*shutdown)(int); // 0x10
 };
-static_assert(sizeof(wc_hud_doc_info) == 0x14, "wc_hud_doc_info");
+OPENRFG_SIZE_ASSERT(sizeof(wc_hud_doc_info) == 0x14, "wc_hud_doc_info");
 
 // size 0x10
 struct wc_hud_data_item_info
@@ -55,7 +55,7 @@ struct wc_hud_data_item_info
     void (*init)(vint_data_item*); // 0x08
     void (*process)(vint_data_item*); // 0x0C
 };
-static_assert(sizeof(wc_hud_data_item_info) == 0x10, "wc_hud_data_item_info");
+OPENRFG_SIZE_ASSERT(sizeof(wc_hud_data_item_info) == 0x10, "wc_hud_data_item_info");
 
 static void wc_hud_doc_main_init(int doc_handle);
 static bool wc_hud_doc_main_should_render();

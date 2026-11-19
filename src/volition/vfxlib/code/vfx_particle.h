@@ -122,8 +122,8 @@ inline void vfx_copy_particle_base(const vfx_particle_base& from, rl_particle_ba
     to.random.w = from.random_float;
     to.lifetime = from.lifetime;
     to.emit_number = from.emit_number;
-    to.pad[0] = (float*)prev;
-    to.pad[1] = (float*)next;
+    to.pad[0] = (unsigned int)(unsigned long long)prev;
+    to.pad[1] = (unsigned int)(unsigned long long)next;
 }
 
 // 0x00C9B6F0 (.h:63)

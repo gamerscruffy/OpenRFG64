@@ -48,7 +48,7 @@ static void cleanupLoadedObjecthkContactPoint(void* p)
 {
     static_cast<hkContactPoint*>(p)->~hkContactPoint();
 }
-static_assert(sizeof(hkContactPoint) == 32, "hkContactPoint size");
+OPENRFG_SIZE_ASSERT(sizeof(hkContactPoint) == 32, "hkContactPoint size");
 extern const hkTypeInfo hkContactPointTypeInfo;
 const hkTypeInfo hkContactPointTypeInfo(
     "hkContactPoint",

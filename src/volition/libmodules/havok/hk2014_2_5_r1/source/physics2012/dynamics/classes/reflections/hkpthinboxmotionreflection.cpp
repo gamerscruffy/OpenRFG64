@@ -64,7 +64,7 @@ static const void* getVtablehkpThinBoxMotion()
     ::new (u.buf) hkpThinBoxMotion(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpThinBoxMotion) == 288, "hkpThinBoxMotion size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpThinBoxMotion) == 288, "hkpThinBoxMotion size");
 extern const hkTypeInfo hkpThinBoxMotionTypeInfo;
 const hkTypeInfo hkpThinBoxMotionTypeInfo(
     "hkpThinBoxMotion",

@@ -6,6 +6,7 @@
 
 #include "volition/rfg/code/geom/static_mesh.h"
 
+#include "volition/stream2/code/stream2.h"
 #include "volition/stream2/code/stream2_container.h"
 #include "volition/vlib/code/cfile/cfile.h"
 #include "volition/vlib/code/util/hash_table.h"
@@ -23,7 +24,7 @@ static data_hash_table<uint64_t,static_mesh*,&hash_uint64,256,unsigned short> St
 // 0x007F4850 (:38, LTCG: srid in EAX, filename in ECX)
 static uint64_t create_static_mesh_key(const char* filename, unsigned int srid)
 {
-    if (srid != 0 && ((stream2_container*)srid)->cdef->mode != SCM_CONTAINER)
+    if (srid != 0 && (stream2_sc_ptr(srid))->cdef->mode != SCM_CONTAINER)
     {
         srid = 0;
     }

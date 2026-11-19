@@ -58,7 +58,7 @@ static void cleanupLoadedObjecthkUuid(void* p)
 {
     static_cast<hkUuid*>(p)->~hkUuid();
 }
-static_assert(sizeof(hkUuid) == 16, "hkUuid size");
+OPENRFG_SIZE_ASSERT(sizeof(hkUuid) == 16, "hkUuid size");
 extern const hkTypeInfo hkUuidTypeInfo;
 const hkTypeInfo hkUuidTypeInfo(
     "hkUuid",

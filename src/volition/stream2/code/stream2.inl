@@ -24,7 +24,7 @@ stream2_data_hash<T, N, I>::~stream2_data_hash()
 template<typename T, int N, typename I>
 uint64_t stream2_data_hash<T, N, I>::make_key(const char* fname, unsigned int srid)
 {
-    const unsigned int unique = ((stream2_container*)srid)->cdef->mode == SCM_CONTAINER ? srid : 0;
+    const unsigned int unique = (stream2_sc_ptr(srid))->cdef->mode == SCM_CONTAINER ? srid : 0;
     return ((uint64_t)crc_stri(fname, 0) << 32) | unique;
 }
 

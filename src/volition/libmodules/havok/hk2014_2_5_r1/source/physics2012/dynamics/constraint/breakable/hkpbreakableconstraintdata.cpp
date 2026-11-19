@@ -34,9 +34,9 @@
 
 using namespace hkSolverSse;
 
-static_assert(sizeof(hkpBreakableConstraintData) == 0x30, "hkpBreakableConstraintData");
-static_assert(offsetof(hkpBreakableConstraintData, m_solverResultLimit) == 0x24, "hkpBreakableConstraintData::m_solverResultLimit");
-static_assert(sizeof(hkpBreakableConstraintData::Runtime) == 0x34, "hkpBreakableConstraintData::Runtime");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBreakableConstraintData) == 0x30, "hkpBreakableConstraintData");
+OPENRFG_SIZE_ASSERT(offsetof(hkpBreakableConstraintData, m_solverResultLimit) == 0x24, "hkpBreakableConstraintData::m_solverResultLimit");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBreakableConstraintData::Runtime) == 0x34, "hkpBreakableConstraintData::Runtime");
 
 // 0x00DF5340 (stub_impl.md S4 SD): hkpBridgeAtoms(f) points the bridge at the loaded wrapped data first, then
 // afterReflectNew points it at this data (the order of 2014.1 hkpBreakableConstraintData.cpp)

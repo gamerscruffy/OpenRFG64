@@ -25,7 +25,7 @@ namespace keen
         bool isMemoryBlockLocked[128]; // 0xA6C
         bool isMemoryTrackerInitialized; // 0xAEC
     };
-    static_assert(sizeof(MemorySystem) == 0xAF0, "MemorySystem size");
+    OPENRFG_SIZE_ASSERT(sizeof(MemorySystem) == 0xAF0, "MemorySystem size");
 
     static MemorySystem s_memorySystem; // 0x038B3160
     static MemorySystem* s_pMemorySystem; // 0x038B3C84

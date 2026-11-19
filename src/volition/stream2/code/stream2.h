@@ -179,4 +179,8 @@ bool stream2_read_container_data(cfile* f, mempool_base* pool, bool report_error
 stream2_container* stream2_get_first_container(); // 0x004A9FB0 (:2185)
 stream2_container* stream2_get_next_container(stream2_container* current); // 0x004A9FC0 (:2190)
 
+// Container ids (srid) are 32-bit: on x64 they are small ids mapped to the container pointer (stream2.cpp).
+unsigned int stream2_sc_id(const stream2_container* sc);
+stream2_container* stream2_sc_ptr(unsigned int srid);
+
 #include "volition/stream2/code/stream2.inl"

@@ -66,7 +66,7 @@ struct mp_syslink_find_servers_shell_info
     unsigned int control_id; // 0x6C
     int input_id; // 0x70
 };
-static_assert(sizeof(mp_syslink_find_servers_shell_info) == 0x74, "mp_syslink_find_servers_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_syslink_find_servers_shell_info) == 0x74, "mp_syslink_find_servers_shell_info");
 
 // ---- file-static globals
 // bool s_localization_is_loading (0x01663023) is used here too; placed in localization_shared.h.

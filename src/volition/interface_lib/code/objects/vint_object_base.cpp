@@ -9,6 +9,47 @@
 // interface_lib_unity.cpp after vint_object_types.cpp and vint_project.cpp, whose tables it reads.
 
 #include "volition/interface_lib/code/objects/vint_object_base.h"
+#include <unordered_map>
+
+// Object handles are 32-bit. On x64 they are small ids looked up in a table instead of the object address.
+unsigned int vint_handle_register(vint_object_base* obj);
+void vint_handle_unregister(unsigned int handle);
+vint_object_base* vint_handle_to_object(unsigned int handle);
+
+#ifdef OPENRFG_X64
+static std::unordered_map<unsigned int, vint_object_base*>& vint_handle_table()
+{
+    static std::unordered_map<unsigned int, vint_object_base*> table;
+    return table;
+}
+static unsigned int s_vintNextHandle = 0;
+unsigned int vint_handle_register(vint_object_base* obj)
+{
+    ++s_vintNextHandle;
+    if (s_vintNextHandle == 0 || s_vintNextHandle == 0xFFFFFFFFu)
+    {
+        s_vintNextHandle = 1;
+    }
+    vint_handle_table()[s_vintNextHandle] = obj;
+    return s_vintNextHandle;
+}
+void vint_handle_unregister(unsigned int handle)
+{
+    if (handle != 0)
+    {
+        vint_handle_table().erase(handle);
+    }
+}
+vint_object_base* vint_handle_to_object(unsigned int handle)
+{
+    auto it = vint_handle_table().find(handle);
+    return it == vint_handle_table().end() ? nullptr : it->second;
+}
+#else
+unsigned int vint_handle_register(vint_object_base* obj) { return (unsigned int)obj; }
+void vint_handle_unregister(unsigned int) {}
+vint_object_base* vint_handle_to_object(unsigned int handle) { return (vint_object_base*)handle; }
+#endif
 
 #include "volition/interface_lib/code/objects/vint_object_factory.h"
 #include "volition/interface_lib/code/objects/vint_object_types.h"
@@ -326,7 +367,7 @@ bool vint_object_base::init()
     m_name_crc = 0;
     m_document = nullptr;
     // the handle is the object's address
-    m_handle = (unsigned int)this;
+    m_handle = vint_handle_register(this);
     parent_object = nullptr;
     first_child = nullptr;
     next_sibling = nullptr;
@@ -344,6 +385,7 @@ void vint_object_base::destroy()
         child->destroy();
         child = next;
     }
+    vint_handle_unregister(m_handle);
     m_handle = 0;
     vint_dlist_remove(Name_hash_buckets[m_name_crc & 0x3F], this, &vint_object_base::name_hash_next, &vint_object_base::name_hash_prev);
     m_name_crc = 0;
@@ -662,8 +704,8 @@ vint_object_base* vint_object_base::find_object(unsigned int _handle, const vint
     {
         return nullptr;
     }
-    vint_object_base* obj = (vint_object_base*)_handle;
-    if (obj->m_handle != _handle || (_document != nullptr && obj->m_document != _document))
+    vint_object_base* obj = vint_handle_to_object(_handle);
+    if (obj == nullptr || obj->m_handle != _handle || (_document != nullptr && obj->m_document != _document))
     {
         return nullptr;
     }
@@ -934,6 +976,7 @@ vint_object_base* vint_object_base::create_new(vint_object_base* _parent, const 
     }
     if (!obj->init(_name, _parent->m_document))
     {
+        vint_handle_unregister(obj->m_handle);
         obj->m_handle = 0;
         info->factory->release(obj);
         return nullptr;
@@ -1206,7 +1249,11 @@ bool vint_object_set_property(unsigned int _obj_handle, unsigned int _prop_name_
     {
         return false;
     }
-    vint_object_base* obj = (vint_object_base*)_obj_handle;
+    vint_object_base* obj = vint_handle_to_object(_obj_handle);
+    if (obj == nullptr)
+    {
+        return false;
+    }
     vint_prop_mgr* mgr = vint_object_type_prop_mgr(obj->get_type());
     if (mgr == nullptr)
     {
@@ -1233,7 +1280,8 @@ bool vint_object_get_property(unsigned int _obj_handle, unsigned int _prop_name_
     {
         return false;
     }
-    return ((vint_object_base*)_obj_handle)->get_property_value(_prop_name_crc, _value, 0);
+    vint_object_base* o = vint_handle_to_object(_obj_handle);
+    return o != nullptr && o->get_property_value(_prop_name_crc, _value, 0);
 }
 
 // 0x00479400 (:1381)
@@ -1251,13 +1299,14 @@ bool vint_object_get_property(unsigned int _obj_handle, const char* _prop_name, 
     {
         return false;
     }
-    return ((vint_object_base*)_obj_handle)->get_property_value(name_crc, value, 0);
+    vint_object_base* o = vint_handle_to_object(_obj_handle);
+    return o != nullptr && o->get_property_value(name_crc, value, 0);
 }
 
 // 0x004608E0 (:1390)
 vint_object_base* vint_object_find(unsigned int _obj_handle)
 {
-    return (vint_object_base*)_obj_handle;
+    return vint_handle_to_object(_obj_handle);
 }
 
 // 0x0047FD80 (:1402)

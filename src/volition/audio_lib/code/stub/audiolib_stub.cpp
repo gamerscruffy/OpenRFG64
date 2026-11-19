@@ -88,10 +88,10 @@ struct audiolib_stub_reverb_definition
     keen::SoundSystem::BaseEffectDefinition base; // 0x00
     keen::SoundSystem::FXReverbParameter parameter; // 0x08
 };
-static_assert(sizeof(audiolib_stub_reverb_definition) == 0x34, "audiolib_stub_reverb_definition");
+OPENRFG_SIZE_ASSERT(sizeof(audiolib_stub_reverb_definition) == 0x34, "audiolib_stub_reverb_definition");
 // The per-wave arrays are sized with these (0x54 and 0x4C in rfg.exe).
-static_assert(sizeof(keen::SoundSystem::TemporarySoundDefinition) == 0x54, "TemporarySoundDefinition");
-static_assert(sizeof(keen::SoundFile) == 0x4C, "SoundFile");
+OPENRFG_SIZE_ASSERT(sizeof(keen::SoundSystem::TemporarySoundDefinition) == 0x54, "TemporarySoundDefinition");
+OPENRFG_SIZE_ASSERT(sizeof(keen::SoundFile) == 0x4C, "SoundFile");
 
 // Volition's y-up position as keen's z-up one.
 static keen::Vector3 audiolib_stub_keen_position(const vector& pos)
@@ -934,11 +934,24 @@ bool audiolib_process_inMemory_wavebank(audiolib_soundbank_data* pWaveBank)
         parameter3d.maxDistance = Audiolib_settings.min_max_distance_entries[foley_data->min_max_index].max_ext;
         // The data offset becomes a pointer in place, so the entry after the crc is the file's initialization data
         // {header, pData, size}. Only the header's 0x20 bytes are given as its size.
+#ifdef OPENRFG_X64
+        // x64: the in-place pointer would not fit the 4-byte offset field, so the initialization data is built on the
+        // side with the 64-bit layout {header 0x20, pData, dataSize}; the disk entry stays {crc, header, offset, size}.
+        struct { keen::SoundSystem::SoundFileHeader header; const void* pData; unsigned int dataSize; } init_data;
+        memcpy(&init_data.header, entry + 4, sizeof(init_data.header));
+        init_data.pData = (unsigned char*)pWaveBank->bank_buffer + *(unsigned int*)(entry + 0x24);
+        init_data.dataSize = *(unsigned int*)(entry + 0x28);
+#else
         *(unsigned char**)(entry + 0x24) = (unsigned char*)pWaveBank->bank_buffer + *(unsigned int*)(entry + 0x24);
+#endif
         keen::Resource* pResource = (keen::Resource*)&hw.soundFiles[i];
         hw.tmpSoundDef2D[i].create();
         hw.tmpSoundDef3D[i].create();
+#ifdef OPENRFG_X64
+        if (!factory.initializeResource(pResource, 0, &init_data, 0x20))
+#else
         if (!factory.initializeResource(pResource, 0, entry + 4, 0x20))
+#endif
         {
             keen::debug::nativePrintArgs("[Audiolib] <audiolib_process_inMemory_wavebank> Failed to initialize Resource! \n");
             return false;

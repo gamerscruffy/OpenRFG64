@@ -251,7 +251,7 @@ static const void* getVtablehkpWorldCinfo()
     ::new (u.buf) hkpWorldCinfo(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpWorldCinfo) == 240, "hkpWorldCinfo size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpWorldCinfo) == 240, "hkpWorldCinfo size");
 extern const hkTypeInfo hkpWorldCinfoTypeInfo;
 const hkTypeInfo hkpWorldCinfoTypeInfo(
     "hkpWorldCinfo",

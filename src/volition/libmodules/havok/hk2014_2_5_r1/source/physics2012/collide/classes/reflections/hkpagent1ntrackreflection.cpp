@@ -58,7 +58,7 @@ static void cleanupLoadedObjecthkpAgent1nSector(void* p)
 {
     static_cast<hkpAgent1nSector*>(p)->~hkpAgent1nSector();
 }
-static_assert(sizeof(hkpAgent1nSector) == 512, "hkpAgent1nSector size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpAgent1nSector) == 512, "hkpAgent1nSector size");
 extern const hkTypeInfo hkpAgent1nSectorTypeInfo;
 const hkTypeInfo hkpAgent1nSectorTypeInfo(
     "hkpAgent1nSector",

@@ -68,7 +68,11 @@ namespace hkAgent3
     enum
     {
         SIZE_OF_HEADER = 16, // size of the end command (HK_REAL_ALIGNMENT)
+#ifdef OPENRFG_X64
+        MAX_SIZE = 192,
+#else
         MAX_SIZE = 128,
+#endif
         MAX_NET_SIZE = MAX_SIZE - (2 * SIZE_OF_HEADER), // size of a tim entry
     };
 

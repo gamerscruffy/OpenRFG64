@@ -50,9 +50,9 @@ private:
     data m_profile_data; // 0x00
     object_effect* m_object_effect_p; // 0xB0
 };
-static_assert(sizeof(object_effect_profile::data::entry<int>) == 0x1C, "object_effect_profile::data::entry<int>");
-static_assert(sizeof(object_effect_profile::data) == 0xB0, "object_effect_profile::data");
-static_assert(sizeof(object_effect_profile) == 0xB4, "object_effect_profile");
+OPENRFG_SIZE_ASSERT(sizeof(object_effect_profile::data::entry<int>) == 0x1C, "object_effect_profile::data::entry<int>");
+OPENRFG_SIZE_ASSERT(sizeof(object_effect_profile::data) == 0xB0, "object_effect_profile::data");
+OPENRFG_SIZE_ASSERT(sizeof(object_effect_profile) == 0xB4, "object_effect_profile");
 
 // <int> 0x00744170 (.h:28)
 // avg, maximum and last start undefined, as in the original.

@@ -73,7 +73,7 @@ static const void* getVtablehkpTriSampledHeightFieldCollection()
     ::new (u.buf) hkpTriSampledHeightFieldCollection(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpTriSampledHeightFieldCollection) == 64, "hkpTriSampledHeightFieldCollection size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpTriSampledHeightFieldCollection) == 64, "hkpTriSampledHeightFieldCollection size");
 extern const hkTypeInfo hkpTriSampledHeightFieldCollectionTypeInfo;
 const hkTypeInfo hkpTriSampledHeightFieldCollectionTypeInfo(
     "hkpTriSampledHeightFieldCollection",

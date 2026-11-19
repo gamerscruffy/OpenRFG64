@@ -72,7 +72,7 @@ struct tutorials_menu_option_info
     char* m_video; // 0x04
     unsigned int m_description_crc; // 0x08
 };
-static_assert(sizeof(tutorials_menu_option_info) == 0xC, "tutorials_menu_option_info");
+OPENRFG_SIZE_ASSERT(sizeof(tutorials_menu_option_info) == 0xC, "tutorials_menu_option_info");
 
 // size 0xC4
 struct mp_tutorials_shell_info
@@ -90,7 +90,7 @@ struct mp_tutorials_shell_info
     tutorial_video_info bink_info; // 0x74
     rfg_split_mempool* _bink_mempool; // 0xC0
 };
-static_assert(sizeof(mp_tutorials_shell_info) == 0xC4, "mp_tutorials_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_tutorials_shell_info) == 0xC4, "mp_tutorials_shell_info");
 
 // ---- file-static globals
 static void tutorials_process_data_item_hint_text(vint_data_item* vdi);

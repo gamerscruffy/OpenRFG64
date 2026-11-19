@@ -6,7 +6,9 @@
 // HK8: an incremental constraint solve from the TOI time, activating the entities the violated constraints reach).
 // The monitor timers are not reproduced.
 
+#include <stddef.h>
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/world/simulation/continuous/hkpcontinuoussimulation.h"
+static void dbgchk3(hkpWorld* w,const char* tag);
 
 #include <math.h>
 #include <string.h>
@@ -258,20 +260,20 @@ void hkpContinuousSimulation::removeToiEventsOfEntities(hkpEntity** entities, in
     {
         return;
     }
-    hkMap<unsigned long, unsigned long> map;
+    hkMap<unsigned __int64, unsigned __int64> map;
     if (numEntities != 0)
     {
         map.reserve(numEntities);
         for (int i = 0; i < numEntities; i++)
         {
-            map.insert((unsigned long)entities[i], 0);
+            map.insert((unsigned __int64)(size_t)entities[i], 0);
         }
     }
     for (int i = 0; i < m_toiEvents.getSize(); i++)
     {
         const hkpToiEvent& event = m_toiEvents[i];
-        const int a = map.findKey((unsigned long)event.m_entities[0]);
-        const int b = map.findKey((unsigned long)event.m_entities[1]);
+        const int a = map.findKey((unsigned __int64)(size_t)event.m_entities[0]);
+        const int b = map.findKey((unsigned __int64)(size_t)event.m_entities[1]);
         if (map.isValid(a) || map.isValid(b))
         {
             hkContinuousSimulation_removeEventAndToi(m_toiEvents, i);
@@ -442,7 +444,9 @@ void hkpContinuousSimulation::collideEntitiesBroadPhaseContinuous(hkpEntity** en
     {
         hkpTypedBroadPhaseDispatcher::removeDuplicates(newPairs, delPairs);
     }
+    dbgchk3(world,"beforeWait");
     waitForSolverExport(exportFinished);
+    dbgchk3(world,"afterWait");
     if (delPairs.getSize() + newPairs.getSize() > 0)
     {
         world->lockIslandForConstraintUpdate(entities[0]->m_simulationIsland);
@@ -525,12 +529,12 @@ void hkpContinuousSimulation::collideEntitiesNeedingPsiCollisionDetectionNarrowP
         hkpConstraintOwner* m_owner;
     };
     m_world->m_criticalOperationsLockCount++;
-    hkMap<unsigned long, unsigned long> processed;
+    hkMap<unsigned __int64, unsigned __int64> processed;
     hkArray<AgentAndOwner, hkContainerHeapAllocator> agents;
     hkPointerMap<unsigned int, hkpEntity*, hkContainerHeapAllocator>::Map& map = entitiesNeedingPsiCollisionDetection.m_map;
     for (int slot = 0; slot <= map.m_hashMod; slot++)
     {
-        if (map.m_elem[slot].key == (unsigned long)-1)
+        if (map.m_elem[slot].key == (decltype(map.m_elem[slot].key))-1)
         {
             continue;
         }
@@ -540,7 +544,7 @@ void hkpContinuousSimulation::collideEntitiesNeedingPsiCollisionDetectionNarrowP
         for (int i = 0; i < numEntries; i++)
         {
             hkpAgentNnEntry* entry = entries[i].m_agentEntry;
-            if (processed.getWithDefault((unsigned long)entry, 0) != 0)
+            if (processed.getWithDefault((unsigned __int64)(size_t)entry, 0) != 0)
             {
                 continue;
             }
@@ -558,7 +562,7 @@ void hkpContinuousSimulation::collideEntitiesNeedingPsiCollisionDetectionNarrowP
                 hkpEntity* b = hkContinuousSimulation_entity(entry->m_collidable[1]);
                 owner = ((hkpEntity*)((size_t)a ^ (size_t)b ^ (size_t)entity))->m_simulationIsland;
             }
-            processed.insert((unsigned long)entry, 1);
+            processed.insert((unsigned __int64)(size_t)entry, 1);
             AgentAndOwner& item = agents.expandOne();
             item.m_entry = entry;
             item.m_owner = owner;
@@ -748,7 +752,7 @@ void hkpContinuousSimulation::reintegrateAndRecollideEntities(hkpEntity** entiti
                 hkSweptTransformUtil::backStepMotionState(m_currentTime, entities[i]->m_motion.m_motionState);
             }
         }
-        hkRigidMotionUtilStep(stepInfo, (hkpMotion* const*)entities, numEntities, 0xE0); // the offset of hkpEntity::m_motion
+        hkRigidMotionUtilStep(stepInfo, (hkpMotion* const*)entities, numEntities, (int)offsetof(hkpEntity, m_motion)); // the offset of hkpEntity::m_motion
         hkpEntityAabbUtil::entityBatchRecalcAabb(world->m_collisionInput, entities, numEntities);
     }
     resetCollisionInformationForEntities(entities, numEntities, world, RESET_TOI);
@@ -768,6 +772,10 @@ void hkpContinuousSimulation::reintegrateAndRecollideEntities(hkpEntity** entiti
     world->m_collisionInput->m_stepInfo = savedStepInfo;
 }
 
+
+#include <stdio.h>
+extern void openrfg_log(const char*);
+static void dbgchk3(hkpWorld* w,const char* tag){ static int n=0; if(n>6) return; for(int p=0;p<2;p++){ const hkArray<hkpSimulationIsland*>& L = p==0? w->m_activeSimulationIslands : w->m_inactiveSimulationIslands; for(int i=0;i<L.getSize();i++){ hkpSimulationIsland* is=L[i]; for(int j=0;j<is->m_entities.getSize();j++){ hkpEntity* e=is->m_entities[j]; if(e->m_simulationIsland!=is){ n++; char b[160]; snprintf(b,sizeof b,"DBGCHK3 %s e=%p isl=%p expect=%p pass=%d i=%d j=%d",tag,(void*)e,(void*)e->m_simulationIsland,(void*)is,p,i,j); openrfg_log(b); if(n>6) return; } } } } }
 // 0x00DFD940: after a failed step the queued TOIs are dropped; then the broadphase and the continuous narrowphase of
 // every active island
 void hkpContinuousSimulation::collideInternal(const hkStepInfo& stepInfoIn)
@@ -781,6 +789,7 @@ void hkpContinuousSimulation::collideInternal(const hkStepInfo& stepInfoIn)
         }
         m_toiEvents.m_size = 0;
     }
+    dbgchk3(m_world,"collideStart");
     m_world->m_dynamicsStepInfo.m_stepInfo = stepInfoIn;
     m_world->m_collisionInput->m_stepInfo = stepInfoIn;
     {

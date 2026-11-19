@@ -50,7 +50,7 @@ static void cleanupLoadedObjecthkpSimpleShapePhantomCollisionDetail(void* p)
 {
     static_cast<hkpSimpleShapePhantom::CollisionDetail*>(p)->~CollisionDetail();
 }
-static_assert(sizeof(hkpSimpleShapePhantom::CollisionDetail) == 4, "hkpSimpleShapePhantom::CollisionDetail size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSimpleShapePhantom::CollisionDetail) == 4, "hkpSimpleShapePhantom::CollisionDetail size");
 extern const hkTypeInfo hkpSimpleShapePhantomCollisionDetailTypeInfo;
 const hkTypeInfo hkpSimpleShapePhantomCollisionDetailTypeInfo(
     "hkpSimpleShapePhantomCollisionDetail",
@@ -115,7 +115,7 @@ static const void* getVtablehkpSimpleShapePhantom()
     ::new (u.buf) hkpSimpleShapePhantom(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpSimpleShapePhantom) == 352, "hkpSimpleShapePhantom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSimpleShapePhantom) == 352, "hkpSimpleShapePhantom size");
 extern const hkTypeInfo hkpSimpleShapePhantomTypeInfo;
 const hkTypeInfo hkpSimpleShapePhantomTypeInfo(
     "hkpSimpleShapePhantom",

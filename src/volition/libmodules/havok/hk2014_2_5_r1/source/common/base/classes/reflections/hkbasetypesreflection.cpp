@@ -50,7 +50,7 @@ static void cleanupLoadedObjecthkFloat16(void* p)
 {
     static_cast<hkFloat16*>(p)->~hkFloat16();
 }
-static_assert(sizeof(hkFloat16) == 2, "hkFloat16 size");
+OPENRFG_SIZE_ASSERT(sizeof(hkFloat16) == 2, "hkFloat16 size");
 extern const hkTypeInfo hkFloat16TypeInfo;
 const hkTypeInfo hkFloat16TypeInfo(
     "hkFloat16",

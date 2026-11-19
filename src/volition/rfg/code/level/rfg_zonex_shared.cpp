@@ -447,7 +447,7 @@ bool rfg_zonex_merge_persistent_zone_files(zone_file* z, const char* start_zone,
     // The early returns keep the scratch pool marks (as in the original).
     const unsigned int start_mark = scratch_pool.mark();
     bool is_territory = false;
-    const char** files = (const char**)scratch_pool.alloc(0x404, 0);
+    const char** files = (const char**)scratch_pool.alloc(0x101 * sizeof(const char*), 0);
     char name[64];
     char ext[64];
     sprintf(name, "p_%s", start_zone);

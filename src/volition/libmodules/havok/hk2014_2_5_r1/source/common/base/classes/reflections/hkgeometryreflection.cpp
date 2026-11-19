@@ -52,7 +52,7 @@ static void cleanupLoadedObjecthkGeometryTriangle(void* p)
 {
     static_cast<hkGeometry::Triangle*>(p)->~Triangle();
 }
-static_assert(sizeof(hkGeometry::Triangle) == 16, "hkGeometry::Triangle size");
+OPENRFG_SIZE_ASSERT(sizeof(hkGeometry::Triangle) == 16, "hkGeometry::Triangle size");
 extern const hkTypeInfo hkGeometryTriangleTypeInfo;
 const hkTypeInfo hkGeometryTriangleTypeInfo(
     "hkGeometryTriangle",
@@ -127,7 +127,7 @@ static const void* getVtablehkGeometry()
     ::new (u.buf) hkGeometry(f);
     return u.ptr;
 }
-static_assert(sizeof(hkGeometry) == 32, "hkGeometry size");
+OPENRFG_SIZE_ASSERT(sizeof(hkGeometry) == 32, "hkGeometry size");
 extern const hkTypeInfo hkGeometryTypeInfo;
 const hkTypeInfo hkGeometryTypeInfo(
     "hkGeometry",

@@ -1,14 +1,23 @@
 # OpenRFG: reimplementation of rfg.exe (Red Faction Guerrilla Re-Mars-tered).
 #
-# Only 32-bit x86 builds are supported: every recovered layout matches the original binary.
+# 32-bit x86 is the reference build (every recovered layout matches the original binary); 64-bit is experimental.
 # Configure from an "x86 Native Tools" prompt (or with vcvars32), for example:
 #   cmake -S . -B build/x86 -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 #   cmake --build build/x86
 cmake_minimum_required(VERSION 3.20)
 project(OpenRFG C CXX)
 
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
-    message(FATAL_ERROR "OpenRFG must be built for 32-bit x86 (use the x86 MSVC toolchain).")
+# 64-bit port (experimental): the original is 32-bit, so a 64-bit build is expected to hit compile errors until the
+# code is ported. The prebuilt platform DLLs/import libs in lib/win32 are 32-bit only, so a 64-bit build must use the
+# stand-ins (OPENRFG_STUB_SWAPI/BINK/DISCORD/GFESDK, forced ON below).
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(OPENRFG_X64 ON)
+    message(WARNING "OpenRFG: building 64-bit (experimental). Platform DLLs are replaced by stand-ins.")
+    add_compile_definitions(OPENRFG_X64=1)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/FI${CMAKE_SOURCE_DIR}/src/openrfg_x64.h>)
+else()
+    set(OPENRFG_X64 OFF)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/FI${CMAKE_SOURCE_DIR}/src/openrfg_x64.h>)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)

@@ -101,7 +101,7 @@ struct mp_change_matchmaking_menu_info
     int input_id; // 0x70
     unsigned int selection_tween_handle; // 0x74
 };
-static_assert(sizeof(mp_change_matchmaking_menu_info) == 0x78, "mp_change_matchmaking_menu_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_change_matchmaking_menu_info) == 0x78, "mp_change_matchmaking_menu_info");
 
 // ---- file-static globals
 static void cmm_process_data_item_hint_text(vint_data_item* vdi);
@@ -424,7 +424,7 @@ static void cmm_process_data_item_playlist_info(vint_data_item* vdi)
     else
     {
         // The modes and the different levels of the entries (a ring).
-        const multi_level_info** levels = (const multi_level_info**)Common_mempool.alloc(multi_game_settings_num_levels() * 4, 0);
+        const multi_level_info** levels = (const multi_level_info**)Common_mempool.alloc(multi_game_settings_num_levels() * sizeof(void*), 0);
         int num_levels = 0;
         // Magic number: 8 is MGPM_NUM_MODES.
         bool modes[8] = {};

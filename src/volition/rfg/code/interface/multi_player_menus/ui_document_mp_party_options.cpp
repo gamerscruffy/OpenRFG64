@@ -69,7 +69,7 @@ struct mp_party_options_menu_info
     unsigned int control_id; // 0x30
     int input_id; // 0x34
 };
-static_assert(sizeof(mp_party_options_menu_info) == 0x38, "mp_party_options_menu_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_party_options_menu_info) == 0x38, "mp_party_options_menu_info");
 
 // ---- file-static globals
 static void party_options_process_data_item_hint_text(vint_data_item* vdi);

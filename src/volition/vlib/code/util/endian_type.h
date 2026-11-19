@@ -68,7 +68,9 @@ struct et_sized_native_pointer
         struct pointer_type
         {
             T* m_pointer; // 0x00
+#ifndef OPENRFG_X64
             void* m_pointer_padding; // 0x04
+#endif // x64: the pointer already fills the 8 bytes
         };
 
         pointer_type m_pointer_type; // 0x00

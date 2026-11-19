@@ -441,6 +441,55 @@ void string_hash_table::load(const unsigned char* data, int& offset)
     }
 }
 
+
+// x64: hash buckets are 4-byte self-relative offsets, so the bucket records must stay within 2 GB of the table. A
+// dynamic (heap) pool can hand out blocks GBs apart, so such a table gets one arena right after its own memory.
+struct near_arena { const void* owner; unsigned char* base; unsigned int size; unsigned int used; };
+static near_arena Near_arenas[16];
+static void* near_alloc(const void* owner, mempool_base* pool, unsigned int size, unsigned int align)
+{
+#ifdef OPENRFG_X64
+    for (int i = 0; i < 16; i++)
+    {
+        near_arena& a = Near_arenas[i];
+        if (a.owner == owner)
+        {
+            unsigned int pos = (a.used + 15u) & ~15u;
+            if (pos + size <= a.size)
+            {
+                a.used = pos + size;
+                return a.base + pos;
+            }
+            break;
+        }
+    }
+#endif
+    return pool->alloc(size, align);
+}
+static void near_arena_register(const void* owner, unsigned char* base, unsigned int size)
+{
+#ifdef OPENRFG_X64
+    for (int i = 0; i < 16; i++)
+    {
+        if (Near_arenas[i].owner == nullptr || Near_arenas[i].owner == owner)
+        {
+            Near_arenas[i].owner = owner;
+            Near_arenas[i].base = base;
+            Near_arenas[i].size = size;
+            Near_arenas[i].used = 0;
+            return;
+        }
+    }
+#endif
+}
+void openrfg_log(const char*);
+static void dbg_hex(const char* tag, const void* a, const void* b, const void* c)
+{
+    char m[160]; int n=0; const char* t=tag; while(*t) m[n++]=*t++;
+    const void* v[3]={a,b,c};
+    for(int k=0;k<3;k++){ m[n++]=' '; unsigned long long x=(unsigned long long)v[k]; for(int d=15;d>=0;d--){ m[n+d]="0123456789ABCDEF"[x&15]; x>>=4;} n+=16; }
+    m[n]=0; openrfg_log(m);
+}
 // 0x005C9250 (:710)
 void string_hash_table::create_empty(int hash_table_size, mempool_base* _mempool_to_use, int string_pool_size)
 {
@@ -451,12 +500,37 @@ void string_hash_table::create_empty(int hash_table_size, mempool_base* _mempool
         string_pool_size = 0x32000; // magic number: the default string pool size
     }
     initial_string_pool_size = string_pool_size;
+#ifdef OPENRFG_X64
+    // One block (strings, bucket heads, bucket records) so every self-relative offset fits in 32 bits even when the
+    // pool is a heap pool whose blocks can be GBs apart.
+    unsigned char* big = nullptr;
+    unsigned int big_head = ((unsigned int)string_pool_size + 15u) & ~15u;
+    unsigned int big_arena = (unsigned int)hash_table_size * STRING_HASH_BUCKET_RECORDS * sizeof(hash_entry) * 2 + 0x20000;
+    if (_mempool_to_use->is_dynamic())
+    {
+        big = (unsigned char*)_mempool_to_use->alloc(big_head + (unsigned int)hash_table_size * 4 + 16 + big_arena, 16);
+    }
+    void* mem = big != nullptr ? (void*)big : _mempool_to_use->alloc(string_pool_size, 4);
+#else
     void* mem = _mempool_to_use->alloc(string_pool_size, 4);
+#endif
     init_static_mempool(mem, string_pool_size, "string_hash_table", 1, 0);
     end_pos = string_pool_size;
     number_of_strings = 0;
     mark_number_of_strings = 0;
+#ifdef OPENRFG_X64
+    if (big != nullptr)
+    {
+        hash_table = (et_ptr_offset<hash_entry,1>*)(big + big_head);
+        near_arena_register(this, big + big_head + (unsigned int)hash_table_size * 4 + 16, big_arena);
+    }
+    else
+    {
+        hash_table = (et_ptr_offset<hash_entry,1>*)mempool_to_use->alloc(hash_table_size * 4, 4);
+    }
+#else
     hash_table = (et_ptr_offset<hash_entry,1>*)mempool_to_use->alloc(hash_table_size * 4, 4);
+#endif
     num_hash_table_entries = hash_table_size;
     for (int i = 0; i < num_hash_table_entries; i++)
     {
@@ -487,7 +561,10 @@ char* string_hash_table::add_string(const char* str, short user_data)
     et_ptr_offset<hash_entry,1>& bucket = hash_table[index];
     if (string_hash_bucket(bucket) == nullptr)
     {
-        bucket.from_pointer((hash_entry*)mempool_to_use->alloc(STRING_HASH_BUCKET_RECORDS * sizeof(hash_entry), 1));
+        hash_entry* nb = (hash_entry*)near_alloc(this, mempool_to_use, STRING_HASH_BUCKET_RECORDS * sizeof(hash_entry), 1);
+        { static int dn=0; if(dn++<3) dbg_hex("DBGREAL pool newbucket table", (void*)mempool_to_use, nb, hash_table); }
+        { long long dd=(char*)nb-(char*)&bucket; static int fn=0; if((dd>0x40000000LL||dd<-0x40000000LL)&&fn++<2){ dbg_hex("DBGFAR pool base nb", (void*)mempool_to_use, mempool_to_use->get_base(), nb); openrfg_log(mempool_to_use->get_name()); } }
+        bucket.from_pointer(nb);
         hash_entry* records = string_hash_bucket(bucket);
         if (records == nullptr)
         {
@@ -509,7 +586,7 @@ char* string_hash_table::add_string(const char* str, short user_data)
             // Grow to slot + 16 records: copy the old records (rebasing their self-relative string offsets), mark
             // the new ones free and store the new capacity in the first record.
             const int new_capacity = slot + STRING_HASH_BUCKET_RECORDS;
-            hash_entry* grown = (hash_entry*)mempool_to_use->alloc(new_capacity * sizeof(hash_entry), 0);
+            hash_entry* grown = (hash_entry*)near_alloc(this, mempool_to_use, new_capacity * sizeof(hash_entry), 0);
             for (short i = 0; i < records[0].list_size; i++)
             {
                 grown[i].str.set_offset(records[i].str.get_offset() + (int)((char*)&records[i] - (char*)&grown[i]));

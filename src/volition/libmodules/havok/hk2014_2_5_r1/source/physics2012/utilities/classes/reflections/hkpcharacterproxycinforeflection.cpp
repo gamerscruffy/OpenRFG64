@@ -261,7 +261,7 @@ static const void* getVtablehkpCharacterProxyCinfo()
     ::new (u.buf) hkpCharacterProxyCinfo(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpCharacterProxyCinfo) == 144, "hkpCharacterProxyCinfo size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpCharacterProxyCinfo) == 144, "hkpCharacterProxyCinfo size");
 extern const hkTypeInfo hkpCharacterProxyCinfoTypeInfo;
 const hkTypeInfo hkpCharacterProxyCinfoTypeInfo(
     "hkpCharacterProxyCinfo",

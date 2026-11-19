@@ -68,7 +68,7 @@ static void cleanupLoadedObjecthkMultiThreadCheck(void* p)
 {
     static_cast<hkMultiThreadCheck*>(p)->~hkMultiThreadCheck();
 }
-static_assert(sizeof(hkMultiThreadCheck) == 12, "hkMultiThreadCheck size");
+OPENRFG_SIZE_ASSERT(sizeof(hkMultiThreadCheck) == 12, "hkMultiThreadCheck size");
 extern const hkTypeInfo hkMultiThreadCheckTypeInfo;
 const hkTypeInfo hkMultiThreadCheckTypeInfo(
     "hkMultiThreadCheck",

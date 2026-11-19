@@ -4,6 +4,67 @@
 // operator[], operator T* and operator-> only.
 #pragma once
 
+#ifdef OPENRFG_X64
+#include <intrin.h>
+// x64: a self-relative 32-bit offset cannot reach a target more than 2 GB away (the heaps are far apart). Such a
+// target goes in a global table and the offset holds 0x7F000000 + its index (a real distance never reaches that).
+namespace et_far
+{
+static const int Base = 0x7F000000;
+static const unsigned int Max_entries = 0x100000;
+static const unsigned int Hash_size = 0x200000;
+struct tables
+{
+    void* targets[Max_entries];
+    unsigned int hash[Hash_size]; // index + 1, 0 = empty
+    unsigned int count;
+    volatile long lock;
+};
+inline tables& get_tables()
+{
+    static tables t;
+    return t;
+}
+inline int far_index_of(const void* target)
+{
+    tables& t = get_tables();
+    while (_InterlockedCompareExchange(&t.lock, 1, 0) != 0)
+    {
+    }
+    unsigned long long k = (unsigned long long)target;
+    unsigned int h = (unsigned int)((k >> 4) * 0x9E3779B1u) & (Hash_size - 1);
+    int result = -1;
+    for (;;)
+    {
+        const unsigned int e = t.hash[h];
+        if (e == 0)
+        {
+            if (t.count < Max_entries)
+            {
+                t.targets[t.count] = (void*)target;
+                t.hash[h] = t.count + 1;
+                result = (int)t.count;
+                t.count++;
+            }
+            break;
+        }
+        if (t.targets[e - 1] == target)
+        {
+            result = (int)(e - 1);
+            break;
+        }
+        h = (h + 1) & (Hash_size - 1);
+    }
+    _InterlockedExchange(&t.lock, 0);
+    return result;
+}
+inline void* far_target(int offset)
+{
+    return get_tables().targets[offset - Base];
+}
+} // namespace et_far
+#endif
+
 // <char,0> 0x00595630 (.h:460)
 template<typename T, int NULLABLE>
 int et_ptr_offset<T, NULLABLE>::get_offset() const
@@ -27,6 +88,12 @@ T* et_ptr_offset<T, NULLABLE>::to_pointer() const
     {
         return nullptr;
     }
+#ifdef OPENRFG_X64
+    if (m_offset >= et_far::Base)
+    {
+        return (T*)et_far::far_target(m_offset);
+    }
+#endif
     return (T*)((char*)this + m_offset);
 }
 
@@ -40,6 +107,20 @@ void et_ptr_offset<T, NULLABLE>::from_pointer(T* const value)
         m_offset = -1;
         return;
     }
+#ifdef OPENRFG_X64
+    {
+        const long long d = (long long)((char*)value - (char*)this);
+        if (d > 0x7EFFFFFFLL || d < -0x80000000LL)
+        {
+            const int index = et_far::far_index_of(value);
+            if (index >= 0)
+            {
+                m_offset = et_far::Base + index;
+                return;
+            }
+        }
+    }
+#endif
     m_offset = (int)((char*)value - (char*)this);
 }
 

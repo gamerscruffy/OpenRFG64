@@ -33,7 +33,7 @@ struct vint_document_lookup
     char filename[64]; // 0x48
     char fname_base[64]; // 0x88
 };
-static_assert(sizeof(vint_document_lookup) == 0xC8, "vint_document_lookup");
+OPENRFG_SIZE_ASSERT(sizeof(vint_document_lookup) == 0xC8, "vint_document_lookup");
 
 // ---- public globals
 vint_project_settings Vint_project_settings; // 0x01A47B98

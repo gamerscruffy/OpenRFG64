@@ -64,7 +64,7 @@ static void cleanupLoadedObjecthkpSimpleContactConstraintAtom(void* p)
 {
     static_cast<hkpSimpleContactConstraintAtom*>(p)->~hkpSimpleContactConstraintAtom();
 }
-static_assert(sizeof(hkpSimpleContactConstraintAtom) == 48, "hkpSimpleContactConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSimpleContactConstraintAtom) == 48, "hkpSimpleContactConstraintAtom size");
 extern const hkTypeInfo hkpSimpleContactConstraintAtomTypeInfo;
 const hkTypeInfo hkpSimpleContactConstraintAtomTypeInfo(
     "hkpSimpleContactConstraintAtom",

@@ -76,7 +76,7 @@ static void cleanupLoadedObjecthkpExtendedMeshShapeSubpart(void* p)
 {
     static_cast<hkpExtendedMeshShape::Subpart*>(p)->~Subpart();
 }
-static_assert(sizeof(hkpExtendedMeshShape::Subpart) == 20, "hkpExtendedMeshShape::Subpart size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpExtendedMeshShape::Subpart) == 20, "hkpExtendedMeshShape::Subpart size");
 extern const hkTypeInfo hkpExtendedMeshShapeSubpartTypeInfo;
 const hkTypeInfo hkpExtendedMeshShapeSubpartTypeInfo(
     "hkpExtendedMeshShapeSubpart",
@@ -151,7 +151,7 @@ static void cleanupLoadedObjecthkpExtendedMeshShapeTrianglesSubpart(void* p)
 {
     static_cast<hkpExtendedMeshShape::TrianglesSubpart*>(p)->~TrianglesSubpart();
 }
-static_assert(sizeof(hkpExtendedMeshShape::TrianglesSubpart) == 112, "hkpExtendedMeshShape::TrianglesSubpart size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpExtendedMeshShape::TrianglesSubpart) == 112, "hkpExtendedMeshShape::TrianglesSubpart size");
 extern const hkTypeInfo hkpExtendedMeshShapeTrianglesSubpartTypeInfo;
 const hkTypeInfo hkpExtendedMeshShapeTrianglesSubpartTypeInfo(
     "hkpExtendedMeshShapeTrianglesSubpart",
@@ -205,7 +205,7 @@ static void cleanupLoadedObjecthkpExtendedMeshShapeShapesSubpart(void* p)
 {
     static_cast<hkpExtendedMeshShape::ShapesSubpart*>(p)->~ShapesSubpart();
 }
-static_assert(sizeof(hkpExtendedMeshShape::ShapesSubpart) == 64, "hkpExtendedMeshShape::ShapesSubpart size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpExtendedMeshShape::ShapesSubpart) == 64, "hkpExtendedMeshShape::ShapesSubpart size");
 extern const hkTypeInfo hkpExtendedMeshShapeShapesSubpartTypeInfo;
 const hkTypeInfo hkpExtendedMeshShapeShapesSubpartTypeInfo(
     "hkpExtendedMeshShapeShapesSubpart",
@@ -336,7 +336,7 @@ static const void* getVtablehkpExtendedMeshShape()
     ::new (u.buf) hkpExtendedMeshShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpExtendedMeshShape) == 240, "hkpExtendedMeshShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpExtendedMeshShape) == 240, "hkpExtendedMeshShape size");
 extern const hkTypeInfo hkpExtendedMeshShapeTypeInfo;
 const hkTypeInfo hkpExtendedMeshShapeTypeInfo(
     "hkpExtendedMeshShape",

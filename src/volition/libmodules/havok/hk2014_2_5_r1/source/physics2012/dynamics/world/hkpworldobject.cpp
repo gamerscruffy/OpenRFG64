@@ -39,7 +39,7 @@ hkpWorldObject::hkpWorldObject(hkFinishLoadedObjectFlag flag)
         m_collidable.m_boundingVolumeData.m_childShapeKeys = nullptr;
         m_collidable.m_boundingVolumeData.m_min[0] = 1;
         m_collidable.m_boundingVolumeData.m_max[0] = 0;
-        m_collidable.m_broadPhaseHandle.m_ownerOffset = -0x14; // the collidable is 0x14 bytes before its handle
+        m_collidable.m_broadPhaseHandle.m_ownerOffset = (signed char)((char*)&m_collidable - (char*)&m_collidable.m_broadPhaseHandle); // 0x14 bytes before on 32-bit
     }
     m_multiThreadCheck.m_threadId = 0xFFFFFFF1;
     m_multiThreadCheck.m_markCount = 0x8000;
@@ -61,7 +61,7 @@ hkpWorldObject::~hkpWorldObject()
 // 0x00DF4660
 void hkpWorldObject::afterReflectNew()
 {
-    m_collidable.m_ownerOffset = -0x10;
+    m_collidable.m_ownerOffset = (signed char)((char*)this - (char*)&m_collidable); // -0x10 on 32-bit
 }
 
 // 0x00DF45D0, 0x00DF45E0: only rigid bodies and shape phantoms change their shape

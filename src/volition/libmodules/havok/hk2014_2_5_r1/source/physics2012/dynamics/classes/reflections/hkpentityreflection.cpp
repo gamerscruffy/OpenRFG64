@@ -57,7 +57,7 @@ static void cleanupLoadedObjecthkpEntitySmallArraySerializeOverrideType(void* p)
 {
     static_cast<hkpEntity::SmallArraySerializeOverrideType*>(p)->~SmallArraySerializeOverrideType();
 }
-static_assert(sizeof(hkpEntity::SmallArraySerializeOverrideType) == 8, "hkpEntity::SmallArraySerializeOverrideType size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpEntity::SmallArraySerializeOverrideType) == 8, "hkpEntity::SmallArraySerializeOverrideType size");
 extern const hkTypeInfo hkpEntitySmallArraySerializeOverrideTypeTypeInfo;
 const hkTypeInfo hkpEntitySmallArraySerializeOverrideTypeTypeInfo(
     "hkpEntitySmallArraySerializeOverrideType",
@@ -112,7 +112,7 @@ static void cleanupLoadedObjecthkpEntitySpuCollisionCallback(void* p)
 {
     static_cast<hkpEntity::SpuCollisionCallback*>(p)->~SpuCollisionCallback();
 }
-static_assert(sizeof(hkpEntity::SpuCollisionCallback) == 8, "hkpEntity::SpuCollisionCallback size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpEntity::SpuCollisionCallback) == 8, "hkpEntity::SpuCollisionCallback size");
 extern const hkTypeInfo hkpEntitySpuCollisionCallbackTypeInfo;
 const hkTypeInfo hkpEntitySpuCollisionCallbackTypeInfo(
     "hkpEntitySpuCollisionCallback",
@@ -158,7 +158,7 @@ static void cleanupLoadedObjecthkpEntityExtendedListeners(void* p)
 {
     static_cast<hkpEntity::ExtendedListeners*>(p)->~ExtendedListeners();
 }
-static_assert(sizeof(hkpEntity::ExtendedListeners) == 16, "hkpEntity::ExtendedListeners size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpEntity::ExtendedListeners) == 16, "hkpEntity::ExtendedListeners size");
 extern const hkTypeInfo hkpEntityExtendedListenersTypeInfo;
 const hkTypeInfo hkpEntityExtendedListenersTypeInfo(
     "hkpEntityExtendedListeners",
@@ -277,7 +277,7 @@ static const void* getVtablehkpEntity()
     ::new (u.buf) hkpEntity(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpEntity) == 544, "hkpEntity size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpEntity) == 544, "hkpEntity size");
 extern const hkTypeInfo hkpEntityTypeInfo;
 const hkTypeInfo hkpEntityTypeInfo(
     "hkpEntity",

@@ -24,6 +24,7 @@
 #include "pakfiledevice.hpp"
 
 #include <new>
+void openrfg_log(const char* text); // crash_early.cpp
 #include <windows.h>
 
 namespace keen
@@ -466,9 +467,11 @@ namespace keen
         // 0x00C0DB30 (:474)
         FileSystem* createFileSystem(MemoryAllocator* pAllocator, const FileSystemCreationParameters& parameters)
         {
+            openrfg_log("createFileSystem: start");
             void* pMemory = pAllocator->allocate(sizeof(FileSystem), 4, 0, nullptr);
             if (pMemory == nullptr)
             {
+                openrfg_log("createFileSystem: allocate(FileSystem) returned null");
                 return nullptr;
             }
             FileSystem* pFileSystem = new (pMemory) FileSystem();
@@ -477,11 +480,13 @@ namespace keen
             pFileSystem->openFileStack = 0;
             pFileSystem->ignoreFirstChild = false;
 
+            openrfg_log("createFileSystem: object allocated");
             if (!pFileSystem->devices.create(allocateMemoryBlock(pAllocator, parameters.maxDeviceCount * sizeof(FileSystemDeviceEntry), 16, 0, nullptr)))
             {
                 deleteObject(pFileSystem, pAllocator);
                 return nullptr;
             }
+            openrfg_log("createFileSystem: devices ok");
             if (!pFileSystem->mountPoints.create(allocateMemoryBlock(pFileSystem->pAllocator, parameters.maxMountPoints * sizeof(FileSystemMountPoint), 16, 0, nullptr)))
             {
                 pFileSystem->devices.destroyFromAllocator(pFileSystem->pAllocator);
@@ -489,17 +494,23 @@ namespace keen
                 return nullptr;
             }
 
+            openrfg_log("createFileSystem: mountPoints ok");
             if (pFileSystem->nativeFileDevice.create(pFileSystem->pAllocator, parameters.maxNativeStreamCount, parameters.nativeThreadBufferSize, parameters.useReadThreads))
             {
+                openrfg_log("createFileSystem: native device ok");
                 if (pFileSystem->memoryFileDevice.create(pFileSystem->pAllocator, parameters.maxMemoryFileCount, parameters.maxMemoryStreamCount))
                 {
+                    openrfg_log("createFileSystem: memory device ok");
                     if (pFileSystem->pakFileDevice.create(pFileSystem->pAllocator, parameters.maxPakStreamCount, parameters.maxPakFileSize))
                     {
+                        openrfg_log("createFileSystem: pak device ok");
                         if (pFileSystem->aliasPathFileDevice.create(pFileSystem->pAllocator, parameters.maxAliasStreamCount))
                         {
+                            openrfg_log("createFileSystem: alias device ok");
                             pFileSystem->pRootPoint = pFileSystem->mountPoints.newObject();
                             if (pFileSystem->pRootPoint != nullptr)
                             {
+                                openrfg_log("createFileSystem: root point ok");
                                 if (mountDefaultNativePath(pFileSystem, parameters.enableDefaultMount))
                                 {
                                     pFileSystem->mutex.create("FileSystem");

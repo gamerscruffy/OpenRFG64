@@ -8,7 +8,7 @@
 
 #include <windows.h>
 
-static_assert(sizeof(CRITICAL_SECTION) == sizeof(uint32) * keen::Mutex::CriticalSectionDataSize, "CRITICAL_SECTION size");
+OPENRFG_SIZE_ASSERT(sizeof(CRITICAL_SECTION) == sizeof(uint32) * keen::Mutex::CriticalSectionDataSize, "CRITICAL_SECTION size");
 
 namespace keen
 {

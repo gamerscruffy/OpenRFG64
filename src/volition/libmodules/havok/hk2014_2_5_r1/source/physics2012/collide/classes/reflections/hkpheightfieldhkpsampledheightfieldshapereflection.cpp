@@ -58,7 +58,7 @@ static void cleanupLoadedObjecthkpSampledHeightFieldShapeCoarseMinMaxLevel(void*
 {
     static_cast<hkpSampledHeightFieldShape::CoarseMinMaxLevel*>(p)->~CoarseMinMaxLevel();
 }
-static_assert(sizeof(hkpSampledHeightFieldShape::CoarseMinMaxLevel) == 20, "hkpSampledHeightFieldShape::CoarseMinMaxLevel size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSampledHeightFieldShape::CoarseMinMaxLevel) == 20, "hkpSampledHeightFieldShape::CoarseMinMaxLevel size");
 extern const hkTypeInfo hkpSampledHeightFieldShapeCoarseMinMaxLevelTypeInfo;
 const hkTypeInfo hkpSampledHeightFieldShapeCoarseMinMaxLevelTypeInfo(
     "hkpSampledHeightFieldShapeCoarseMinMaxLevel",
@@ -159,7 +159,7 @@ static const void* getVtablehkpSampledHeightFieldShape()
     ::new (u.buf) hkpSampledHeightFieldShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpSampledHeightFieldShape) == 128, "hkpSampledHeightFieldShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSampledHeightFieldShape) == 128, "hkpSampledHeightFieldShape size");
 extern const hkTypeInfo hkpSampledHeightFieldShapeTypeInfo;
 const hkTypeInfo hkpSampledHeightFieldShapeTypeInfo(
     "hkpSampledHeightFieldShape",

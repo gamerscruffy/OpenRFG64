@@ -51,7 +51,7 @@ struct mpgo_data_item_info
     const char* name; // 0x00
     void (*update_cb)(vint_data_item*); // 0x04
 };
-static_assert(sizeof(mpgo_data_item_info) == 0x8, "mpgo_data_item_info");
+OPENRFG_SIZE_ASSERT(sizeof(mpgo_data_item_info) == 0x8, "mpgo_data_item_info");
 
 enum mpgo_hint_choices
 {
@@ -108,7 +108,7 @@ struct mpgo_shell_info
     unsigned int display_offset; // 0x10C
     int selection; // 0x110
 };
-static_assert(sizeof(mpgo_shell_info) == 0x114, "mpgo_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mpgo_shell_info) == 0x114, "mpgo_shell_info");
 
 // size 0x8 (rfg.pdb; only mpgo_get_tab_info's signature names it)
 struct mpgo_tab_info
@@ -116,7 +116,7 @@ struct mpgo_tab_info
     int first_option; // 0x00, a multi_game_options value (0x3B: the tab has none)
     int num_options; // 0x04
 };
-static_assert(sizeof(mpgo_tab_info) == 0x8, "mpgo_tab_info");
+OPENRFG_SIZE_ASSERT(sizeof(mpgo_tab_info) == 0x8, "mpgo_tab_info");
 
 // ---- file-static globals
 static void mpgo_update_header(vint_data_item* vdi);

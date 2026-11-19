@@ -149,12 +149,12 @@ struct my_ragdoll
     unsigned int human_handle; // 0x1184
 };
 
-static_assert(offsetof(my_ragdoll, info) == 0xD8C, "my_ragdoll::info");
-static_assert(offsetof(my_ragdoll, bodies) == 0xE84, "my_ragdoll::bodies");
-static_assert(offsetof(my_ragdoll, bodyOffset) == 0xF00, "my_ragdoll::bodyOffset");
-static_assert(offsetof(my_ragdoll, ext_constraint) == 0x10B0, "my_ragdoll::ext_constraint");
-static_assert(sizeof(my_ragdoll) == 0x1190, "my_ragdoll");
-static_assert(sizeof(supplemental_constraint) == 0x34, "supplemental_constraint");
+OPENRFG_SIZE_ASSERT(offsetof(my_ragdoll, info) == 0xD8C, "my_ragdoll::info");
+OPENRFG_SIZE_ASSERT(offsetof(my_ragdoll, bodies) == 0xE84, "my_ragdoll::bodies");
+OPENRFG_SIZE_ASSERT(offsetof(my_ragdoll, bodyOffset) == 0xF00, "my_ragdoll::bodyOffset");
+OPENRFG_SIZE_ASSERT(offsetof(my_ragdoll, ext_constraint) == 0x10B0, "my_ragdoll::ext_constraint");
+OPENRFG_SIZE_ASSERT(sizeof(my_ragdoll) == 0x1190, "my_ragdoll");
+OPENRFG_SIZE_ASSERT(sizeof(supplemental_constraint) == 0x34, "supplemental_constraint");
 
 // ---- file-static globals
 static const int Ragdoll_rigid_body_parent_ids[12] = {3, -1, 1, 2, 1, 1, 4, 5, 3, 3, 8, 9}; // 0x012F8EE4

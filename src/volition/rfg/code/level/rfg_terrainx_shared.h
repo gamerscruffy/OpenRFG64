@@ -296,7 +296,9 @@ struct terrain_data
     et_ptr_offset<terrain_stitch_physics_instance,0> m_stitch_physics_instances_p; // 0xA8
     int m_num_stitch_physics_instances; // 0xAC
     object* m_object_p; // 0xB0
-    unsigned int m_object_p_padding; // 0xB4
+#ifndef OPENRFG_X64
+    unsigned int m_object_p_padding; // 0xB4 (x64: m_object_p is 8 bytes and takes this slot, so the on-disk size stays 0x428)
+#endif
     char pad[880]; // 0xB8
 };
 

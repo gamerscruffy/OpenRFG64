@@ -86,7 +86,7 @@ static const void* getVtablehkpConvexVerticesShape()
     ::new (u.buf) hkpConvexVerticesShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpConvexVerticesShape) == 112, "hkpConvexVerticesShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpConvexVerticesShape) == 112, "hkpConvexVerticesShape size");
 extern const hkTypeInfo hkpConvexVerticesShapeTypeInfo;
 const hkTypeInfo hkpConvexVerticesShapeTypeInfo(
     "hkpConvexVerticesShape",

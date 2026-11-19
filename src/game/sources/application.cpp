@@ -83,6 +83,7 @@
 #include "volition/vlib/code/os/scheduler.h"
 #include "volition/vlib/code/os/timer.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <windows.h>
 #endif
@@ -145,6 +146,7 @@ static void rfg_note_controller(cached_controller_state& controller, const keen:
     controller.controller_type = info.type;
 }
 
+void openrfg_log(const char*);
 namespace keen
 {
     namespace rfg
@@ -154,6 +156,7 @@ namespace keen
         // videos' "press any button" and the debug free camera's axes.
         bool Application::processInputEvent(const InputEvent& inputEvent)
         {
+            { static int s_dbgN = 0; if (s_dbgN < 60 && (int)inputEvent.type != 11 && (int)inputEvent.type != 12) { s_dbgN++; char b[] = "DBGINPUT event type=00 class=00"; int t = (int)inputEvent.type, c = (int)inputEvent.controllerClass; b[20] = (char)('0' + (t / 10) % 10); b[21] = (char)('0' + t % 10); b[22] = 0; char b2[40]; int k = 0; for (; b[k]; k++) b2[k] = b[k]; b2[k++] = ' '; b2[k++] = 'c'; b2[k++] = (char)('0' + (c / 10) % 10); b2[k++] = (char)('0' + c % 10); b2[k] = 0; openrfg_log(b2); } }
             if (inputEvent.type == InputEventType_FocusLost)
             {
                 if (!g_ignoreFocusChange)

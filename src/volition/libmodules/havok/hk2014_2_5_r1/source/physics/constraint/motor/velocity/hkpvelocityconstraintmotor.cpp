@@ -6,9 +6,9 @@
 
 #include <stddef.h>
 
-static_assert(sizeof(hkpVelocityConstraintMotor) == 0x20, "hkpVelocityConstraintMotor");
-static_assert(offsetof(hkpVelocityConstraintMotor, m_minForce) == 0x0C, "hkpVelocityConstraintMotor::m_minForce");
-static_assert(offsetof(hkpVelocityConstraintMotor, m_velocityTarget) == 0x18, "hkpVelocityConstraintMotor::m_velocityTarget");
+OPENRFG_SIZE_ASSERT(sizeof(hkpVelocityConstraintMotor) == 0x20, "hkpVelocityConstraintMotor");
+OPENRFG_SIZE_ASSERT(offsetof(hkpVelocityConstraintMotor, m_minForce) == 0x0C, "hkpVelocityConstraintMotor::m_minForce");
+OPENRFG_SIZE_ASSERT(offsetof(hkpVelocityConstraintMotor, m_velocityTarget) == 0x18, "hkpVelocityConstraintMotor::m_velocityTarget");
 
 // 0x00816280
 hkpVelocityConstraintMotor::~hkpVelocityConstraintMotor()

@@ -183,7 +183,7 @@ static const void* getVtablehkpWorld()
     ::new (u.buf) hkpWorld(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpWorld) == 896, "hkpWorld size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpWorld) == 896, "hkpWorld size");
 extern const hkTypeInfo hkpWorldTypeInfo;
 const hkTypeInfo hkpWorldTypeInfo(
     "hkpWorld",

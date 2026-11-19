@@ -77,7 +77,7 @@ struct wc_shell_info
     unsigned int control_id; // 0x6C
     int input_id; // 0x70
 };
-static_assert(sizeof(wc_shell_info) == 0x74, "wc_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(wc_shell_info) == 0x74, "wc_shell_info");
 
 // size 0x8
 struct menu_option_info_uiwre
@@ -85,7 +85,7 @@ struct menu_option_info_uiwre
     const char* m_option; // 0x00
     const char* m_description; // 0x04
 };
-static_assert(sizeof(menu_option_info_uiwre) == 0x8, "menu_option_info_uiwre");
+OPENRFG_SIZE_ASSERT(sizeof(menu_option_info_uiwre) == 0x8, "menu_option_info_uiwre");
 
 enum wcmm_hint_choices
 {

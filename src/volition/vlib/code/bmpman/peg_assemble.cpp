@@ -33,7 +33,7 @@
 #include <string.h>
 
 typedef str_data_hash_table<int, 2048, 64, unsigned short> peg_asm_hash_table;
-static_assert(sizeof(peg_asm_hash_table) == 0x26008, "peg_asm_start allocates 0x26008 bytes for the hash table");
+OPENRFG_SIZE_ASSERT(sizeof(peg_asm_hash_table) == 0x26008, "peg_asm_start allocates 0x26008 bytes for the hash table");
 
 // rfg.exe reads bmpman.cpp's Bm_peg_align (0x015189E4) directly; here through bm_get_peg_align_value.
 static base_array<peg_entry*> Peg_entries; // 0x01519D50 (over the temporary pool's memory, peg_asm_start)

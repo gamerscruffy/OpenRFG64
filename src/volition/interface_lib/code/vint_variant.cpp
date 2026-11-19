@@ -710,7 +710,7 @@ void vint_variant::zero()
     case VINT_PROP_TYPE_BITMAP:
     case VINT_PROP_TYPE_FONT:
     case VINT_PROP_TYPE_SOUND:
-        value_uint = 0;
+        value_uint64 = 0; // clears the whole union (a string is a full pointer)
         break;
     case VINT_PROP_TYPE_FLOAT:
         value_float = 0.0f;
@@ -990,9 +990,11 @@ vint_variant& vint_variant::operator=(const vint_variant& _v)
         break;
     case VINT_PROP_TYPE_INT:
     case VINT_PROP_TYPE_UINT:
-    case VINT_PROP_TYPE_STRING:
     case VINT_PROP_TYPE_ENUM:
         value_uint = _v.value_uint;
+        break;
+    case VINT_PROP_TYPE_STRING:
+        value_string = _v.value_string; // a full pointer (64-bit)
         break;
     case VINT_PROP_TYPE_FLOAT:
         value_float = _v.value_float;
@@ -1239,7 +1241,7 @@ void vint_variant::set_type(vint_variant_type _type)
     case VINT_PROP_TYPE_BITMAP:
     case VINT_PROP_TYPE_FONT:
     case VINT_PROP_TYPE_SOUND:
-        value_uint = 0;
+        value_uint64 = 0; // clears the whole union (a string is a full pointer)
         break;
     default:
         break;

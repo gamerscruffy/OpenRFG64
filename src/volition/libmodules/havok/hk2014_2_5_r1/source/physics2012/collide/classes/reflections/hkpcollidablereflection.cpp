@@ -66,7 +66,7 @@ static void cleanupLoadedObjecthkpCollidableBoundingVolumeData(void* p)
 {
     static_cast<hkpCollidable::BoundingVolumeData*>(p)->~BoundingVolumeData();
 }
-static_assert(sizeof(hkpCollidable::BoundingVolumeData) == 44, "hkpCollidable::BoundingVolumeData size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpCollidable::BoundingVolumeData) == 44, "hkpCollidable::BoundingVolumeData size");
 extern const hkTypeInfo hkpCollidableBoundingVolumeDataTypeInfo;
 const hkTypeInfo hkpCollidableBoundingVolumeDataTypeInfo(
     "hkpCollidableBoundingVolumeData",
@@ -135,7 +135,7 @@ static void cleanupLoadedObjecthkpCollidable(void* p)
 {
     static_cast<hkpCollidable*>(p)->~hkpCollidable();
 }
-static_assert(sizeof(hkpCollidable) == 80, "hkpCollidable size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpCollidable) == 80, "hkpCollidable size");
 extern const hkTypeInfo hkpCollidableTypeInfo;
 const hkTypeInfo hkpCollidableTypeInfo(
     "hkpCollidable",

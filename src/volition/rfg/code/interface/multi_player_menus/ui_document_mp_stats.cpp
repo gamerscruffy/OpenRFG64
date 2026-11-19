@@ -49,7 +49,7 @@ struct mp_stats_row
     char* display_name; // 0x04
     mp_stats_cell* column[4]; // 0x08
 };
-static_assert(sizeof(mp_stats_row) == 0x18, "mp_stats_row");
+OPENRFG_SIZE_ASSERT(sizeof(mp_stats_row) == 0x18, "mp_stats_row");
 
 // mp_menu_exit_actions_stats, mp_menu_states_stats and mp_match_stats_shell_info are in ui_document_mp_stats.h since
 // UI5 (the experience tally uses them).
@@ -107,7 +107,7 @@ struct mp_stats_cell
     cell_data data; // 0x04
     char* name; // 0x18
 };
-static_assert(sizeof(mp_stats_cell) == 0x1C, "mp_stats_cell");
+OPENRFG_SIZE_ASSERT(sizeof(mp_stats_cell) == 0x1C, "mp_stats_cell");
 
 // size 0x24
 struct mp_stats_page
@@ -119,7 +119,7 @@ struct mp_stats_page
     mp_stats_row* rows; // 0x1C
     int num_rows; // 0x20
 };
-static_assert(sizeof(mp_stats_page) == 0x24, "mp_stats_page");
+OPENRFG_SIZE_ASSERT(sizeof(mp_stats_page) == 0x24, "mp_stats_page");
 
 // ---- file-static globals
 static const char* Ui_mp_shell_name_stats = {"rfg_ui_mp_stats"}; // 0x01663C38

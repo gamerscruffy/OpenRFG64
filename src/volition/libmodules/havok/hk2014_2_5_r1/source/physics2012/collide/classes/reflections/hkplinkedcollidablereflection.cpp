@@ -56,7 +56,7 @@ static void cleanupLoadedObjecthkpLinkedCollidable(void* p)
 {
     static_cast<hkpLinkedCollidable*>(p)->~hkpLinkedCollidable();
 }
-static_assert(sizeof(hkpLinkedCollidable) == 92, "hkpLinkedCollidable size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpLinkedCollidable) == 92, "hkpLinkedCollidable size");
 extern const hkTypeInfo hkpLinkedCollidableTypeInfo;
 const hkTypeInfo hkpLinkedCollidableTypeInfo(
     "hkpLinkedCollidable",

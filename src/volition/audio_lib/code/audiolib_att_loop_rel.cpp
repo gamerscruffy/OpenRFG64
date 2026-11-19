@@ -33,7 +33,7 @@ struct audiolib_alr_lookup_data_list
     int total; // 0x04
     audiolib_alr_lookup_data* lookup_list; // 0x08
 };
-static_assert(sizeof(audiolib_alr_lookup_data_list) == 0xC, "audiolib_alr_lookup_data_list");
+OPENRFG_SIZE_ASSERT(sizeof(audiolib_alr_lookup_data_list) == 0xC, "audiolib_alr_lookup_data_list");
 
 // ---- public globals (rfg.pdb; no header declares them)
 object_pool<audiolib_process_data,15,1> Audio_process_list(nullptr, nullptr, 9); // 0x01A7DF70

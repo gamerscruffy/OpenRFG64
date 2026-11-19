@@ -114,7 +114,7 @@ character_proxy_cd_point_collector::~character_proxy_cd_point_collector()
 }
 
 // 0x00833820 (hk_custom_character_proxy.h:57)
-void character_proxy_cd_point_collector::operator delete(void* p, unsigned int nbytes)
+void character_proxy_cd_point_collector::operator delete(void* p, size_t nbytes)
 {
     if (p != nullptr)
     {

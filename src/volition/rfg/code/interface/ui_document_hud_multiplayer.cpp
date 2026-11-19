@@ -73,7 +73,7 @@ struct mp_data_item_info
     void (*process)(vint_data_item*); // 0x08
     const char* name; // 0x0C
 };
-static_assert(sizeof(mp_data_item_info) == 0x10, "mp_data_item_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_data_item_info) == 0x10, "mp_data_item_info");
 
 // size 0x18
 struct mp_doc_info
@@ -85,7 +85,7 @@ struct mp_doc_info
     void (*shutdown)(int); // 0x10
     multi_gameplay_mode mode; // 0x14
 };
-static_assert(sizeof(mp_doc_info) == 0x18, "mp_doc_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_doc_info) == 0x18, "mp_doc_info");
 
 static bool should_render_multiplayer_doc_hints(int doc_handle);
 static bool should_render_multiplayer_doc_main(int doc_handle);

@@ -51,6 +51,25 @@ struct peg_entry
     et_ptr_offset<peg_entry,1> next; // 0x20
     et_ptr_offset<peg_entry,1> prev; // 0x24
     unsigned int cache[2]; // 0x28
+    // A pointer kept in cache[]: on 64-bit it spans both words (cache[0] low, cache[1] high); file layout unchanged.
+    void* get_cache_ptr() const
+    {
+#ifdef OPENRFG_X64
+        return (void*)((unsigned long long)cache[0] | ((unsigned long long)cache[1] << 32));
+#else
+        return (void*)cache[0];
+#endif
+    }
+    void set_cache_ptr(const void* p)
+    {
+#ifdef OPENRFG_X64
+        cache[0] = (unsigned int)((unsigned long long)p & 0xFFFFFFFFull);
+        cache[1] = (unsigned int)((unsigned long long)p >> 32);
+#else
+        cache[0] = (unsigned int)p;
+        cache[1] = 0;
+#endif
+    }
 };
 
 // size 0xC

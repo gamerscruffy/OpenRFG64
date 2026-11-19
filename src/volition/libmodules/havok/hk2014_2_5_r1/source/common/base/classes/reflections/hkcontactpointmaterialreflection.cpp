@@ -76,7 +76,7 @@ static void cleanupLoadedObjecthkContactPointMaterial(void* p)
 {
     static_cast<hkContactPointMaterial*>(p)->~hkContactPointMaterial();
 }
-static_assert(sizeof(hkContactPointMaterial) == 8, "hkContactPointMaterial size");
+OPENRFG_SIZE_ASSERT(sizeof(hkContactPointMaterial) == 8, "hkContactPointMaterial size");
 extern const hkTypeInfo hkContactPointMaterialTypeInfo;
 const hkTypeInfo hkContactPointMaterialTypeInfo(
     "hkContactPointMaterial",

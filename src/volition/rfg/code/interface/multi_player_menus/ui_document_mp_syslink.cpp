@@ -41,7 +41,7 @@ struct menu_option_info_syslink
     const char* m_option; // 0x00
     const char* m_description; // 0x04
 };
-static_assert(sizeof(menu_option_info_syslink) == 0x8, "menu_option_info_syslink");
+OPENRFG_SIZE_ASSERT(sizeof(menu_option_info_syslink) == 0x8, "menu_option_info_syslink");
 
 enum mp_menu_exit_actions_syslink
 {
@@ -74,7 +74,7 @@ struct mp_syslink_shell_info
     unsigned int control_id; // 0x6C
     int input_id; // 0x70
 };
-static_assert(sizeof(mp_syslink_shell_info) == 0x74, "mp_syslink_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_syslink_shell_info) == 0x74, "mp_syslink_shell_info");
 
 // ---- file-static globals
 // The menu's entries (rfg.exe's .rdata).

@@ -20,7 +20,7 @@ struct vint_registered_enum
     unsigned int prop_name_crc; // 0x08
     vint_prop_type_enum_wrapper* wrapper; // 0x0C
 };
-static_assert(sizeof(vint_registered_enum) == 0x10, "vint_registered_enum");
+OPENRFG_SIZE_ASSERT(sizeof(vint_registered_enum) == 0x10, "vint_registered_enum");
 
 // ---- file-static globals (shared with the unity's other files)
 static vint_registered_enum Registered_enums[32]; // 0x01A39A20

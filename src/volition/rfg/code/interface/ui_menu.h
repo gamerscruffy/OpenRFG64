@@ -204,6 +204,7 @@ public:
     virtual ~ui_menu_item_incr(); // vtbl+0x00 0x00883790 (.h:285)
     void ui_menu_item_incr_init(menu_incr_type type, const char* caption, ui_menu* parent, void* variable, void (*iccb)(int, void*)); // 0x008A1080 (:1105)
     menu_incr_type get_incr_type() const; // 0x008837A0 (.h:289)
+    void set_incr_type(menu_incr_type type) { m_incr_type = type; } // x64: replaces a raw write at +0xA0
     void set_info(variable_type min, variable_type max, variable_type incr); // 0x008A1130 (:1135)
     void get_info(variable_type& min, variable_type& max, variable_type& incr); // 0x008A1160 (:1152)
     virtual bool handle_input(increment_type type); // vtbl+0x08 0x008B7F50 (:1169)
@@ -254,6 +255,7 @@ public:
     void set_doc_info(document_info* dinfo); // 0x008A1590 (:2174)
     document_info* get_doc_info() const; // 0x008837C0 (.h:355)
     bool get_awaiting_on_select_end() const; // 0x008837D0 (.h:357)
+    void start_awaiting_on_select_end() { m_awaiting_tween_on_select_end = true; } // x64: replaces a raw write at +0x06
     bool get_awaiting_fade_in_end() const; // 0x008837E0 (.h:358)
     int get_choose_on_enter_index() const;
     int get_selected_item() const; // 0x008837F0 (.h:360)

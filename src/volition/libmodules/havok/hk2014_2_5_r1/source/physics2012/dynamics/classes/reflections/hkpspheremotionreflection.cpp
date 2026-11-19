@@ -64,7 +64,7 @@ static const void* getVtablehkpSphereMotion()
     ::new (u.buf) hkpSphereMotion(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpSphereMotion) == 288, "hkpSphereMotion size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSphereMotion) == 288, "hkpSphereMotion size");
 extern const hkTypeInfo hkpSphereMotionTypeInfo;
 const hkTypeInfo hkpSphereMotionTypeInfo(
     "hkpSphereMotion",

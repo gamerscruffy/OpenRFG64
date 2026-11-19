@@ -130,11 +130,11 @@ class MyCharacterListener : public hkReferencedObject, public hkpCharacterProxyL
 public:
     struct MustEndWithSemiColon; // no definition in PDB
 
-    static void* operator new(unsigned int, void*);
-    static void* operator new(unsigned int nbytes); // 0x00814C20 (:154)
+    static void* operator new(size_t, void*);
+    static void* operator new(size_t nbytes); // 0x00814C20 (:154)
     static void operator delete(void*, void*);
-    static void operator delete(void* p, unsigned int nbytes); // 0x00814DB0 (:154)
-    static void* operator new[](unsigned int, void*);
+    static void operator delete(void* p, size_t nbytes); // 0x00814DB0 (:154)
+    static void* operator new[](size_t, void*);
     static void operator delete[](void*, void*);
     MyCharacterListener(const hkVector4f& up, const float maxSlope, unsigned int obj_handle); // 0x00814C40 (:156)
     virtual void characterInteractionCallback(hkpCharacterProxy* proxy, hkpCharacterProxy* other_proxy, const hkContactPoint& contact); // vtbl+0x10 0x00821E70 (:182)

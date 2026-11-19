@@ -6,6 +6,7 @@
 // documents, and ui_init. Placement of input_register_type inferred.
 #pragma once
 
+#include "volition/interface_lib/code/vint_data_item.h"
 #include "volition/rfg/code/control/control_map.h"
 #include "volition/stream2/code/stream2.h"
 #include "volition/vlib/code/memory/object_pool.h"
@@ -293,7 +294,7 @@ vint_doc_info* ui_get_doc_info(int handle); // 0x008C7480 (:1826)
 
 // The data item's m_updated (protected; 0x42C) as rfg.exe's inlined code writes it (vint_data_item's inline set). Shared
 // by the UI5/UI6 documents.
-inline void ui_data_item_set_updated(class vint_data_item* item)
+inline void ui_data_item_set_updated(vint_data_item* item)
 {
-    *(bool*)((unsigned char*)item + 0x42C) = true;
+    item->set_updated();
 }

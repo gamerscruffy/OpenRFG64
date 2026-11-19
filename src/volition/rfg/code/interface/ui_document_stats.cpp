@@ -35,7 +35,7 @@ struct ui_stats_info
     bool indent; // 0x04
     tracked_stats_indices stat; // 0x08
 };
-static_assert(sizeof(ui_stats_info) == 0xC, "ui_stats_info");
+OPENRFG_SIZE_ASSERT(sizeof(ui_stats_info) == 0xC, "ui_stats_info");
 
 // Magic numbers: the rows the document has per page, and the sizes of the tables.
 static const int Max_stat_rows = 17;

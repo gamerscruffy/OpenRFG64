@@ -23,6 +23,7 @@
 // - stream_wait skips the container type's load callback when a primitive's callback fails, but still marks the
 //   container loaded.
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGSTRA
 #include "volition/stream2/code/stream2_container.h"
 
 #include "volition/rfg/code/gamewide/downloadable_content.h"
@@ -84,7 +85,7 @@ int stream2_container_load(const keen::Thread& thread)
                     continue;
                 }
                 const bool split = (prim->flags & 0x4) != 0;
-                if (!prim->pdef->load_cb(prim->name, (unsigned int)sc, prim->cpu_data, prim->cpu_size, split ? prim->gpu_data : nullptr, split ? prim->gpu_size : 0))
+                if (!prim->pdef->load_cb(prim->name, stream2_sc_id(sc), prim->cpu_data, prim->cpu_size, split ? prim->gpu_data : nullptr, split ? prim->gpu_size : 0))
                 {
                     sc->flags |= 0x40;
                     break;
@@ -371,11 +372,11 @@ bool stream2_container::stream_wait()
                 bool loaded;
                 if ((prim->flags & 0x4) == 0)
                 {
-                    loaded = prim->pdef->load_cb(prim->name, (unsigned int)this, prim->cpu_data, prim->cpu_size, nullptr, 0);
+                    loaded = prim->pdef->load_cb(prim->name, stream2_sc_id(this), prim->cpu_data, prim->cpu_size, nullptr, 0);
                 }
                 else
                 {
-                    loaded = prim->pdef->load_cb(prim->name, (unsigned int)this, prim->cpu_data, prim->cpu_size, prim->gpu_data, prim->gpu_size);
+                    loaded = prim->pdef->load_cb(prim->name, stream2_sc_id(this), prim->cpu_data, prim->cpu_size, prim->gpu_data, prim->gpu_size);
                 }
                 if (!loaded)
                 {
@@ -386,7 +387,7 @@ bool stream2_container::stream_wait()
             }
             if (!failed && cdef->load_cb != nullptr)
             {
-                cdef->load_cb((unsigned int)this);
+                cdef->load_cb(stream2_sc_id(this));
             }
             flags |= 0x1;
             req_release();
@@ -508,7 +509,7 @@ bool stream2_container::add_prims(str_data_hash_table_cached<prim_add_entry,1024
     if ((flags & 0x100) == 0)
     {
         pf_chain_read_size = (unsigned int*)pool->alloc((unsigned int)chain_size * 4, 4);
-        pf_chain_read_dest = (void**)pool->alloc((unsigned int)pf_chain_size * 4 + 4, 4);
+        pf_chain_read_dest = (void**)pool->alloc(((unsigned int)pf_chain_size + 1) * (unsigned int)sizeof(void*), 8);
         Stream2_container_allocated += pf_chain_size * 8;
     }
     return true;
@@ -821,6 +822,7 @@ bool stream2_container::alloc()
     }
     if (cpu_allocated == nullptr)
     {
+        { static int d8_ = 0; if (d8_++ < 40) { GAME_TRACE("stralloc", "FAIL cpu alloc name=%s cdef=%s cpu_bytes=%d align=%d gpu_bytes=%d", name, cdef->name, cpu_bytes, cpu_align, gpu_bytes); } } // DBGSTRA
         return false;
     }
     if (gpu_needed >= 1 && gpu_allocated == nullptr)
@@ -848,6 +850,7 @@ bool stream2_container::alloc()
         }
         if (prim->cpu_data != nullptr || prim->gpu_data != nullptr || prim->get_ref_count() != ref_count)
         {
+            { static int d9_ = 0; if (d9_++ < 40) { GAME_TRACE("stralloc", "FAIL prim state name=%s prim=%s cpu=%p gpu=%p prim_ref=%d ref=%d", name, prim->name, (void*)prim->cpu_data, (void*)prim->gpu_data, (int)prim->get_ref_count(), (int)ref_count); } } // DBGSTRA
             return false;
         }
         const stream2_prim_def* const pdef = prim->pdef;
@@ -906,7 +909,7 @@ bool stream2_container::load(bool fromLoadThread)
             continue;
         }
         const bool split = (prim->flags & 0x4) != 0;
-        if (!prim->pdef->load_cb(prim->name, (unsigned int)this, prim->cpu_data, prim->cpu_size, split ? prim->gpu_data : nullptr, split ? prim->gpu_size : 0))
+        if (!prim->pdef->load_cb(prim->name, stream2_sc_id(this), prim->cpu_data, prim->cpu_size, split ? prim->gpu_data : nullptr, split ? prim->gpu_size : 0))
         {
             return false;
         }
@@ -914,7 +917,7 @@ bool stream2_container::load(bool fromLoadThread)
     }
     if (!fromLoadThread && cdef->load_cb != nullptr)
     {
-        cdef->load_cb((unsigned int)this);
+        cdef->load_cb(stream2_sc_id(this));
     }
     return true;
 }
@@ -924,7 +927,7 @@ void stream2_container::unload()
 {
     if ((flags & 0x1) != 0 && cdef->unload_cb != nullptr)
     {
-        cdef->unload_cb((unsigned int)this);
+        cdef->unload_cb(stream2_sc_id(this));
     }
     for (int i = 0; i < num_entries; i++)
     {
@@ -942,7 +945,7 @@ void stream2_container::unload()
             }
             if ((prim->flags & 0x1) != 0)
             {
-                prim->pdef->unload_cb(prim->name, (unsigned int)this);
+                prim->pdef->unload_cb(prim->name, stream2_sc_id(this));
                 prim->flags &= ~0x1;
             }
             if (prim->cpu_data == nullptr)
@@ -959,7 +962,7 @@ void stream2_container::unload()
         {
             if ((prim->flags & 0x1) != 0)
             {
-                prim->pdef->unload_cb(prim->name, (unsigned int)this);
+                prim->pdef->unload_cb(prim->name, stream2_sc_id(this));
                 prim->flags &= ~0x1;
             }
             if (prim->cpu_data != nullptr && strcmp(cdef->name, "Vehicle") == 0 && strstr(prim->name, ".xwb_pc") != nullptr && _Stream_allocators[0x14] != nullptr)
@@ -1053,7 +1056,7 @@ bool stream2_container::load_container(cfile* asm_file, mempool_base* pool, bool
         cf_seek(asm_file, (int)chain_sizes_pos, CF_SEEK_SET);
         if (srid != 0)
         {
-            stream2_container* const sc = (stream2_container*)srid;
+            stream2_container* const sc = stream2_sc_ptr(srid);
             if ((sc->flags & 0x100) == 0)
             {
                 for (int i = 0; i < num_chain_sizes; i++)

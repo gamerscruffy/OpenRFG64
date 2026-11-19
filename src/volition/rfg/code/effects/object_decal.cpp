@@ -89,7 +89,7 @@ struct blood_decal_info
     float decal_probability; // 0x38
     float death_size_mult; // 0x3C
 };
-static_assert(sizeof(blood_decal_info) == 0x40, "blood_decal_info");
+OPENRFG_SIZE_ASSERT(sizeof(blood_decal_info) == 0x40, "blood_decal_info");
 
 // Decals are made (game_render.cpp).
 extern bool R_enable_decals; // 0x0165CC74

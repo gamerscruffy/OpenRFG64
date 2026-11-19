@@ -330,7 +330,11 @@ namespace keen
     // SHGetSpecialFolderPathW for pc_cfile), the port has neither yet: without this import every lookup failed and the
     // options ini (%APPDATA%/kaiko/rfg/config.ini) was never read.
 #pragma comment(lib, "shell32.lib")
+#ifdef OPENRFG_X64
+#pragma comment(linker, "/include:__imp_SHGetSpecialFolderPathW")
+#else
 #pragma comment(linker, "/include:__imp__SHGetSpecialFolderPathW@16")
+#endif
 
     // 0x00C0AA70 (:344)
     bool getKnownWindowsFolder(char* pTarget, uint32 capacity, KnownWindowsFolderId id)

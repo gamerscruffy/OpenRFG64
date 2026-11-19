@@ -1,3 +1,4 @@
+#include <cstdint>
 // Original: volition/libmodules/havok/hk2014_2_5_r1/source/physics/constraint/data/hkpconstraintdata.cpp
 //
 // Havok 2014.2.5 (havok_impl.md HK7, HK8): the constraint data base, from rfg.exe. getConstraintInfoUtil came with the
@@ -6,6 +7,7 @@
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics/constraint/data/hkpconstraintdata.h"
 
 #include <string.h>
+#include <stdio.h>
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/math/hkmath.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/system/error/hkerror.h"
@@ -35,7 +37,10 @@ void hkpConstraintData::getConstraintInfoUtil(const hkpConstraintAtom* atoms, in
         switch (type)
         {
         case hkpConstraintAtom::TYPE_INVALID:
-            atom = reinterpret_cast<const char*>((reinterpret_cast<unsigned int>(atom) + 0xF) & ~0xFu);
+            { // x64: an already 16-aligned zero atom must still advance (else infinite loop)
+                extern void openrfg_log(const char*); static int dbgN = 0; if (dbgN++ < 5) { char b[160]; sprintf(b, "DBGCI type0 at off=%d of %d aligned=%d", (int)(atom - reinterpret_cast<const char*>(atoms)), sizeOfAllAtoms, (int)((reinterpret_cast<uintptr_t>(atom) & 0xF) == 0)); openrfg_log(b); }
+                atom = reinterpret_cast<const char*>((reinterpret_cast<uintptr_t>(atom) + 1 + 0xF) & ~(uintptr_t)0xF);
+            }
             continue;
         case hkpConstraintAtom::TYPE_BRIDGE:
         case hkpConstraintAtom::TYPE_MODIFIER_SOFT_CONTACT:

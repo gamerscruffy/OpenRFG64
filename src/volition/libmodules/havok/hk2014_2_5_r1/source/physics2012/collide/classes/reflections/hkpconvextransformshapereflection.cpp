@@ -69,7 +69,7 @@ static const void* getVtablehkpConvexTransformShape()
     ::new (u.buf) hkpConvexTransformShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpConvexTransformShape) == 96, "hkpConvexTransformShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpConvexTransformShape) == 96, "hkpConvexTransformShape size");
 extern const hkTypeInfo hkpConvexTransformShapeTypeInfo;
 const hkTypeInfo hkpConvexTransformShapeTypeInfo(
     "hkpConvexTransformShape",

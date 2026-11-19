@@ -42,7 +42,7 @@ public:
     hkMultiThreadCheck m_multiThreadCheck; // 0x10
     hkCriticalSection m_criticalSection; // 0x1C
 };
-static_assert(sizeof(hkReferencedObjectLock) == 0x34, "hkReferencedObjectLock size");
+OPENRFG_SIZE_ASSERT(sizeof(hkReferencedObjectLock) == 0x34, "hkReferencedObjectLock size");
 
 // ---- globals
 template<> hkReferencedObjectLock* hkSingleton<hkReferencedObjectLock>::s_instance = nullptr;

@@ -35,7 +35,7 @@ static int Max_voice_line_descriptors; // 0x0302F084
 char last_voice_line_name[32]; // 0x0301A1F8
 
 // Magic number: the size of a voice line descriptor (the handle is a byte offset divided by it in rfg.exe).
-static_assert(sizeof(human_voice_line_info) == 0x38, "human_voice_line_info");
+OPENRFG_SIZE_ASSERT(sizeof(human_voice_line_info) == 0x38, "human_voice_line_info");
 
 // ---- internal functions
 

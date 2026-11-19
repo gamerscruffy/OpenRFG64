@@ -51,7 +51,7 @@ static void cleanupLoadedObjecthavok_mesh_shapevertex(void* p)
 {
     static_cast<havok_mesh_shape::vertex*>(p)->~vertex();
 }
-static_assert(sizeof(havok_mesh_shape::vertex) == 12, "havok_mesh_shape::vertex size");
+OPENRFG_SIZE_ASSERT(sizeof(havok_mesh_shape::vertex) == 12, "havok_mesh_shape::vertex size");
 extern const hkTypeInfo havok_mesh_shapevertexTypeInfo;
 const hkTypeInfo havok_mesh_shapevertexTypeInfo(
     "havok_mesh_shapevertex",
@@ -98,7 +98,7 @@ static void cleanupLoadedObjecthavok_mesh_shapetriangle(void* p)
 {
     static_cast<havok_mesh_shape::triangle*>(p)->~triangle();
 }
-static_assert(sizeof(havok_mesh_shape::triangle) == 6, "havok_mesh_shape::triangle size");
+OPENRFG_SIZE_ASSERT(sizeof(havok_mesh_shape::triangle) == 6, "havok_mesh_shape::triangle size");
 extern const hkTypeInfo havok_mesh_shapetriangleTypeInfo;
 const hkTypeInfo havok_mesh_shapetriangleTypeInfo(
     "havok_mesh_shapetriangle",
@@ -163,7 +163,7 @@ static const void* getVtablehavok_mesh_shape()
     ::new (u.buf) havok_mesh_shape(f);
     return u.ptr;
 }
-static_assert(sizeof(havok_mesh_shape) == 272, "havok_mesh_shape size");
+OPENRFG_SIZE_ASSERT(sizeof(havok_mesh_shape) == 272, "havok_mesh_shape size");
 extern const hkTypeInfo havok_mesh_shapeTypeInfo;
 const hkTypeInfo havok_mesh_shapeTypeInfo(
     "havok_mesh_shape",

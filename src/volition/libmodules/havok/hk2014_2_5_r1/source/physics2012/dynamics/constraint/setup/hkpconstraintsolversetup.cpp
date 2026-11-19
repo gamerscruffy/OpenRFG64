@@ -8,6 +8,7 @@
 // scratchpad the same way and adds accumulators and schemas as it activates entities.
 // The "MiNumJacobians"/"MiNumEntities" monitor values are not reproduced.
 
+#include <stddef.h>
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/constraint/setup/hkpconstraintsolversetup.h"
 
 #include <string.h>
@@ -38,7 +39,7 @@
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/internal/solver/solve/hkpsolverexport.h"
 
 // the offset of hkpEntity::m_motion (the motion arrays of hkRigidMotionUtil are entity arrays)
-static const int HK_SOLVER_MOTION_OFFSET = 0xE0;
+static const int HK_SOLVER_MOTION_OFFSET = (int)offsetof(hkpEntity, m_motion);
 
 // the fixed accumulator every constraint to a fixed or missing body uses (hkpVelocityAccumulator::setFixed, inlined)
 static inline void hkConstraintSolverSetup_setFixed(hkpVelocityAccumulator* acc)

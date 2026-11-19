@@ -90,7 +90,7 @@ struct mp_xp_tally_shell_info
     unsigned int control_id; // 0x80
     int input_id; // 0x84
 };
-static_assert(sizeof(mp_xp_tally_shell_info) == 0x88, "mp_xp_tally_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_xp_tally_shell_info) == 0x88, "mp_xp_tally_shell_info");
 
 // size 0x8
 struct xp_info_entry
@@ -98,7 +98,7 @@ struct xp_info_entry
     const multi_xp_event* xp_event; // 0x00
     int count_of_event; // 0x04
 };
-static_assert(sizeof(xp_info_entry) == 0x8, "xp_info_entry");
+OPENRFG_SIZE_ASSERT(sizeof(xp_info_entry) == 0x8, "xp_info_entry");
 
 enum xp_tally_hint_choices
 {

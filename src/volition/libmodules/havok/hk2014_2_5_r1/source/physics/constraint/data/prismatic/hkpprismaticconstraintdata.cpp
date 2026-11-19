@@ -15,11 +15,11 @@
 
 using namespace hkSolverSse;
 
-static_assert(sizeof(hkpPrismaticConstraintData) == 0x110, "hkpPrismaticConstraintData");
-static_assert(sizeof(hkpPrismaticConstraintData::Atoms) == 0x100, "hkpPrismaticConstraintData::Atoms");
-static_assert(sizeof(hkpPrismaticConstraintData::Runtime) == 0x58, "hkpPrismaticConstraintData::Runtime");
-static_assert(offsetof(hkpPrismaticConstraintData::Atoms, m_ang) == 0xC0, "Atoms::m_ang");
-static_assert(offsetof(hkpPrismaticConstraintData::Atoms, m_linLimit) == 0xF0, "Atoms::m_linLimit");
+OPENRFG_SIZE_ASSERT(sizeof(hkpPrismaticConstraintData) == 0x110, "hkpPrismaticConstraintData");
+OPENRFG_SIZE_ASSERT(sizeof(hkpPrismaticConstraintData::Atoms) == 0x100, "hkpPrismaticConstraintData::Atoms");
+OPENRFG_SIZE_ASSERT(sizeof(hkpPrismaticConstraintData::Runtime) == 0x58, "hkpPrismaticConstraintData::Runtime");
+OPENRFG_SIZE_ASSERT(offsetof(hkpPrismaticConstraintData::Atoms, m_ang) == 0xC0, "Atoms::m_ang");
+OPENRFG_SIZE_ASSERT(offsetof(hkpPrismaticConstraintData::Atoms, m_linLimit) == 0xF0, "Atoms::m_linLimit");
 
 // 0x00D6DF90: the atoms' types; the motor and the friction start enabled
 hkpPrismaticConstraintData::Atoms::Atoms()

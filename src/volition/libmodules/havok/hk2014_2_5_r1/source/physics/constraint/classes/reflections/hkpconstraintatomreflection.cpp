@@ -74,7 +74,7 @@ static void cleanupLoadedObjecthkp2dAngConstraintAtom(void* p)
 {
     static_cast<hkp2dAngConstraintAtom*>(p)->~hkp2dAngConstraintAtom();
 }
-static_assert(sizeof(hkp2dAngConstraintAtom) == 16, "hkp2dAngConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkp2dAngConstraintAtom) == 16, "hkp2dAngConstraintAtom size");
 extern const hkTypeInfo hkp2dAngConstraintAtomTypeInfo;
 const hkTypeInfo hkp2dAngConstraintAtomTypeInfo(
     "hkp2dAngConstraintAtom",
@@ -151,7 +151,7 @@ static void cleanupLoadedObjecthkpAngConstraintAtom(void* p)
 {
     static_cast<hkpAngConstraintAtom*>(p)->~hkpAngConstraintAtom();
 }
-static_assert(sizeof(hkpAngConstraintAtom) == 16, "hkpAngConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpAngConstraintAtom) == 16, "hkpAngConstraintAtom size");
 extern const hkTypeInfo hkpAngConstraintAtomTypeInfo;
 const hkTypeInfo hkpAngConstraintAtomTypeInfo(
     "hkpAngConstraintAtom",
@@ -203,7 +203,7 @@ static void cleanupLoadedObjecthkpAngFrictionConstraintAtom(void* p)
 {
     static_cast<hkpAngFrictionConstraintAtom*>(p)->~hkpAngFrictionConstraintAtom();
 }
-static_assert(sizeof(hkpAngFrictionConstraintAtom) == 16, "hkpAngFrictionConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpAngFrictionConstraintAtom) == 16, "hkpAngFrictionConstraintAtom size");
 extern const hkTypeInfo hkpAngFrictionConstraintAtomTypeInfo;
 const hkTypeInfo hkpAngFrictionConstraintAtomTypeInfo(
     "hkpAngFrictionConstraintAtom",
@@ -274,7 +274,7 @@ static void cleanupLoadedObjecthkpAngLimitConstraintAtom(void* p)
 {
     static_cast<hkpAngLimitConstraintAtom*>(p)->~hkpAngLimitConstraintAtom();
 }
-static_assert(sizeof(hkpAngLimitConstraintAtom) == 32, "hkpAngLimitConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpAngLimitConstraintAtom) == 32, "hkpAngLimitConstraintAtom size");
 extern const hkTypeInfo hkpAngLimitConstraintAtomTypeInfo;
 const hkTypeInfo hkpAngLimitConstraintAtomTypeInfo(
     "hkpAngLimitConstraintAtom",
@@ -329,7 +329,7 @@ static void cleanupLoadedObjecthkpAngMotorConstraintAtom(void* p)
 {
     static_cast<hkpAngMotorConstraintAtom*>(p)->~hkpAngMotorConstraintAtom();
 }
-static_assert(sizeof(hkpAngMotorConstraintAtom) == 32, "hkpAngMotorConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpAngMotorConstraintAtom) == 32, "hkpAngMotorConstraintAtom size");
 extern const hkTypeInfo hkpAngMotorConstraintAtomTypeInfo;
 const hkTypeInfo hkpAngMotorConstraintAtomTypeInfo(
     "hkpAngMotorConstraintAtom",
@@ -397,7 +397,7 @@ static void cleanupLoadedObjecthkpBallSocketConstraintAtom(void* p)
 {
     static_cast<hkpBallSocketConstraintAtom*>(p)->~hkpBallSocketConstraintAtom();
 }
-static_assert(sizeof(hkpBallSocketConstraintAtom) == 16, "hkpBallSocketConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBallSocketConstraintAtom) == 16, "hkpBallSocketConstraintAtom size");
 extern const hkTypeInfo hkpBallSocketConstraintAtomTypeInfo;
 const hkTypeInfo hkpBallSocketConstraintAtomTypeInfo(
     "hkpBallSocketConstraintAtom",
@@ -513,7 +513,7 @@ static void cleanupLoadedObjecthkpConeLimitConstraintAtom(void* p)
 {
     static_cast<hkpConeLimitConstraintAtom*>(p)->~hkpConeLimitConstraintAtom();
 }
-static_assert(sizeof(hkpConeLimitConstraintAtom) == 32, "hkpConeLimitConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpConeLimitConstraintAtom) == 32, "hkpConeLimitConstraintAtom size");
 extern const hkTypeInfo hkpConeLimitConstraintAtomTypeInfo;
 const hkTypeInfo hkpConeLimitConstraintAtomTypeInfo(
     "hkpConeLimitConstraintAtom",
@@ -630,7 +630,7 @@ static void cleanupLoadedObjecthkpConstraintAtom(void* p)
 {
     static_cast<hkpConstraintAtom*>(p)->~hkpConstraintAtom();
 }
-static_assert(sizeof(hkpConstraintAtom) == 2, "hkpConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpConstraintAtom) == 2, "hkpConstraintAtom size");
 extern const hkTypeInfo hkpConstraintAtomTypeInfo;
 const hkTypeInfo hkpConstraintAtomTypeInfo(
     "hkpConstraintAtom",
@@ -821,7 +821,7 @@ static void cleanupLoadedObjecthkpLinConstraintAtom(void* p)
 {
     static_cast<hkpLinConstraintAtom*>(p)->~hkpLinConstraintAtom();
 }
-static_assert(sizeof(hkpLinConstraintAtom) == 16, "hkpLinConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpLinConstraintAtom) == 16, "hkpLinConstraintAtom size");
 extern const hkTypeInfo hkpLinConstraintAtomTypeInfo;
 const hkTypeInfo hkpLinConstraintAtomTypeInfo(
     "hkpLinConstraintAtom",
@@ -872,7 +872,7 @@ static void cleanupLoadedObjecthkpLinFrictionConstraintAtom(void* p)
 {
     static_cast<hkpLinFrictionConstraintAtom*>(p)->~hkpLinFrictionConstraintAtom();
 }
-static_assert(sizeof(hkpLinFrictionConstraintAtom) == 16, "hkpLinFrictionConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpLinFrictionConstraintAtom) == 16, "hkpLinFrictionConstraintAtom size");
 extern const hkTypeInfo hkpLinFrictionConstraintAtomTypeInfo;
 const hkTypeInfo hkpLinFrictionConstraintAtomTypeInfo(
     "hkpLinFrictionConstraintAtom",
@@ -923,7 +923,7 @@ static void cleanupLoadedObjecthkpLinLimitConstraintAtom(void* p)
 {
     static_cast<hkpLinLimitConstraintAtom*>(p)->~hkpLinLimitConstraintAtom();
 }
-static_assert(sizeof(hkpLinLimitConstraintAtom) == 16, "hkpLinLimitConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpLinLimitConstraintAtom) == 16, "hkpLinLimitConstraintAtom size");
 extern const hkTypeInfo hkpLinLimitConstraintAtomTypeInfo;
 const hkTypeInfo hkpLinLimitConstraintAtomTypeInfo(
     "hkpLinLimitConstraintAtom",
@@ -977,7 +977,7 @@ static void cleanupLoadedObjecthkpLinMotorConstraintAtom(void* p)
 {
     static_cast<hkpLinMotorConstraintAtom*>(p)->~hkpLinMotorConstraintAtom();
 }
-static_assert(sizeof(hkpLinMotorConstraintAtom) == 32, "hkpLinMotorConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpLinMotorConstraintAtom) == 32, "hkpLinMotorConstraintAtom size");
 extern const hkTypeInfo hkpLinMotorConstraintAtomTypeInfo;
 const hkTypeInfo hkpLinMotorConstraintAtomTypeInfo(
     "hkpLinMotorConstraintAtom",
@@ -1149,7 +1149,7 @@ static void cleanupLoadedObjecthkpRagdollMotorConstraintAtom(void* p)
 {
     static_cast<hkpRagdollMotorConstraintAtom*>(p)->~hkpRagdollMotorConstraintAtom();
 }
-static_assert(sizeof(hkpRagdollMotorConstraintAtom) == 80, "hkpRagdollMotorConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpRagdollMotorConstraintAtom) == 80, "hkpRagdollMotorConstraintAtom size");
 extern const hkTypeInfo hkpRagdollMotorConstraintAtomTypeInfo;
 const hkTypeInfo hkpRagdollMotorConstraintAtomTypeInfo(
     "hkpRagdollMotorConstraintAtom",
@@ -1226,7 +1226,7 @@ static void cleanupLoadedObjecthkpSetLocalTransformsConstraintAtom(void* p)
 {
     static_cast<hkpSetLocalTransformsConstraintAtom*>(p)->~hkpSetLocalTransformsConstraintAtom();
 }
-static_assert(sizeof(hkpSetLocalTransformsConstraintAtom) == 144, "hkpSetLocalTransformsConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSetLocalTransformsConstraintAtom) == 144, "hkpSetLocalTransformsConstraintAtom size");
 extern const hkTypeInfo hkpSetLocalTransformsConstraintAtomTypeInfo;
 const hkTypeInfo hkpSetLocalTransformsConstraintAtomTypeInfo(
     "hkpSetLocalTransformsConstraintAtom",
@@ -1275,7 +1275,7 @@ static void cleanupLoadedObjecthkpSetLocalTranslationsConstraintAtom(void* p)
 {
     static_cast<hkpSetLocalTranslationsConstraintAtom*>(p)->~hkpSetLocalTranslationsConstraintAtom();
 }
-static_assert(sizeof(hkpSetLocalTranslationsConstraintAtom) == 48, "hkpSetLocalTranslationsConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSetLocalTranslationsConstraintAtom) == 48, "hkpSetLocalTranslationsConstraintAtom size");
 extern const hkTypeInfo hkpSetLocalTranslationsConstraintAtomTypeInfo;
 const hkTypeInfo hkpSetLocalTranslationsConstraintAtomTypeInfo(
     "hkpSetLocalTranslationsConstraintAtom",
@@ -1344,7 +1344,7 @@ static void cleanupLoadedObjecthkpSetupStabilizationAtom(void* p)
 {
     static_cast<hkpSetupStabilizationAtom*>(p)->~hkpSetupStabilizationAtom();
 }
-static_assert(sizeof(hkpSetupStabilizationAtom) == 16, "hkpSetupStabilizationAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSetupStabilizationAtom) == 16, "hkpSetupStabilizationAtom size");
 extern const hkTypeInfo hkpSetupStabilizationAtomTypeInfo;
 const hkTypeInfo hkpSetupStabilizationAtomTypeInfo(
     "hkpSetupStabilizationAtom",
@@ -1459,7 +1459,7 @@ static void cleanupLoadedObjecthkpTwistLimitConstraintAtom(void* p)
 {
     static_cast<hkpTwistLimitConstraintAtom*>(p)->~hkpTwistLimitConstraintAtom();
 }
-static_assert(sizeof(hkpTwistLimitConstraintAtom) == 32, "hkpTwistLimitConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpTwistLimitConstraintAtom) == 32, "hkpTwistLimitConstraintAtom size");
 extern const hkTypeInfo hkpTwistLimitConstraintAtomTypeInfo;
 const hkTypeInfo hkpTwistLimitConstraintAtomTypeInfo(
     "hkpTwistLimitConstraintAtom",

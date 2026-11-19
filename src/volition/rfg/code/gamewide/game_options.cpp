@@ -355,7 +355,7 @@ void game_options_load_ini_file_into_cache()
 
 #include <string.h>
 
-static_assert(sizeof(keen::rfg::RfgSaveData) == 0x1E0589C, "RfgSaveData"); // RfgSaveInterface::getSaveDataSize
+OPENRFG_SIZE_ASSERT(sizeof(keen::rfg::RfgSaveData) == 0x1E0589C, "RfgSaveData"); // RfgSaveInterface::getSaveDataSize
 
 // The rfg library's half.
 extern rfg_game_options Last_options_from_save_data; // 0x02535858

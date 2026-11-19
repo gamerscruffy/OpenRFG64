@@ -70,7 +70,7 @@ struct screen_size
     unsigned short width; // 0x00
     unsigned short height; // 0x02
 };
-static_assert(sizeof(screen_size) == 0x4, "screen_size");
+OPENRFG_SIZE_ASSERT(sizeof(screen_size) == 0x4, "screen_size");
 
 // size 0x8
 struct refresh_rate
@@ -78,7 +78,7 @@ struct refresh_rate
     unsigned int num; // 0x00
     unsigned int den; // 0x04
 };
-static_assert(sizeof(refresh_rate) == 0x8, "refresh_rate");
+OPENRFG_SIZE_ASSERT(sizeof(refresh_rate) == 0x8, "refresh_rate");
 
 // ---- file-static globals (UI0 left this file's statics out; addresses from the asm)
 static const char* cPage_names_dxoptions[2] = {"MENU_GENERAL", "MENU_ADVANCED"}; // 0x01664154

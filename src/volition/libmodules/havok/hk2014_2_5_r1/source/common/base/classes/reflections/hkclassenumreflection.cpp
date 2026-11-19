@@ -50,7 +50,7 @@ static void cleanupLoadedObjecthkClassEnumItem(void* p)
 {
     static_cast<hkClassEnum::Item*>(p)->~Item();
 }
-static_assert(sizeof(hkClassEnum::Item) == 8, "hkClassEnum::Item size");
+OPENRFG_SIZE_ASSERT(sizeof(hkClassEnum::Item) == 8, "hkClassEnum::Item size");
 extern const hkTypeInfo hkClassEnumItemTypeInfo;
 const hkTypeInfo hkClassEnumItemTypeInfo(
     "hkClassEnumItem",
@@ -107,7 +107,7 @@ static void cleanupLoadedObjecthkClassEnum(void* p)
 {
     static_cast<hkClassEnum*>(p)->~hkClassEnum();
 }
-static_assert(sizeof(hkClassEnum) == 20, "hkClassEnum size");
+OPENRFG_SIZE_ASSERT(sizeof(hkClassEnum) == 20, "hkClassEnum size");
 extern const hkTypeInfo hkClassEnumTypeInfo;
 const hkTypeInfo hkClassEnumTypeInfo(
     "hkClassEnum",

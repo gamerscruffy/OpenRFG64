@@ -72,7 +72,7 @@ struct mp_customization_shell_info
     unsigned int control_id; // 0x6C
     int input_id; // 0x70
 };
-static_assert(sizeof(mp_customization_shell_info) == 0x74, "mp_customization_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_customization_shell_info) == 0x74, "mp_customization_shell_info");
 
 enum mpps_hint_choices
 {

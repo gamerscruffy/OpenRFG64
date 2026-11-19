@@ -61,7 +61,7 @@ static void cleanupLoadedObjecthkpCenterOfMassChangerModifierConstraintAtom(void
 {
     static_cast<hkpCenterOfMassChangerModifierConstraintAtom*>(p)->~hkpCenterOfMassChangerModifierConstraintAtom();
 }
-static_assert(sizeof(hkpCenterOfMassChangerModifierConstraintAtom) == 64, "hkpCenterOfMassChangerModifierConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpCenterOfMassChangerModifierConstraintAtom) == 64, "hkpCenterOfMassChangerModifierConstraintAtom size");
 extern const hkTypeInfo hkpCenterOfMassChangerModifierConstraintAtomTypeInfo;
 const hkTypeInfo hkpCenterOfMassChangerModifierConstraintAtomTypeInfo(
     "hkpCenterOfMassChangerModifierConstraintAtom",
@@ -109,7 +109,7 @@ static void cleanupLoadedObjecthkpIgnoreModifierConstraintAtom(void* p)
 {
     static_cast<hkpIgnoreModifierConstraintAtom*>(p)->~hkpIgnoreModifierConstraintAtom();
 }
-static_assert(sizeof(hkpIgnoreModifierConstraintAtom) == 32, "hkpIgnoreModifierConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpIgnoreModifierConstraintAtom) == 32, "hkpIgnoreModifierConstraintAtom size");
 extern const hkTypeInfo hkpIgnoreModifierConstraintAtomTypeInfo;
 const hkTypeInfo hkpIgnoreModifierConstraintAtomTypeInfo(
     "hkpIgnoreModifierConstraintAtom",
@@ -162,7 +162,7 @@ static void cleanupLoadedObjecthkpMassChangerModifierConstraintAtom(void* p)
 {
     static_cast<hkpMassChangerModifierConstraintAtom*>(p)->~hkpMassChangerModifierConstraintAtom();
 }
-static_assert(sizeof(hkpMassChangerModifierConstraintAtom) == 64, "hkpMassChangerModifierConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpMassChangerModifierConstraintAtom) == 64, "hkpMassChangerModifierConstraintAtom size");
 extern const hkTypeInfo hkpMassChangerModifierConstraintAtomTypeInfo;
 const hkTypeInfo hkpMassChangerModifierConstraintAtomTypeInfo(
     "hkpMassChangerModifierConstraintAtom",
@@ -217,7 +217,7 @@ static void cleanupLoadedObjecthkpModifierConstraintAtom(void* p)
 {
     static_cast<hkpModifierConstraintAtom*>(p)->~hkpModifierConstraintAtom();
 }
-static_assert(sizeof(hkpModifierConstraintAtom) == 32, "hkpModifierConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpModifierConstraintAtom) == 32, "hkpModifierConstraintAtom size");
 extern const hkTypeInfo hkpModifierConstraintAtomTypeInfo;
 const hkTypeInfo hkpModifierConstraintAtomTypeInfo(
     "hkpModifierConstraintAtom",
@@ -269,7 +269,7 @@ static void cleanupLoadedObjecthkpMovingSurfaceModifierConstraintAtom(void* p)
 {
     static_cast<hkpMovingSurfaceModifierConstraintAtom*>(p)->~hkpMovingSurfaceModifierConstraintAtom();
 }
-static_assert(sizeof(hkpMovingSurfaceModifierConstraintAtom) == 48, "hkpMovingSurfaceModifierConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpMovingSurfaceModifierConstraintAtom) == 48, "hkpMovingSurfaceModifierConstraintAtom size");
 extern const hkTypeInfo hkpMovingSurfaceModifierConstraintAtomTypeInfo;
 const hkTypeInfo hkpMovingSurfaceModifierConstraintAtomTypeInfo(
     "hkpMovingSurfaceModifierConstraintAtom",
@@ -322,7 +322,7 @@ static void cleanupLoadedObjecthkpSoftContactModifierConstraintAtom(void* p)
 {
     static_cast<hkpSoftContactModifierConstraintAtom*>(p)->~hkpSoftContactModifierConstraintAtom();
 }
-static_assert(sizeof(hkpSoftContactModifierConstraintAtom) == 48, "hkpSoftContactModifierConstraintAtom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSoftContactModifierConstraintAtom) == 48, "hkpSoftContactModifierConstraintAtom size");
 extern const hkTypeInfo hkpSoftContactModifierConstraintAtomTypeInfo;
 const hkTypeInfo hkpSoftContactModifierConstraintAtomTypeInfo(
     "hkpSoftContactModifierConstraintAtom",

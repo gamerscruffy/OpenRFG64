@@ -226,7 +226,9 @@ struct hkpAngMotorConstraintAtom : public hkpConstraintAtom
     short m_initializedOffset; // 0x04
     short m_previousTargetAngleOffset; // 0x06
     hkpConstraintMotor* m_motor; // 0x08
+#ifndef OPENRFG_X64
     unsigned int m_motorPadding; // 0x0C: the pointer is 8 bytes wide in the SDK (HK_CPU_PTR)
+#endif
     float m_targetAngle; // 0x10
     short m_correspondingAngLimitSolverResultOffset; // 0x14
     unsigned char m_padding[10]; // 0x16
@@ -277,7 +279,9 @@ struct hkpLinMotorConstraintAtom : public hkpConstraintAtom
     short m_initializedOffset; // 0x04
     short m_previousTargetPositionOffset; // 0x06
     hkpConstraintMotor* m_motor; // 0x08
+#ifndef OPENRFG_X64
     unsigned int m_motorPadding; // 0x0C: the pointer is 8 bytes wide in the SDK (HK_CPU_PTR)
+#endif
     float m_targetPosition; // 0x10
     unsigned char m_padding[12]; // 0x14
 };

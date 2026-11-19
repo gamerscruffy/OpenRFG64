@@ -38,7 +38,7 @@ struct audiolib_music_transition_string_lookup
     AUDIOLIB_MUSIC_STATE state; // 0x00
     const char* string; // 0x04
 };
-static_assert(sizeof(audiolib_music_transition_string_lookup) == 0x8, "audiolib_music_transition_string_lookup");
+OPENRFG_SIZE_ASSERT(sizeof(audiolib_music_transition_string_lookup) == 0x8, "audiolib_music_transition_string_lookup");
 
 // ---- file-static globals
 static audiolib_music_transition_string_lookup music_transition_strings[26] = { // 0x014F9358
@@ -466,9 +466,15 @@ audiolib_result audiolib_internal_parse_music_table(audiolib_music_file_data* fi
             }
         }
     }
-    const unsigned int size = (num_states * 9 + num_transition_clips * 4 + 30 + num_transitions * 6 + num_lulls + (num_decisions + num_clips * 2) * 4 +
+    const unsigned int size32 = (num_states * 9 + num_transition_clips * 4 + 30 + num_transitions * 6 + num_lulls + (num_decisions + num_clips * 2) * 4 +
                                num_exits + num_first_clips) *
                               4;
+#ifdef OPENRFG_X64
+    // x64: the structs hold 8-byte pointers, so the 32-bit size counts are far too small.
+    const unsigned int size = size32 * 3;
+#else
+    const unsigned int size = size32;
+#endif
     audiolib_music_score_data* score = (audiolib_music_score_data*)Audiolib_state.pool->alloc(size, 0);
     if (score == nullptr)
     {
@@ -631,9 +637,10 @@ audiolib_result audiolib_internal_parse_music_table(audiolib_music_file_data* fi
         if (state->num_first_clips != 0)
         {
             const int bytes = state->num_first_clips * 4;
+            const int ptr_bytes = state->num_first_clips * (int)sizeof(audiolib_music_clip_data*); // 8 each on x64
             state->first_clips = (audiolib_music_clip_data**)cursor;
-            state->first_clip_usage_counts = (int*)(cursor + bytes);
-            cursor += bytes * 2;
+            state->first_clip_usage_counts = (int*)(cursor + ptr_bytes);
+            cursor += ptr_bytes + bytes;
             memset(state->first_clip_usage_counts, 0, bytes);
             audiolib_music_clip_data** first = state->first_clips;
             for (xml_element* first_xml = xml_find(state_xml, "FIRST_CLIP"); first_xml != nullptr; first_xml = xml_find_next(state_xml, first_xml, "FIRST_CLIP"))

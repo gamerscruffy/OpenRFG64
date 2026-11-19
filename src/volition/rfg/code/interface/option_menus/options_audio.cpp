@@ -52,7 +52,7 @@ struct audio_info_options
     int m_sfx_playid; // 0x40
     int m_overall_playid; // 0x44
 };
-static_assert(sizeof(audio_info_options) == 0x48, "audio_info_options");
+OPENRFG_SIZE_ASSERT(sizeof(audio_info_options) == 0x48, "audio_info_options");
 
 // audio_lib's volume categories as the options use them (magic numbers of rfg.exe): 0 ambience, 1 music, 2 and 3
 // voice, 4 and 5 effects, 6 overall, 7 voice chat.

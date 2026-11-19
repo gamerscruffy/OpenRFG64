@@ -66,7 +66,7 @@ namespace keen
     // Original behaviour kept: WM_SETFOCUS hides the cursor only when it clips it (WM_KILLFOCUS shows it either way);
     // WM_KILLFOCUS releases the capture but leaves captureCount as it is; WM_DEVICECHANGE sent to a child window goes
     // to the main window's old procedure.
-    long __stdcall win32MsgProc(HWND__* hWnd, uint32 uMsg, uint32 wParam, long lParam)
+    intptr_t __stdcall win32MsgProc(HWND__* hWnd, uint32 uMsg, uintptr_t wParam, intptr_t lParam)
     {
         uint32 index = 0;
         while (hWnd != s_windowStates[index].hWnd && hWnd != s_windowStates[index].hMainWnd)
@@ -190,10 +190,10 @@ namespace keen
                 state.pInputSystems[i] = pInputSystem;
                 if (state.pOldMsgProc == nullptr)
                 {
-                    state.pOldMsgProc = (WNDPROC)SetWindowLongW(hWnd, GWL_WNDPROC, (LONG)&win32MsgProc);
+                    state.pOldMsgProc = (decltype(state.pOldMsgProc))SetWindowLongPtrW(hWnd, GWLP_WNDPROC, (LONG_PTR)&win32MsgProc);
                     if (hWnd != mainWnd)
                     {
-                        state.pOldMainWindowMsgProc = (WNDPROC)SetWindowLongW(mainWnd, GWL_WNDPROC, (LONG)&win32MsgProc);
+                        state.pOldMainWindowMsgProc = (decltype(state.pOldMainWindowMsgProc))SetWindowLongPtrW(mainWnd, GWLP_WNDPROC, (LONG_PTR)&win32MsgProc);
                     }
                 }
                 state.hasFocus = GetFocus() == mainWnd && GetForegroundWindow() == mainWnd;
@@ -220,11 +220,11 @@ namespace keen
             {
                 if (state.pInputSystems[i] == pInputSystem)
                 {
-                    SetWindowLongW(state.hWnd, GWL_WNDPROC, (LONG)state.pOldMsgProc);
+                    SetWindowLongPtrW(state.hWnd, GWLP_WNDPROC, (LONG_PTR)state.pOldMsgProc);
                     state.pOldMsgProc = nullptr;
                     if (state.hWnd != state.hMainWnd)
                     {
-                        SetWindowLongW(state.hMainWnd, GWL_WNDPROC, (LONG)state.pOldMainWindowMsgProc);
+                        SetWindowLongPtrW(state.hMainWnd, GWLP_WNDPROC, (LONG_PTR)state.pOldMainWindowMsgProc);
                         state.pOldMainWindowMsgProc = nullptr;
                     }
                     return;
@@ -487,7 +487,7 @@ namespace keen
 
     // 0x00C7CAB0 (:930)
     // The relative movement of a WM_INPUT mouse report (rfg.exe registers no raw input, so none come).
-    static void processWmInput(InputSystem* pInputSystem, long lParam)
+    static void processWmInput(InputSystem* pInputSystem, intptr_t lParam)
     {
         UINT size = 0;
         if (GetRawInputData((HRAWINPUT)lParam, RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER)) != 0 || size > 0x80u)
@@ -524,7 +524,7 @@ namespace keen
     // Original behaviour kept: the extended keys get their right-hand ids only when their virtual key has no mapping;
     // the right Alt (Windows sends AltGr as left Ctrl + right Alt) turns a queued left Ctrl of the same direction into
     // AltGr and is dropped itself; sendResetEvents reads past the controller table on a focus change (inputsystem.cpp).
-    void generateInputEventForWin32Message(InputSystem* pInputSystem, uint32 messageId, uint32 wParam, long lParam)
+    void generateInputEventForWin32Message(InputSystem* pInputSystem, uint32 messageId, uintptr_t wParam, intptr_t lParam)
     {
         switch (messageId)
         {

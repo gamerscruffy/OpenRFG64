@@ -90,7 +90,7 @@ template<typename T>
 void spsc_queue<T>::enqueue(const T& t)
 {
     last_p->next_p = new node(t);
-    InterlockedExchange((volatile LONG*)&last_p, (LONG)last_p->next_p);
+    InterlockedExchangePointer((void* volatile*)&last_p, (void*)last_p->next_p);
     while (first_p != divider_p)
     {
         node* node_p = first_p;
@@ -109,7 +109,7 @@ bool spsc_queue<T>::dequeue(T& result)
         return false;
     }
     result = divider_p->next_p->val;
-    InterlockedExchange((volatile LONG*)&divider_p, (LONG)divider_p->next_p);
+    InterlockedExchangePointer((void* volatile*)&divider_p, (void*)divider_p->next_p);
     return true;
 }
 

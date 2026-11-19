@@ -58,7 +58,7 @@ static void cleanupLoadedObjecthkSimpleProperty(void* p)
 {
     static_cast<hkSimpleProperty*>(p)->~hkSimpleProperty();
 }
-static_assert(sizeof(hkSimpleProperty) == 16, "hkSimpleProperty size");
+OPENRFG_SIZE_ASSERT(sizeof(hkSimpleProperty) == 16, "hkSimpleProperty size");
 extern const hkTypeInfo hkSimplePropertyTypeInfo;
 const hkTypeInfo hkSimplePropertyTypeInfo(
     "hkSimpleProperty",
@@ -103,7 +103,7 @@ static void cleanupLoadedObjecthkSimplePropertyValue(void* p)
 {
     static_cast<hkSimplePropertyValue*>(p)->~hkSimplePropertyValue();
 }
-static_assert(sizeof(hkSimplePropertyValue) == 8, "hkSimplePropertyValue size");
+OPENRFG_SIZE_ASSERT(sizeof(hkSimplePropertyValue) == 8, "hkSimplePropertyValue size");
 extern const hkTypeInfo hkSimplePropertyValueTypeInfo;
 const hkTypeInfo hkSimplePropertyValueTypeInfo(
     "hkSimplePropertyValue",

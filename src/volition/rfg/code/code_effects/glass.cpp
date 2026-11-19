@@ -47,7 +47,7 @@ struct free_buffer
     unsigned char* data; // 0x00
     char delay; // 0x04
 };
-static_assert(sizeof(free_buffer) == 0x8, "free_buffer");
+OPENRFG_SIZE_ASSERT(sizeof(free_buffer) == 0x8, "free_buffer");
 
 // size 0x14
 struct glass_tint
@@ -57,7 +57,7 @@ struct glass_tint
     int texture_handle; // 0x00
     rl_color_float tint; // 0x04
 };
-static_assert(sizeof(glass_tint) == 0x14, "glass_tint");
+OPENRFG_SIZE_ASSERT(sizeof(glass_tint) == 0x14, "glass_tint");
 
 // size 0x20, vertex format RLVF_PIXLIT_1UV_NMAP_CA (layout from rfg.pdb)
 struct rl_mesh_pixlit_nmap_ca_vertex
@@ -69,7 +69,7 @@ struct rl_mesh_pixlit_nmap_ca_vertex
     unsigned char vindices[4]; // 0x18
     unsigned int uvs; // 0x1C
 };
-static_assert(sizeof(rl_mesh_pixlit_nmap_ca_vertex) == 0x20, "rl_mesh_pixlit_nmap_ca_vertex");
+OPENRFG_SIZE_ASSERT(sizeof(rl_mesh_pixlit_nmap_ca_vertex) == 0x20, "rl_mesh_pixlit_nmap_ca_vertex");
 
 // ---- globals (tweakables)
 bool Glass_enabled = true; // 0x01648F80

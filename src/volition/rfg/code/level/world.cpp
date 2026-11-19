@@ -362,7 +362,7 @@ void world::system_init()
     {
         keen::debug::nativePrintArgs("world::max_objects must fit within 16 bits - please check object pool sizes!");
     }
-    object** objects = (object**)Permanent_mempool.alloc(max_world_objects * 4, 4);
+    object** objects = (object**)Permanent_mempool.alloc(max_world_objects * sizeof(object*), sizeof(object*));
     all_objects.init(objects, max_world_objects, 0);
     object_handle_hash.init(Permanent_mempool, max_world_objects);
 
@@ -703,7 +703,7 @@ world_zone* world::init_territory(const char* filename, bool new_game, bool sing
     }
     Load_timer_indent -= 2;
     mempool_mark_scope files_scope(&Common_mempool);
-    const char** files = (const char**)Common_mempool.alloc(0x404, 0);
+    const char** files = (const char**)Common_mempool.alloc(0x101 * sizeof(const char*), 0);
     timer_get(TIMER_MILLISECONDS);
     Load_timer_indent += 2;
     const int num_files = rfg_zonex_get_territory_files(is_territory, files, 0x101, zone_filename, ".rfgzone_pc");
@@ -741,7 +741,7 @@ bool world::init_world_zones(int num_files, const char** files)
         return false;
     }
     num_territory_zones = 0;
-    all_zones = (world_zone**)Level_mempool.alloc(num_files * 4, 0);
+    all_zones = (world_zone**)Level_mempool.alloc(num_files * sizeof(world_zone*), 0);
     if (all_zones == nullptr)
     {
         VLIB_CRITICAL_FAILURE();

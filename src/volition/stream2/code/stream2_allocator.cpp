@@ -15,6 +15,7 @@
 //   single-pointer can_alloc/max_alloc/alloc/free and the 5-argument init are not supported (log only).
 // - stream2_system_allocator always allocates the GPU part, even when gpu_bytes is 0.
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGSTRA
 #include "volition/stream2/code/stream2_allocator.h"
 
 #include "volition/vlib/code/memory/split_memmgr.h"
@@ -652,6 +653,7 @@ void stream2_slot_allocator::alloc(int cpu_bytes, int _cpu_align, unsigned char*
             return;
         }
     }
+    { static int d10_ = 0; if (d10_++ < 30) { int used_ = 0; for (int i_ = 0; i_ < brackets.size(); i_++) { bracket& b_ = brackets[i_]; if (b_.slot_used_list != 0xFFFF) { slot* q_ = &b_.slots[b_.slot_used_list]; for (;;) { used_++; if (q_->next == b_.slot_used_list) break; q_ = &b_.slots[q_->next]; } } } GAME_TRACE("stralloc", "slot alloc FAIL cpu_bytes=%d name=%s used_slots=%d", cpu_bytes, debug_name ? debug_name : "-", used_); } } // DBGSTRA
     cpu_alloc = nullptr;
     gpu_alloc = nullptr;
 }
@@ -691,6 +693,7 @@ void stream2_slot_allocator::free(unsigned char* cpu_buf, unsigned char* gpu_buf
             s = &br.slots[s->next];
         }
     }
+    { static int d11_ = 0; if (d11_++ < 30) { GAME_TRACE("stralloc", "slot free: buffer %p NOT FOUND", (void*)cpu_buf); } } // DBGSTRA
 }
 
 // 0x004AA3C0 (:934)

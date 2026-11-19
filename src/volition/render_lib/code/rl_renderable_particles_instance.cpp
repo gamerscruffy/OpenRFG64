@@ -4,6 +4,7 @@
 // pools), the parametric constant block of a parametric emitter, and its submission to the particle renderer. The
 // inline members are in rl_renderable_particles_instance.inl.
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGPOOL
 #include "volition/render_lib/code/rl_renderable_particles_instance.h"
 
 #include "volition/render_lib/code/rl_factory_rtti.h"
@@ -100,6 +101,7 @@ bool rl_renderable_particles_instance::alloc_iterative_particles(int count)
     // Magic number: 128 bytes per iterative particle (sizeof(rl_particle_iterative)).
     if (count == 0 || !rl_particle_renderer::ms_particle_iterative_pool.can_alloc(count << 7, 0))
     {
+        { static int n_ = 0; if (count > 0 && n_++ < 20) GAME_TRACE("partpool", "iterative pool FULL count=%d", count); } // DBGPOOL
         return false;
     }
     rl_particle_iterative* particles_p = (rl_particle_iterative*)rl_particle_renderer::ms_particle_iterative_pool.alloc(count << 7, 0);
@@ -118,6 +120,7 @@ bool rl_renderable_particles_instance::alloc_parametric_particles(int count)
     // Magic number: 64 bytes per parametric particle (sizeof(rl_particle_parametric)).
     if (count == 0 || !rl_particle_renderer::ms_particle_parametric_pool.can_alloc(count << 6, 0))
     {
+        { static int n_ = 0; if (count > 0 && n_++ < 20) GAME_TRACE("partpool", "parametric pool FULL count=%d", count); } // DBGPOOL
         return false;
     }
     rl_particle_parametric* particles_p = (rl_particle_parametric*)rl_particle_renderer::ms_particle_parametric_pool.alloc(count << 6, 0);

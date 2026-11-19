@@ -82,7 +82,7 @@ static const void* getVtablehkpBreakableConstraintData()
     ::new (u.buf) hkpBreakableConstraintData(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpBreakableConstraintData) == 48, "hkpBreakableConstraintData size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBreakableConstraintData) == 48, "hkpBreakableConstraintData size");
 extern const hkTypeInfo hkpBreakableConstraintDataTypeInfo;
 const hkTypeInfo hkpBreakableConstraintDataTypeInfo(
     "hkpBreakableConstraintData",

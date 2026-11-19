@@ -3,6 +3,7 @@
 // The radial filler of rl_particle_renderer (VFX.md FX2): quads oriented away from where the particle was emitted
 // (the vertex carries the emission position). Corner uvs (0,0), (0,1), (1,0), (1,1); no tails.
 
+#include <string.h>
 #include "volition/render_lib/code/rl_particle_renderer.h"
 
 #include "volition/render_lib/code/rl_renderable_particles.h"
@@ -41,7 +42,7 @@ void rl_particle_renderer::radial_add_particle(const rl_particle_iterative& part
     {
         vertex.uvs.x = (i & 2) != 0 ? 1.0f : 0.0f;
         vertex.uvs.y = (i & 1) != 0 ? 1.0f : 0.0f;
-        vertices_p[i] = vertex;
+        memcpy(&vertices_p[i], &vertex, sizeof(vertex)); // OpenRFG: unaligned dest (SSE store faulted)
     }
     num_verts += 4;
     vertex_p += current_vertex_stride * 4;
@@ -80,7 +81,7 @@ void rl_particle_renderer::filler_radial(rl_renderable_particles_instance* insta
             parametric_vertex* vertices_p = (parametric_vertex*)vertex_p;
             for (int i = 0; i < 4; i++)
             {
-                vertices_p[i] = vertex;
+                memcpy(&vertices_p[i], &vertex, sizeof(vertex)); // OpenRFG: unaligned dest (SSE store faulted)
             }
             num_verts += 4;
             vertex_p += current_vertex_stride * 4;

@@ -183,7 +183,7 @@ bool human_spawn_group_info::load(xml_element* xml_group_root, mempool* pool)
     {
         return false;
     }
-    const human_info** data = (const human_info**)pool->alloc(list.size() * 4, 4);
+    const human_info** data = (const human_info**)pool->alloc(list.size() * sizeof(void*), sizeof(void*));
     if (data == nullptr)
     {
         return false;
@@ -301,7 +301,7 @@ bool vehicle_spawn_group_info::load(xml_element* xml_group_root, mempool* pool)
     {
         return false;
     }
-    const vehicle_info** data = (const vehicle_info**)pool->alloc(list.size() * 4, 4);
+    const vehicle_info** data = (const vehicle_info**)pool->alloc(list.size() * sizeof(void*), sizeof(void*));
     if (data == nullptr)
     {
         return false;

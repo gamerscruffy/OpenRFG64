@@ -54,7 +54,7 @@ static void cleanupLoadedObjecthkpConstraintInstanceSmallArraySerializeOverrideT
 {
     static_cast<hkpConstraintInstance::SmallArraySerializeOverrideType*>(p)->~SmallArraySerializeOverrideType();
 }
-static_assert(sizeof(hkpConstraintInstance::SmallArraySerializeOverrideType) == 8, "hkpConstraintInstance::SmallArraySerializeOverrideType size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpConstraintInstance::SmallArraySerializeOverrideType) == 8, "hkpConstraintInstance::SmallArraySerializeOverrideType size");
 extern const hkTypeInfo hkpConstraintInstanceSmallArraySerializeOverrideTypeTypeInfo;
 const hkTypeInfo hkpConstraintInstanceSmallArraySerializeOverrideTypeTypeInfo(
     "hkpConstraintInstanceSmallArraySerializeOverrideType",
@@ -186,7 +186,7 @@ static const void* getVtablehkpConstraintInstance()
     ::new (u.buf) hkpConstraintInstance(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpConstraintInstance) == 56, "hkpConstraintInstance size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpConstraintInstance) == 56, "hkpConstraintInstance size");
 extern const hkTypeInfo hkpConstraintInstanceTypeInfo;
 const hkTypeInfo hkpConstraintInstanceTypeInfo(
     "hkpConstraintInstance",

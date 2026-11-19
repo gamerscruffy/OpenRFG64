@@ -25,7 +25,7 @@ struct alignas(8) BINK
     int NumTracks; // 0x38
     unsigned char rest[0x600 - 0x3C]; // 0x3C
 };
-static_assert(sizeof(BINK) == 0x600, "BINK");
+OPENRFG_SIZE_ASSERT(sizeof(BINK) == 0x600, "BINK");
 
 // size 0xC
 struct BINKPLANE
@@ -75,7 +75,7 @@ struct BINKREALTIME
     unsigned int FramesThreadReadTime; // 0x3C
     unsigned int FramesBlitTime; // 0x40
 };
-static_assert(sizeof(BINKREALTIME) == 0x48, "BINKREALTIME");
+OPENRFG_SIZE_ASSERT(sizeof(BINKREALTIME) == 0x48, "BINKREALTIME");
 
 // size 0x90
 struct BINKSUMMARY
@@ -112,7 +112,7 @@ struct BINKSUMMARY
     unsigned int AverageFrameSize; // 0x88
     unsigned int Highest1SecFrame; // 0x8C
 };
-static_assert(sizeof(BINKSUMMARY) == 0x90, "BINKSUMMARY");
+OPENRFG_SIZE_ASSERT(sizeof(BINKSUMMARY) == 0x90, "BINKSUMMARY");
 
 // rfg.exe's imports from binkw32.dll, decorated __stdcall exports (_BinkOpen@8, tools/dll_implib/dll_implib.py).
 extern "C"

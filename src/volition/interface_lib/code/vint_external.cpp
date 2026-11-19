@@ -52,7 +52,7 @@ struct vint_color_table_entry
     const wchar_t* m_name; // 0x00
     vint_variant_color m_color; // 0x04
 };
-static_assert(sizeof(vint_color_table_entry) == 0x10, "vint_color_table_entry");
+OPENRFG_SIZE_ASSERT(sizeof(vint_color_table_entry) == 0x10, "vint_color_table_entry");
 
 // ---- public globals
 mempool_base* Vint_perm_mempool; // 0x01A48624

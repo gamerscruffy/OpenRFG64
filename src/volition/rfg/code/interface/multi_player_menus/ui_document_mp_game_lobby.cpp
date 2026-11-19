@@ -105,7 +105,7 @@ struct mp_game_lobby_shell_info
     timestamp_realtime exit_time; // 0xC8
     bool show_streamed_image; // 0xCC
 };
-static_assert(sizeof(mp_game_lobby_shell_info) == 0xD0, "mp_game_lobby_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_game_lobby_shell_info) == 0xD0, "mp_game_lobby_shell_info");
 
 // ---- file-static globals
 static game_lobby_hint_choices Current_mouse_hint_choice_lobby = GL_HINT_INVALID; // 0x016633AC, initial data ffffffff

@@ -58,7 +58,7 @@ static void cleanupLoadedObjecthkArrayTypeAttribute(void* p)
 {
     static_cast<hkArrayTypeAttribute*>(p)->~hkArrayTypeAttribute();
 }
-static_assert(sizeof(hkArrayTypeAttribute) == 1, "hkArrayTypeAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkArrayTypeAttribute) == 1, "hkArrayTypeAttribute size");
 extern const hkTypeInfo hkArrayTypeAttributeTypeInfo;
 const hkTypeInfo hkArrayTypeAttributeTypeInfo(
     "hkArrayTypeAttribute",
@@ -112,7 +112,7 @@ static void cleanupLoadedObjecthkAttributeHideCriteria(void* p)
 {
     static_cast<hkAttributeHideCriteria*>(p)->~hkAttributeHideCriteria();
 }
-static_assert(sizeof(hkAttributeHideCriteria) == 1, "hkAttributeHideCriteria size");
+OPENRFG_SIZE_ASSERT(sizeof(hkAttributeHideCriteria) == 1, "hkAttributeHideCriteria size");
 extern const hkTypeInfo hkAttributeHideCriteriaTypeInfo;
 const hkTypeInfo hkAttributeHideCriteriaTypeInfo(
     "hkAttributeHideCriteria",
@@ -157,7 +157,7 @@ static void cleanupLoadedObjecthkDataObjectTypeAttribute(void* p)
 {
     static_cast<hkDataObjectTypeAttribute*>(p)->~hkDataObjectTypeAttribute();
 }
-static_assert(sizeof(hkDataObjectTypeAttribute) == 4, "hkDataObjectTypeAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkDataObjectTypeAttribute) == 4, "hkDataObjectTypeAttribute size");
 extern const hkTypeInfo hkDataObjectTypeAttributeTypeInfo;
 const hkTypeInfo hkDataObjectTypeAttributeTypeInfo(
     "hkDataObjectTypeAttribute",
@@ -202,7 +202,7 @@ static void cleanupLoadedObjecthkDescriptionAttribute(void* p)
 {
     static_cast<hkDescriptionAttribute*>(p)->~hkDescriptionAttribute();
 }
-static_assert(sizeof(hkDescriptionAttribute) == 4, "hkDescriptionAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkDescriptionAttribute) == 4, "hkDescriptionAttribute size");
 extern const hkTypeInfo hkDescriptionAttributeTypeInfo;
 const hkTypeInfo hkDescriptionAttributeTypeInfo(
     "hkDescriptionAttribute",
@@ -247,7 +247,7 @@ static void cleanupLoadedObjecthkDocumentationAttribute(void* p)
 {
     static_cast<hkDocumentationAttribute*>(p)->~hkDocumentationAttribute();
 }
-static_assert(sizeof(hkDocumentationAttribute) == 4, "hkDocumentationAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkDocumentationAttribute) == 4, "hkDocumentationAttribute size");
 extern const hkTypeInfo hkDocumentationAttributeTypeInfo;
 const hkTypeInfo hkDocumentationAttributeTypeInfo(
     "hkDocumentationAttribute",
@@ -306,7 +306,7 @@ static void cleanupLoadedObjecthkGizmoAttribute(void* p)
 {
     static_cast<hkGizmoAttribute*>(p)->~hkGizmoAttribute();
 }
-static_assert(sizeof(hkGizmoAttribute) == 12, "hkGizmoAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkGizmoAttribute) == 12, "hkGizmoAttribute size");
 extern const hkTypeInfo hkGizmoAttributeTypeInfo;
 const hkTypeInfo hkGizmoAttributeTypeInfo(
     "hkGizmoAttribute",
@@ -366,7 +366,7 @@ static void cleanupLoadedObjecthkLinkAttribute(void* p)
 {
     static_cast<hkLinkAttribute*>(p)->~hkLinkAttribute();
 }
-static_assert(sizeof(hkLinkAttribute) == 1, "hkLinkAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkLinkAttribute) == 1, "hkLinkAttribute size");
 extern const hkTypeInfo hkLinkAttributeTypeInfo;
 const hkTypeInfo hkLinkAttributeTypeInfo(
     "hkLinkAttribute",
@@ -421,7 +421,7 @@ static void cleanupLoadedObjecthkModelerNodeTypeAttribute(void* p)
 {
     static_cast<hkModelerNodeTypeAttribute*>(p)->~hkModelerNodeTypeAttribute();
 }
-static_assert(sizeof(hkModelerNodeTypeAttribute) == 1, "hkModelerNodeTypeAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkModelerNodeTypeAttribute) == 1, "hkModelerNodeTypeAttribute size");
 extern const hkTypeInfo hkModelerNodeTypeAttributeTypeInfo;
 const hkTypeInfo hkModelerNodeTypeAttributeTypeInfo(
     "hkModelerNodeTypeAttribute",
@@ -466,7 +466,7 @@ static void cleanupLoadedObjecthkPostFinishAttribute(void* p)
 {
     static_cast<hkPostFinishAttribute*>(p)->~hkPostFinishAttribute();
 }
-static_assert(sizeof(hkPostFinishAttribute) == 4, "hkPostFinishAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkPostFinishAttribute) == 4, "hkPostFinishAttribute size");
 extern const hkTypeInfo hkPostFinishAttributeTypeInfo;
 const hkTypeInfo hkPostFinishAttributeTypeInfo(
     "hkPostFinishAttribute",
@@ -514,7 +514,7 @@ static void cleanupLoadedObjecthkRangeInt32Attribute(void* p)
 {
     static_cast<hkRangeInt32Attribute*>(p)->~hkRangeInt32Attribute();
 }
-static_assert(sizeof(hkRangeInt32Attribute) == 16, "hkRangeInt32Attribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkRangeInt32Attribute) == 16, "hkRangeInt32Attribute size");
 extern const hkTypeInfo hkRangeInt32AttributeTypeInfo;
 const hkTypeInfo hkRangeInt32AttributeTypeInfo(
     "hkRangeInt32Attribute",
@@ -562,7 +562,7 @@ static void cleanupLoadedObjecthkRangeRealAttribute(void* p)
 {
     static_cast<hkRangeRealAttribute*>(p)->~hkRangeRealAttribute();
 }
-static_assert(sizeof(hkRangeRealAttribute) == 16, "hkRangeRealAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkRangeRealAttribute) == 16, "hkRangeRealAttribute size");
 extern const hkTypeInfo hkRangeRealAttributeTypeInfo;
 const hkTypeInfo hkRangeRealAttributeTypeInfo(
     "hkRangeRealAttribute",
@@ -603,7 +603,7 @@ static void cleanupLoadedObjecthkScriptableAttribute(void* p)
 {
     static_cast<hkScriptableAttribute*>(p)->~hkScriptableAttribute();
 }
-static_assert(sizeof(hkScriptableAttribute) == 1, "hkScriptableAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkScriptableAttribute) == 1, "hkScriptableAttribute size");
 extern const hkTypeInfo hkScriptableAttributeTypeInfo;
 const hkTypeInfo hkScriptableAttributeTypeInfo(
     "hkScriptableAttribute",
@@ -662,7 +662,7 @@ static void cleanupLoadedObjecthkSemanticsAttribute(void* p)
 {
     static_cast<hkSemanticsAttribute*>(p)->~hkSemanticsAttribute();
 }
-static_assert(sizeof(hkSemanticsAttribute) == 1, "hkSemanticsAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkSemanticsAttribute) == 1, "hkSemanticsAttribute size");
 extern const hkTypeInfo hkSemanticsAttributeTypeInfo;
 const hkTypeInfo hkSemanticsAttributeTypeInfo(
     "hkSemanticsAttribute",
@@ -715,7 +715,7 @@ static void cleanupLoadedObjecthkUiAttribute(void* p)
 {
     static_cast<hkUiAttribute*>(p)->~hkUiAttribute();
 }
-static_assert(sizeof(hkUiAttribute) == 20, "hkUiAttribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkUiAttribute) == 20, "hkUiAttribute size");
 extern const hkTypeInfo hkUiAttributeTypeInfo;
 const hkTypeInfo hkUiAttributeTypeInfo(
     "hkUiAttribute",

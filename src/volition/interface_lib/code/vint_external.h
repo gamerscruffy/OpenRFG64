@@ -103,7 +103,7 @@ public:
 // size 0x8
 struct vint_memory_callbacks
 {
-    void* (*realloc)(void*, unsigned int); // 0x00
+    void* (*realloc)(void*, size_t); // 0x00
     void (*free)(void*); // 0x04
 };
 

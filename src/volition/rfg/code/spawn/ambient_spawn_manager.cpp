@@ -6,6 +6,7 @@
 // still build their networks and no spawn zones in amb_spawn_zone_load_complete. Plain float where rfg.exe uses double
 // chains.
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGAMBV
 #include "volition/rfg/code/spawn/ambient_spawn_manager.h"
 
 #include "volition/rfg/code/ai/ai_system.h"
@@ -2497,6 +2498,7 @@ static const vehicle_info* pick_loaded_and_streamed_vehicle_info(const base_arra
     }
     if (loaded.size() == 0)
     {
+        { static int d3_ = 0; if ((d3_++ % 10) == 0) { int st_ = 0, sr_ = 0; for (int i = 0; i < vehicle_info_list.size(); i++) { if (stream2_get_status(vehicle_info_list[i]->srid) == ST_LOADED) st_++; if (srm_vehicle_info_loaded(vehicle_info_list[i])) sr_++; } GAME_TRACE("ambveh", "pick: list=%d streamLoaded=%d srmLoaded=%d", vehicle_info_list.size(), st_, sr_); } } // DBGAMBV
         return nullptr;
     }
     return loaded[loaded.size() == 1 ? 0 : int_rand_range(0, loaded.size() - 1)];
@@ -2505,6 +2507,7 @@ static const vehicle_info* pick_loaded_and_streamed_vehicle_info(const base_arra
 // 0x00B5EE60 (:3640)
 // Magic numbers: half the road's width to the right of the road point; three people at most, two fewer when alert or busy,
 // one from 75 NPCs on; the next spawn 2 to 4 seconds later.
+#define AMBV(s) do { static int c_ = 0; if ((c_++ % 25) == 0) { GAME_TRACE("ambveh", "no vehicle spawn: stopped at %s (n=%d)", s, c_); } } while (0) // DBGAMBV
 static void spawn_single_vehicle(ambient_veh_spawn_info& spawn_info)
 {
     farray<road_segment_info, 8> route;
@@ -2516,7 +2519,7 @@ static void spawn_single_vehicle(ambient_veh_spawn_info& spawn_info)
     road_spline_identifier spawn_id;
     if (!pick_vehicle_spawn_loc(spawn_info.road_spawn_list, spawn_id))
     {
-        return;
+        { AMBV("L2519"); return; } // DBGAMBV
     }
     object_path_road* road = spawn_id.road_spline;
     const unsigned int start_index = spawn_id.point;
@@ -2524,13 +2527,13 @@ static void spawn_single_vehicle(ambient_veh_spawn_info& spawn_info)
     matrix spawn_orient;
     if (!ambient_build_road_waypoints(route, spawn_orient, road, start_index))
     {
-        return;
+        { AMBV("L2527"); return; } // DBGAMBV
     }
     const float half_width = road->get_width((float)start_index) * 0.5f;
     const vector spawn_pos(road_pos.x + spawn_orient.rvec.x * half_width, road_pos.y + spawn_orient.rvec.y * half_width, road_pos.z + spawn_orient.rvec.z * half_width);
     if (!World.is_zone_streamed(spawn_pos))
     {
-        return;
+        { AMBV("L2533"); return; } // DBGAMBV
     }
     for (int i = 0; i < Desired_guerrilla_list.size(); i++)
     {
@@ -2542,12 +2545,12 @@ static void spawn_single_vehicle(ambient_veh_spawn_info& spawn_info)
     }
     if (loaded_humans.size() < 1)
     {
-        return;
+        { AMBV("L2545"); return; } // DBGAMBV
     }
     veh_params.veh_info = pick_loaded_and_streamed_vehicle_info(spawn_info.amb_spawn_info->v_spawn_group->v_info_list);
     if (veh_params.veh_info == nullptr)
     {
-        return;
+        { AMBV("L2550"); return; } // DBGAMBV
     }
     veh_params.veh_spawn_flags.mobile_vehicle_spawn = 1;
     veh_params.veh_spawn_flags.road_spawn = 1;
@@ -2559,11 +2562,11 @@ static void spawn_single_vehicle(ambient_veh_spawn_info& spawn_info)
     veh_params.forward_speed = AMBIENT_VEHICLE_SPEED;
     if (spawn_info.amb_spawn_info->h_spawn_group == nullptr)
     {
-        return;
+        { AMBV("L2562"); return; } // DBGAMBV
     }
     if (object_spawn_vehicle(veh_params) != SPAWN_STATUS_SUCCESS || veh_params.vp == nullptr)
     {
-        return;
+        { AMBV("L2566"); return; } // DBGAMBV
     }
     vehicle* vp = veh_params.vp;
     const int num_seats = vehicle_get_num_seats(vp);
@@ -2571,7 +2574,7 @@ static void spawn_single_vehicle(ambient_veh_spawn_info& spawn_info)
     {
         keen::debug::nativePrintArgs("Int3 critical function at %s(%d)\n", __FILE__, __LINE__);
         World.destroy_object(vp, false);
-        return;
+        { AMBV("L2574"); return; } // DBGAMBV
     }
     int num_people = 1;
     if (World.get_num_objects<npc>() < 75)
@@ -2603,7 +2606,7 @@ static void spawn_single_vehicle(ambient_veh_spawn_info& spawn_info)
     if (object_spawn_do_spawn(npc_params) != SPAWN_STATUS_SUCCESS)
     {
         World.destroy_object(vp, false);
-        return;
+        { AMBV("L2606"); return; } // DBGAMBV
     }
     bool route_given = false;
     for (int i = 0; i < npc_params.npc_spawn_info.size(); i++)
@@ -2624,7 +2627,7 @@ static void spawn_single_vehicle(ambient_veh_spawn_info& spawn_info)
     {
         keen::debug::nativePrintArgs("Int3 critical function at %s(%d)\n", __FILE__, __LINE__);
         World.destroy_object(vp, false);
-        return;
+        { AMBV("L2627"); return; } // DBGAMBV
     }
     if (Last_road_spawn_list.size() >= Last_road_spawn_list.capacity())
     {
@@ -2632,6 +2635,7 @@ static void spawn_single_vehicle(ambient_veh_spawn_info& spawn_info)
     }
     Last_road_spawn_list.add(road->get_handle());
     Vehicle_spawn_period.set_rand(2000, 4000);
+    GAME_TRACE("ambveh", "AMBIENT VEHICLE SPAWNED"); // DBGAMBV
 }
 
 // 0x00B47970 (:3821)
@@ -2680,12 +2684,12 @@ static void do_frame_spawn_vehicle()
 {
     if (!Vehicle_spawn_period.elapsed())
     {
-        return;
+        { static int dc_ = 0; if ((dc_++ % 100) == 0) { GAME_TRACE("ambveh", "timer: until=%d ticker=%d paused=%d valid=%d", Vehicle_spawn_period.time_until(), get_timestamp_ticker(), get_timestamp_pause(), (int)Vehicle_spawn_period.valid()); } return; } // DBGAMBV
     }
     Vehicle_spawn_period.set_rand(250, 500);
     if (activity_disable_ambient_veh_spawn() || Disable_ambient_vehicle_spawn || near_npc_population_cap() || near_auto_population_cap())
     {
-        return;
+        { AMBV("L2688"); return; } // DBGAMBV
     }
     ambient_veh_spawn_info spawn_info;
     spawn_info.camera_pos = Rfg_camera.real_pos;
@@ -2693,25 +2697,25 @@ static void do_frame_spawn_vehicle()
     spawn_info.amb_spawn_info = amb_spawn_info_current();
     if (spawn_info.amb_spawn_info == nullptr || !spawn_info.amb_spawn_info->ambient_flags.veh_spawn_enabled)
     {
-        return;
+        { { static int d2_ = 0; if ((d2_++ % 50) == 0) { const ambient_spawn_info* a_ = spawn_info.amb_spawn_info; player* pl_ = player_get_local_player(); GAME_TRACE("ambveh", "L2696 info=%p group=%s h=%p v=%p veh_d=%d ped_d=%d vflag=%d pos=%.0f,%.0f,%.0f zone=%p", (void*)a_, (a_ && a_->group_name) ? a_->group_name : "-", a_ ? (void*)a_->h_spawn_group : nullptr, a_ ? (void*)a_->v_spawn_group : nullptr, a_ ? (int)a_->veh_density : -1, a_ ? (int)a_->ped_density : -1, a_ ? (int)a_->ambient_flags.veh_spawn_enabled : -1, pl_ ? pl_->pos.x : 0.f, pl_ ? pl_->pos.y : 0.f, pl_ ? pl_->pos.z : 0.f, pl_ ? (void*)World.get_zone_by_pos(pl_->pos) : nullptr); } } AMBV("L2696"); return; } // DBGAMBV
     }
     spawn_info.pp = player_get_local_player();
     spawn_info.nearest_road = object_road_get_closest_road(spawn_info.pp->pos, false, spawn_info.nearest_pos_on_road, spawn_info.dist_on_road, MIN_CAMERA_PED_SPAWN_DISTANCE, false, nullptr, nullptr, false);
     if (spawn_info.nearest_road == nullptr)
     {
-        return;
+        { AMBV("L2702"); return; } // DBGAMBV
     }
     find_all_ambinet_vehicles(spawn_info);
     spawn_info.minimap_radius = Cartographer.get_zoom_radius();
     if (spawn_info.ambient_vehicle_list.size() >= 10)
     {
         agressive_delete_ambient_vehicle(spawn_info);
-        return;
+        { AMBV("L2709"); return; } // DBGAMBV
     }
     spawn_info.vehicle_density = max_vehicle_count(spawn_info.amb_spawn_info);
     if (spawn_info.vehicles_in_region >= spawn_info.vehicle_density)
     {
-        return;
+        { AMBV("L2714"); return; } // DBGAMBV
     }
     build_vehicle_spawn_locations(spawn_info);
     if (spawn_info.road_spawn_list.size() > 0)

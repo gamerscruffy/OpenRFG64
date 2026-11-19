@@ -259,7 +259,7 @@ void hkSolver::integrateVelocities(const hkpSolverInfo& info, const hkVector4f& 
 {
     if (accEnd == nullptr)
     {
-        accEnd = reinterpret_cast<hkpVelocityAccumulator*>(0xFFFFFFFF);
+        accEnd = reinterpret_cast<hkpVelocityAccumulator*>(~(uintptr_t)0); // x64: was 0xFFFFFFFF, which stopped the loop for any heap address above 4GB
     }
     for (; acc < accEnd; acc++)
     {

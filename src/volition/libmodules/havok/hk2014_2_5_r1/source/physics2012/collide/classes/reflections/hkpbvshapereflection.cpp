@@ -70,7 +70,7 @@ static const void* getVtablehkpBvShape()
     ::new (u.buf) hkpBvShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpBvShape) == 28, "hkpBvShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBvShape) == 28, "hkpBvShape size");
 extern const hkTypeInfo hkpBvShapeTypeInfo;
 const hkTypeInfo hkpBvShapeTypeInfo(
     "hkpBvShape",

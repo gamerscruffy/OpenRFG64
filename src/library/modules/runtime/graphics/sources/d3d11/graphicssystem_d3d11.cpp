@@ -227,7 +227,7 @@ namespace keen
         {
             if (message == WM_DESTROY)
             {
-                GraphicsSystem* pGraphicsSystem = (GraphicsSystem*)GetWindowLongW(hWnd, 0);
+                GraphicsSystem* pGraphicsSystem = (GraphicsSystem*)GetWindowLongPtrW(hWnd, 0);
                 pGraphicsSystem->isWindowDestroyed = true;
             }
             return DefWindowProcW(hWnd, message, wParam, lParam);
@@ -307,7 +307,7 @@ namespace keen
                         deleteObject(pGraphicsSystem, pGraphicsSystem->pSystemAllocator);
                         return nullptr;
                     }
-                    SetWindowLongW(pGraphicsSystem->createdWindowHandle, 0, (LONG)pGraphicsSystem);
+                    SetWindowLongPtrW(pGraphicsSystem->createdWindowHandle, 0, (LONG_PTR)pGraphicsSystem);
                     ShowWindow(pGraphicsSystem->createdWindowHandle, parameters.nShowCmd);
                 }
                 else

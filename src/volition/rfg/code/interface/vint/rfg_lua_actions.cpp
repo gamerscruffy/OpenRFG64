@@ -5,6 +5,7 @@
 // the last N stack values. The single player natives (mission briefing and complete, weapon cabinet, district
 // liberation, upgrades, credits) call into code that is a stand-in outside its tier.
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGMCT
 #include "volition/rfg/code/interface/vint/rfg_lua_actions.h"
 
 #include "keen/base/stringencoding.hpp"
@@ -102,6 +103,10 @@ static int menu_tween_fade_in_end(lua_State* lua_state)
     if (doc != nullptr)
     {
         vint_doc_handle = doc->get_handle();
+    }
+    {
+        void openrfg_log(const char*);
+        openrfg_log(doc != nullptr ? "DBGFADE lua menu_tween_fade_in_end called, doc ok" : "DBGFADE lua menu_tween_fade_in_end called, doc NULL");
     }
     ui_menu_tween_fade_in_end(vint_doc_handle);
     return lua_add_return<int>(0, lua_state);
@@ -432,6 +437,7 @@ static int rfg_enable_button_input(lua_State* lua_state)
 static int rfg_morale_disabled(lua_State* lua_state)
 {
     lua_gettop(lua_state);
+    { static int n_ = 0; if (n_++ < 20) GAME_TRACE("mctally", "lua morale_disabled -> %d", (int)dlc_get_morale_disabled()); } // DBGMCT
     return lua_add_return<bool>(dlc_get_morale_disabled(), lua_state);
 }
 
@@ -439,6 +445,7 @@ static int rfg_morale_disabled(lua_State* lua_state)
 static int rfg_morale_disabled_load_game(lua_State* lua_state)
 {
     lua_gettop(lua_state);
+    { static int n_ = 0; if (n_++ < 20) GAME_TRACE("mctally", "lua morale_disabled_load_game -> %d", (int)dlc_get_morale_disabled_load_game()); } // DBGMCT
     return lua_add_return<bool>(dlc_get_morale_disabled_load_game(), lua_state);
 }
 
@@ -446,6 +453,7 @@ static int rfg_morale_disabled_load_game(lua_State* lua_state)
 static int rfg_salvage_disabled(lua_State* lua_state)
 {
     lua_gettop(lua_state);
+    { static int n_ = 0; if (n_++ < 20) GAME_TRACE("mctally", "lua salvage_disabled -> %d", (int)dlc_get_salvage_disabled()); } // DBGMCT
     return lua_add_return<bool>(dlc_get_salvage_disabled(), lua_state);
 }
 

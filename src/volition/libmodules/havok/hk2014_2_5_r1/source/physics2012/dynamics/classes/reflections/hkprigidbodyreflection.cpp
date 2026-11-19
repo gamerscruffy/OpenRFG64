@@ -64,7 +64,7 @@ static const void* getVtablehkpRigidBody()
     ::new (u.buf) hkpRigidBody(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpRigidBody) == 544, "hkpRigidBody size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpRigidBody) == 544, "hkpRigidBody size");
 extern const hkTypeInfo hkpRigidBodyTypeInfo;
 const hkTypeInfo hkpRigidBodyTypeInfo(
     "hkpRigidBody",

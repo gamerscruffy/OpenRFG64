@@ -47,7 +47,7 @@ static void cleanupLoadedObjecthkSweptTransformf(void* p)
 {
     static_cast<hkSweptTransformf*>(p)->~hkSweptTransformf();
 }
-static_assert(sizeof(hkSweptTransformf) == 80, "hkSweptTransformf size");
+OPENRFG_SIZE_ASSERT(sizeof(hkSweptTransformf) == 80, "hkSweptTransformf size");
 extern const hkTypeInfo hkSweptTransformfTypeInfo;
 const hkTypeInfo hkSweptTransformfTypeInfo(
     "hkSweptTransformf",

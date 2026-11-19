@@ -14,6 +14,9 @@
 
 #include <string.h>
 
+class vint_object_base;
+vint_object_base* vint_handle_to_object(unsigned int handle);
+
 // ---- class statics
 unsigned int vint_object_animation::Int_obj_type = 0xFFFFFFFF; // 0x014F56F8
 const unsigned int& vint_object_animation::Object_type = vint_object_animation::Int_obj_type; // 0x014F56FC
@@ -213,8 +216,8 @@ bool vint_object_animation::set_target_handle(const vint_variant& _val, int _ind
 {
     // each child tween targets the object of its target's name under the new target
     unsigned int handle = (unsigned int)_val;
-    vint_object_base* target = (vint_object_base*)handle;
-    if (handle == 0 || handle == 0xFFFFFFFF || target->get_handle() != handle)
+    vint_object_base* target = vint_handle_to_object(handle);
+    if (handle == 0 || handle == 0xFFFFFFFF || target == nullptr || target->get_handle() != handle)
     {
         return false;
     }
@@ -264,8 +267,8 @@ bool vint_object_animation::get_target_handle(vint_variant& _val, int _index) co
 void vint_object_animation_reset_child_tween_objects(unsigned int anim_handle, vint_document* doc)
 {
     // every child tween's target back to its start value
-    vint_object_base* anim = (vint_object_base*)anim_handle;
-    if (doc == nullptr || anim_handle == 0 || anim_handle == 0xFFFFFFFF || anim->get_handle() != anim_handle || anim->get_parent_document() != doc || anim->get_type() != vint_object_animation::Object_type)
+    vint_object_base* anim = vint_handle_to_object(anim_handle);
+    if (doc == nullptr || anim_handle == 0 || anim_handle == 0xFFFFFFFF || anim == nullptr || anim->get_handle() != anim_handle || anim->get_parent_document() != doc || anim->get_type() != vint_object_animation::Object_type)
     {
         return;
     }
@@ -281,8 +284,8 @@ void vint_object_animation_reset_child_tween_objects(unsigned int anim_handle, v
 // 0x00476930 (:259)
 void vint_object_animation_set_child_tween_state(unsigned int anim_handle, vint_tween_state state, vint_document* doc)
 {
-    vint_object_base* anim = (vint_object_base*)anim_handle;
-    if (doc == nullptr || anim_handle == 0 || anim_handle == 0xFFFFFFFF || anim->get_handle() != anim_handle || anim->get_parent_document() != doc || anim->get_type() != vint_object_animation::Object_type || (int)state >= NUM_VINT_TWEEN_STATES)
+    vint_object_base* anim = vint_handle_to_object(anim_handle);
+    if (doc == nullptr || anim_handle == 0 || anim_handle == 0xFFFFFFFF || anim == nullptr || anim->get_handle() != anim_handle || anim->get_parent_document() != doc || anim->get_type() != vint_object_animation::Object_type || (int)state >= NUM_VINT_TWEEN_STATES)
     {
         return;
     }

@@ -548,8 +548,8 @@ bool world::restore_serialize_zone(world_zone* wz, zone_file* orig_zone)
     const int num_restored = restore_pending_pop(restore_table, list_end, wz->gid, false);
     if (num_restored > 0)
     {
-        zone_object** zobj_list = (zone_object**)allocator->allocate(num_restored * 4, 16, 0, nullptr);
-        object** stub_list = (object**)allocator->allocate(num_restored * 4, 16, 0, nullptr);
+        zone_object** zobj_list = (zone_object**)allocator->allocate(num_restored * sizeof(void*), 16, 0, nullptr);
+        object** stub_list = (object**)allocator->allocate(num_restored * sizeof(void*), 16, 0, nullptr);
         int num_stubs = 0;
         for (int i = 0; i < num_restored; i++)
         {

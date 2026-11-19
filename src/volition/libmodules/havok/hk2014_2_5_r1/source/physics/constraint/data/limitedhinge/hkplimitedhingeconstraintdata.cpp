@@ -15,11 +15,11 @@
 
 using namespace hkSolverSse;
 
-static_assert(sizeof(hkpLimitedHingeConstraintData) == 0x120, "hkpLimitedHingeConstraintData");
-static_assert(sizeof(hkpLimitedHingeConstraintData::Atoms) == 0x110, "hkpLimitedHingeConstraintData::Atoms");
-static_assert(sizeof(hkpLimitedHingeConstraintData::Runtime) == 0x60, "hkpLimitedHingeConstraintData::Runtime");
-static_assert(offsetof(hkpLimitedHingeConstraintData::Atoms, m_angLimit) == 0xD0, "Atoms::m_angLimit");
-static_assert(offsetof(hkpLimitedHingeConstraintData::Atoms, m_ballSocket) == 0x100, "Atoms::m_ballSocket");
+OPENRFG_SIZE_ASSERT(sizeof(hkpLimitedHingeConstraintData) == 0x120, "hkpLimitedHingeConstraintData");
+OPENRFG_SIZE_ASSERT(sizeof(hkpLimitedHingeConstraintData::Atoms) == 0x110, "hkpLimitedHingeConstraintData::Atoms");
+OPENRFG_SIZE_ASSERT(sizeof(hkpLimitedHingeConstraintData::Runtime) == 0x60, "hkpLimitedHingeConstraintData::Runtime");
+OPENRFG_SIZE_ASSERT(offsetof(hkpLimitedHingeConstraintData::Atoms, m_angLimit) == 0xD0, "Atoms::m_angLimit");
+OPENRFG_SIZE_ASSERT(offsetof(hkpLimitedHingeConstraintData::Atoms, m_ballSocket) == 0x100, "Atoms::m_ballSocket");
 
 // 0x00D6D390: the transforms keep their type only; the old ball socket and no stabilization
 hkpLimitedHingeConstraintData::Atoms::Atoms()

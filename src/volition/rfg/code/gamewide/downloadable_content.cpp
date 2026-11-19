@@ -1127,7 +1127,7 @@ void dlc_level_shutdown()
         for (int j = 0; j < list.srid_count; j++)
         {
             const unsigned int srid = list.srid_list[j];
-            if (!((stream2_container*)srid)->is_idle())
+            if (!(stream2_sc_ptr(srid))->is_idle())
             {
                 stream2_release(srid);
             }
@@ -1224,7 +1224,7 @@ void dlc_clear_temp_srid()
         for (int j = 0; j < list.srid_count; j++)
         {
             const unsigned int srid = list.srid_list[j];
-            if (!((stream2_container*)srid)->is_idle())
+            if (!(stream2_sc_ptr(srid))->is_idle())
             {
                 stream2_release(srid);
             }
@@ -1512,7 +1512,7 @@ void dlc_managed_layer_srid_removal()
     for (int i = 0; i < Dlc_persistent_srids.size(); i++)
     {
         const unsigned int srid = Dlc_persistent_srids[i];
-        if (!((stream2_container*)srid)->is_idle())
+        if (!(stream2_sc_ptr(srid))->is_idle())
         {
             stream2_release(srid);
         }

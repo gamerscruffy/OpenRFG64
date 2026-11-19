@@ -110,7 +110,7 @@ struct mp_party_shell_info
     mp_party_states party_state; // 0xCC
     mp_party_states party_pending_state; // 0xD0
 };
-static_assert(sizeof(mp_party_shell_info) == 0xD4, "mp_party_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_party_shell_info) == 0xD4, "mp_party_shell_info");
 
 // ---- file-static globals
 static void party_lobby_process_data_item_hint_text(vint_data_item* vdi);

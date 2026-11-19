@@ -46,7 +46,7 @@ static vint_callback_lua* Active_lua_callbacks; // 0x01A48670
 static vint_callback_lua* Avail_lua_callbacks; // 0x01A48674
 
 // The sizes the event handlers expect with their data.
-static const unsigned int VINT_LUA_TWEEN_EVENT_BYTES = 8;
+static const unsigned int VINT_LUA_TWEEN_EVENT_BYTES = 2 * sizeof(void*); // {tween, event name}: 8 on x86, 16 on x64 (the sender passes sizeof)
 static const unsigned int VINT_LUA_INPUT_EVENT_BYTES = 0x58;
 static const unsigned int VINT_LUA_DATA_EVENT_BYTES = 0x128;
 static const unsigned int VINT_LUA_DATA_ITEM_BYTES = 0x430;

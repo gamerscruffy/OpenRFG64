@@ -76,7 +76,7 @@ static void cleanupLoadedObjecthkClass(void* p)
 {
     static_cast<hkClass*>(p)->~hkClass();
 }
-static_assert(sizeof(hkClass) == 48, "hkClass size");
+OPENRFG_SIZE_ASSERT(sizeof(hkClass) == 48, "hkClass size");
 extern const hkTypeInfo hkClassTypeInfo;
 const hkTypeInfo hkClassTypeInfo(
     "hkClass",

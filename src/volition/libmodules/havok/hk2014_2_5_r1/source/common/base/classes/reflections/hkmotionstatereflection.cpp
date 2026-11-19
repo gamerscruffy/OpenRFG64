@@ -57,7 +57,7 @@ static void cleanupLoadedObjecthkMotionState(void* p)
 {
     static_cast<hkMotionState*>(p)->~hkMotionState();
 }
-static_assert(sizeof(hkMotionState) == 176, "hkMotionState size");
+OPENRFG_SIZE_ASSERT(sizeof(hkMotionState) == 176, "hkMotionState size");
 extern const hkTypeInfo hkMotionStateTypeInfo;
 const hkTypeInfo hkMotionStateTypeInfo(
     "hkMotionState",

@@ -77,7 +77,7 @@ union swap_info_handle
     unsigned int w_info_handle; // 0x00
     int backpack_type; // 0x00
 };
-static_assert(sizeof(swap_info_handle) == 0x4, "swap_info_handle");
+OPENRFG_SIZE_ASSERT(sizeof(swap_info_handle) == 0x4, "swap_info_handle");
 
 // size 0x14
 struct swap_info_set
@@ -89,7 +89,7 @@ struct swap_info_set
     swap_info_handle m_secondary_slot; // 0x08
     vector2 m_screen_pos; // 0x0C
 };
-static_assert(sizeof(swap_info_set) == 0x14, "swap_info_set");
+OPENRFG_SIZE_ASSERT(sizeof(swap_info_set) == 0x14, "swap_info_set");
 
 // The radio message's states (m_state). Magic numbers of rfg.exe, no enum in rfg.pdb.
 enum

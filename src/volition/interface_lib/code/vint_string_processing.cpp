@@ -42,7 +42,7 @@ struct tag_parse_lookup
     unsigned int m_tag_length; // 0x04
     const wchar_t* (*m_func)(const wchar_t*, unsigned char**, unsigned int*, vint_text_parse_status&); // 0x08
 };
-static_assert(sizeof(tag_parse_lookup) == 0xC, "tag_parse_lookup");
+OPENRFG_SIZE_ASSERT(sizeof(tag_parse_lookup) == 0xC, "tag_parse_lookup");
 
 static const wchar_t* vint_string_parse_format(const wchar_t* _source_string, unsigned char** _instr_buffer, unsigned int* _instr_buffer_len, vint_text_parse_status& _status);
 static const wchar_t* vint_string_parse_slash_format(const wchar_t* _source_string, unsigned char** _instr_buffer, unsigned int* _instr_buffer_len, vint_text_parse_status& _status);

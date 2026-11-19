@@ -60,7 +60,7 @@ static void cleanupLoadedObjecthkpSimpleContactConstraintDataInfo(void* p)
 {
     static_cast<hkpSimpleContactConstraintDataInfo*>(p)->~hkpSimpleContactConstraintDataInfo();
 }
-static_assert(sizeof(hkpSimpleContactConstraintDataInfo) == 32, "hkpSimpleContactConstraintDataInfo size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSimpleContactConstraintDataInfo) == 32, "hkpSimpleContactConstraintDataInfo size");
 extern const hkTypeInfo hkpSimpleContactConstraintDataInfoTypeInfo;
 const hkTypeInfo hkpSimpleContactConstraintDataInfoTypeInfo(
     "hkpSimpleContactConstraintDataInfo",

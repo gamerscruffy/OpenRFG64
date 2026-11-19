@@ -91,7 +91,7 @@ struct expression_var
     unsigned int m_crc; // 0x0C
     int m_lut_index; // 0x10
 };
-static_assert(sizeof(expression_var) == 0x14, "expression_var");
+OPENRFG_SIZE_ASSERT(sizeof(expression_var) == 0x14, "expression_var");
 
 expression_var* expression_var::registrator_list; // 0x02182E08
 

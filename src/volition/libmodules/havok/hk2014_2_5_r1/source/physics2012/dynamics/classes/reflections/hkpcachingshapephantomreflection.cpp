@@ -69,7 +69,7 @@ static const void* getVtablehkpCachingShapePhantom()
     ::new (u.buf) hkpCachingShapePhantom(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpCachingShapePhantom) == 352, "hkpCachingShapePhantom size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpCachingShapePhantom) == 352, "hkpCachingShapePhantom size");
 extern const hkTypeInfo hkpCachingShapePhantomTypeInfo;
 const hkTypeInfo hkpCachingShapePhantomTypeInfo(
     "hkpCachingShapePhantom",

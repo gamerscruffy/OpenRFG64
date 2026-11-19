@@ -6,9 +6,9 @@
 
 #include <stddef.h>
 
-static_assert(sizeof(hkpPositionConstraintMotor) == 0x24, "hkpPositionConstraintMotor");
-static_assert(offsetof(hkpPositionConstraintMotor, m_tau) == 0x14, "hkpPositionConstraintMotor::m_tau");
-static_assert(offsetof(hkpPositionConstraintMotor, m_constantRecoveryVelocity) == 0x20, "hkpPositionConstraintMotor::m_constantRecoveryVelocity");
+OPENRFG_SIZE_ASSERT(sizeof(hkpPositionConstraintMotor) == 0x24, "hkpPositionConstraintMotor");
+OPENRFG_SIZE_ASSERT(offsetof(hkpPositionConstraintMotor, m_tau) == 0x14, "hkpPositionConstraintMotor::m_tau");
+OPENRFG_SIZE_ASSERT(offsetof(hkpPositionConstraintMotor, m_constantRecoveryVelocity) == 0x20, "hkpPositionConstraintMotor::m_constantRecoveryVelocity");
 
 // 0x00D70580: the current position is not stored.
 hkpPositionConstraintMotor::hkpPositionConstraintMotor(float)

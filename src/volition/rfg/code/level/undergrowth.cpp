@@ -145,11 +145,11 @@ struct undergrowth_wind_info
     uint32 last_update_time; // 0x14
 };
 
-static_assert(sizeof(undergrowth_layer) == 0x5C, "sizeof(undergrowth_layer)");
-static_assert(sizeof(undergrowth_active_cell) == 0x38, "sizeof(undergrowth_active_cell)");
-static_assert(sizeof(fading_cell) == 0xC, "sizeof(fading_cell)");
-static_assert(sizeof(undergrowth_zone) == 0x48, "sizeof(undergrowth_zone)");
-static_assert(sizeof(undergrowth_wind_info) == 0x18, "sizeof(undergrowth_wind_info)");
+OPENRFG_SIZE_ASSERT(sizeof(undergrowth_layer) == 0x5C, "sizeof(undergrowth_layer)");
+OPENRFG_SIZE_ASSERT(sizeof(undergrowth_active_cell) == 0x38, "sizeof(undergrowth_active_cell)");
+OPENRFG_SIZE_ASSERT(sizeof(fading_cell) == 0xC, "sizeof(fading_cell)");
+OPENRFG_SIZE_ASSERT(sizeof(undergrowth_zone) == 0x48, "sizeof(undergrowth_zone)");
+OPENRFG_SIZE_ASSERT(sizeof(undergrowth_wind_info) == 0x18, "sizeof(undergrowth_wind_info)");
 
 // ---- tweakables (retail values)
 

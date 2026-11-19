@@ -1,3 +1,4 @@
+#include <stdio.h>
 // Original: volition/render_lib/code/rl_particle_renderer_deferred.cpp
 //
 // The deferred particle passes of rl_particle_renderer: by particle LOD the quarter and half resolution particles
@@ -29,6 +30,8 @@
 // the full resolution particles and the bright pass.
 void rl_particle_renderer::render_deferred(rl_renderer& renderer, rl_compositor& compositor, rl_camera& camera, const rl_particle_framebuffer_state& fullscreen, const rl_particle_framebuffer_state& halfscreen, const rl_particle_brightpass_state& brightpass, const rl_particle_distortion_state& distortion, const rl_particle_lighting_state& lighting_state, const int fog_color_texture_handle, const rl_color_float& particle_tint)
 {
+    { static int dd=0; int tot=m_quarter_res_entries.size()+m_half_res_entries.size()+m_full_res_entries.size()+m_distortion_entries.size(); if(tot>0 && (dd++%40)==0 && dd<4000){ extern void openrfg_log(const char*); char b[220]; _snprintf(b,sizeof(b),"DBGDEF lod=%d q=%d h=%d f=%d d=%d c=%d dist_en=%d fs=%dx%d hs=%dx%d",(int)m_level_of_detail,(int)m_quarter_res_entries.size(),(int)m_half_res_entries.size(),(int)m_full_res_entries.size(),(int)m_distortion_entries.size(),(int)m_corona_entries.size(),(int)distortion.m_enabled,(int)fullscreen.m_width,(int)fullscreen.m_height,(int)halfscreen.m_width,(int)halfscreen.m_height); openrfg_log(b);} }
+    m_level_of_detail = RL_PARTICLE_LOD_VERY_HIGH; // X64 WORKAROUND: half/quarter-res particle path renders nothing; force full-res path (keep until root-caused)
     if (m_level_of_detail == RL_PARTICLE_LOD_LOW)
     {
         downsample_depth(renderer, compositor, halfscreen.m_depth_texture, halfscreen.m_width, halfscreen.m_height, m_quarter_depth_target.get_dev_render_target(), m_quarter_ds_surface, m_quarter_width, m_quarter_height);

@@ -16,17 +16,17 @@
 
 using namespace hkSolverSse;
 
-static_assert(sizeof(hkpRagdollConstraintData) == 0x180, "hkpRagdollConstraintData");
-static_assert(sizeof(hkpRagdollConstraintData::Atoms) == 0x170, "hkpRagdollConstraintData::Atoms");
-static_assert(sizeof(hkpRagdollConstraintData::Runtime) == 0xB0, "hkpRagdollConstraintData::Runtime");
-static_assert(offsetof(hkpRagdollConstraintData, m_atoms) == 0x10, "hkpRagdollConstraintData::m_atoms");
-static_assert(offsetof(hkpRagdollConstraintData::Atoms, m_ragdollMotors) == 0xA0, "Atoms::m_ragdollMotors");
-static_assert(offsetof(hkpRagdollConstraintData::Atoms, m_ballSocket) == 0x160, "Atoms::m_ballSocket");
-static_assert(sizeof(hkpRagdollMotorConstraintAtom) == 0x50, "hkpRagdollMotorConstraintAtom");
-static_assert(offsetof(hkpRagdollMotorConstraintAtom, m_motors) == 0x40, "hkpRagdollMotorConstraintAtom::m_motors");
-static_assert(sizeof(hkpConeLimitConstraintAtom) == 0x20, "hkpConeLimitConstraintAtom");
-static_assert(sizeof(hkpAngMotorConstraintAtom) == 0x20, "hkpAngMotorConstraintAtom");
-static_assert(offsetof(hkpAngMotorConstraintAtom, m_targetAngle) == 0x10, "hkpAngMotorConstraintAtom::m_targetAngle");
+OPENRFG_SIZE_ASSERT(sizeof(hkpRagdollConstraintData) == 0x180, "hkpRagdollConstraintData");
+OPENRFG_SIZE_ASSERT(sizeof(hkpRagdollConstraintData::Atoms) == 0x170, "hkpRagdollConstraintData::Atoms");
+OPENRFG_SIZE_ASSERT(sizeof(hkpRagdollConstraintData::Runtime) == 0xB0, "hkpRagdollConstraintData::Runtime");
+OPENRFG_SIZE_ASSERT(offsetof(hkpRagdollConstraintData, m_atoms) == 0x10, "hkpRagdollConstraintData::m_atoms");
+OPENRFG_SIZE_ASSERT(offsetof(hkpRagdollConstraintData::Atoms, m_ragdollMotors) == 0xA0, "Atoms::m_ragdollMotors");
+OPENRFG_SIZE_ASSERT(offsetof(hkpRagdollConstraintData::Atoms, m_ballSocket) == 0x160, "Atoms::m_ballSocket");
+OPENRFG_SIZE_ASSERT(sizeof(hkpRagdollMotorConstraintAtom) == 0x50, "hkpRagdollMotorConstraintAtom");
+OPENRFG_SIZE_ASSERT(offsetof(hkpRagdollMotorConstraintAtom, m_motors) == 0x40, "hkpRagdollMotorConstraintAtom::m_motors");
+OPENRFG_SIZE_ASSERT(sizeof(hkpConeLimitConstraintAtom) == 0x20, "hkpConeLimitConstraintAtom");
+OPENRFG_SIZE_ASSERT(sizeof(hkpAngMotorConstraintAtom) == 0x20, "hkpAngMotorConstraintAtom");
+OPENRFG_SIZE_ASSERT(offsetof(hkpAngMotorConstraintAtom, m_targetAngle) == 0x10, "hkpAngMotorConstraintAtom::m_targetAngle");
 
 namespace
 {

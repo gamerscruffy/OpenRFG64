@@ -1,3 +1,4 @@
+#include <cstdint>
 // Original: volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/internal/solver/atom/hkpbuildjacobianfromatoms.cpp
 //
 // Havok 2014.2.5 (havok_impl.md HK8, multiplayer.md MP7): the Jacobians of a constraint's atoms other than a bare
@@ -363,7 +364,7 @@ void hkSolverBuildJacobianFromAtomsNotContact(const hkpConstraintAtom* atoms, in
         {
         case hkpConstraintAtom::TYPE_INVALID:
             // padding: the next atom starts at the next 16 bytes
-            atom = reinterpret_cast<const char*>((reinterpret_cast<unsigned int>(atom) + 0xF) & ~0xF);
+            atom = reinterpret_cast<const char*>((reinterpret_cast<uintptr_t>(atom) + 0xF) & ~(uintptr_t)0xF);
             continue;
 
         case hkpConstraintAtom::TYPE_BRIDGE:

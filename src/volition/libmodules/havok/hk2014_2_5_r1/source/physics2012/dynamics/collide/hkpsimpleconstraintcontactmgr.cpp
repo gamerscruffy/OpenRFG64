@@ -1,3 +1,4 @@
+#include <cstdint>
 // Original: volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/collide/hkpsimpleconstraintcontactmgr.cpp
 //
 // Havok 2014.2.5 (havok_impl.md HK8): the contact manager of colliding rigid bodies, from rfg.exe. Its contact
@@ -158,7 +159,7 @@ void hkpSimpleConstraintContactMgr::removeToiImpl(hkpConstraintOwner& constraint
 hkpContactMgr::ToiAccept hkpSimpleConstraintContactMgr::addToiImpl(const hkpCdBody& a, const hkpCdBody& b, const hkpProcessCollisionInput& input, hkpProcessCollisionOutput& output, float toi, hkContactPoint& cp, const hkpGskCache* gskCache, float& projectedVelocity, hkpContactPointProperties& properties)
 {
     hkpEntity* entityA = setContactPointProperties(a, b, 7, &properties);
-    hkpEntity* entityB = (hkpEntity*)((unsigned int)m_constraint.m_entities[1] ^ (unsigned int)m_constraint.m_entities[0] ^ (unsigned int)entityA);
+    hkpEntity* entityB = (hkpEntity*)((uintptr_t)m_constraint.m_entities[1] ^ (uintptr_t)m_constraint.m_entities[0] ^ (uintptr_t)entityA);
     hkpToiPointAddedEvent event(this, &input, &output, &a, &b, &cp, gskCache, &properties, toi, projectedVelocity);
     hkpWorldCallbackUtil::fireContactPointAdded(m_world, event);
     if (entityA->m_contactListeners.getSize() != 0)
@@ -281,7 +282,7 @@ unsigned short hkpSimpleConstraintContactMgr::addContactPointImpl(const hkpCdBod
     const unsigned short id = m_contactConstraintData.allocateContactPoint(*output.m_constraintOwner.val(), &dcp, &props);
     *dcp = cp;
     hkpEntity* entityA = setContactPointProperties(a, b, 10000, props);
-    hkpEntity* entityB = (hkpEntity*)((unsigned int)m_constraint.m_entities[1] ^ (unsigned int)m_constraint.m_entities[0] ^ (unsigned int)entityA);
+    hkpEntity* entityB = (hkpEntity*)((uintptr_t)m_constraint.m_entities[1] ^ (uintptr_t)m_constraint.m_entities[0] ^ (uintptr_t)entityA);
 
     // the point velocities (angular x arm + linear) along the normal
     hkVector4f armA;

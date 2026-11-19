@@ -8,6 +8,7 @@
 //
 // The island bit fields are 2-bit hkBool fields: setting one writes 01 (the binary's "& ~mask | low bit").
 
+#include <stddef.h>
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/world/util/hkpworldoperationutil.h"
 
 #include <new>
@@ -590,7 +591,7 @@ void hkpWorldOperationUtil::internalActivateIsland(hkpWorld* world, hkpSimulatio
 // frozen and the velocities zeroed
 void hkpWorldOperationUtil::internalDeactivateIsland(hkpWorld* world, hkpSimulationIsland* island)
 {
-    if (!hkRigidMotionUtilCanDeactivateFinal(world->m_dynamicsStepInfo.m_stepInfo, (hkpMotion* const*)island->m_entities.begin(), island->m_entities.getSize(), 0xE0)) // the offset of hkpEntity::m_motion
+    if (!hkRigidMotionUtilCanDeactivateFinal(world->m_dynamicsStepInfo.m_stepInfo, (hkpMotion* const*)island->m_entities.begin(), island->m_entities.getSize(), (int)offsetof(hkpEntity, m_motion))) // the offset of hkpEntity::m_motion
     {
         island->m_activeMark = true;
         return;
@@ -726,10 +727,10 @@ void hkpWorldOperationUtil::replaceMotionObject(hkpRigidBody* body, hkpMotion::M
             // the dynamic motion is saved (a copy with its own reference count)
             hkpMaxSizeMotion* saved = static_cast<hkpMaxSizeMotion*>(hkMemoryRouter::getInstance().heap().blockAlloc(sizeof(hkpMaxSizeMotion)));
             new (saved) hkpMaxSizeMotion();
-            const unsigned short memSize = *((const unsigned short*)saved + 3);
+            const unsigned int memSize = (unsigned int)saved->getMemorySizeAndFlags();
+            const hkUint32 oldRef = 0; (void)oldRef;
             memcpy(saved, oldStorage, sizeof(hkpMaxSizeMotion));
-            const unsigned int memSizeAndRefCount = ((unsigned int)memSize << 16) | 1;
-            memcpy((char*)saved + 4, &memSizeAndRefCount, 4);
+            saved->setMemorySizeFlagsAndReferenceCount((int)memSize, 1);
             newMotion->m_savedMotion = saved;
             newMotion->m_savedQualityTypeIndex = (unsigned short)(short)body->m_collidable.m_broadPhaseHandle.m_objectQualityType;
             body->setCachedShapeData(world, body->m_collidable.m_shape);

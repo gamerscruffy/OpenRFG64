@@ -60,7 +60,7 @@ struct hud_display_slot
     float scale; // 0x08
     float alpha; // 0x0C
 };
-static_assert(sizeof(hud_display_slot) == 0x10, "hud_display_slot");
+OPENRFG_SIZE_ASSERT(sizeof(hud_display_slot) == 0x10, "hud_display_slot");
 
 // size 0x18
 struct follower_slot
@@ -70,7 +70,7 @@ struct follower_slot
     timestamp bling_delay_timer; // 0x04
     hud_display_slot slot; // 0x08
 };
-static_assert(sizeof(follower_slot) == 0x18, "follower_slot");
+OPENRFG_SIZE_ASSERT(sizeof(follower_slot) == 0x18, "follower_slot");
 
 // size 0x14
 struct hit_indicator_data
@@ -80,7 +80,7 @@ struct hit_indicator_data
     vector direction; // 0x04
     float scale; // 0x10
 };
-static_assert(sizeof(hit_indicator_data) == 0x14, "hit_indicator_data");
+OPENRFG_SIZE_ASSERT(sizeof(hit_indicator_data) == 0x14, "hit_indicator_data");
 
 // size 0xC
 struct number_bitmap
@@ -89,7 +89,7 @@ struct number_bitmap
     int id; // 0x04
     int width; // 0x08
 };
-static_assert(sizeof(number_bitmap) == 0xC, "number_bitmap");
+OPENRFG_SIZE_ASSERT(sizeof(number_bitmap) == 0xC, "number_bitmap");
 
 // ---- globals
 float X_res_multiplier; // 0x02B953E8
@@ -527,6 +527,13 @@ void hud_process()
 // 0x0087F400
 void hud_render()
 {
+    { // OpenRFG: simple FPS counter, top left
+        static const color fps_color(0xFF, 0xFF, 0x40, 0xFF);
+        char fps_text[32];
+        snprintf(fps_text, sizeof(fps_text), "FPS: %d", (int)(Frames_per_second + 0.5f));
+        gr_set_color(fps_color);
+        gr_string(8, 8, fps_text, General_font, GM_FILTER);
+    }
     if (Hide_hud_ref_count != 0 || !Debug_show_hud)
     {
         if (cutscene_is_playing())

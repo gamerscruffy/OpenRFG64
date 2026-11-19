@@ -39,8 +39,8 @@ using namespace hkGskExact;
 
 namespace
 {
-const int kTimEntryDataOffset = 0x30; // sizeof(hkpAgentNnMachineTimEntry)
-const int kPaddedEntryDataOffset = 0x20; // sizeof(hkpAgentNnMachinePaddedEntry)
+const int kTimEntryDataOffset = (int)sizeof(hkpAgentNnMachineTimEntry); // // sizeof(hkpAgentNnMachineTimEntry)
+const int kPaddedEntryDataOffset = (int)sizeof(hkpAgentNnMachinePaddedEntry); // // sizeof(hkpAgentNnMachinePaddedEntry)
 
 inline hkpAgentData* hkNnMachine_data(hkpAgentNnEntry* entry, int offset)
 {
@@ -496,7 +496,7 @@ hkpAgentNnEntry* hkAgentNnMachine_CreateAgent(hkpAgentNnTrack& track, hkpLinkedC
         agentData = hkNnMachine_data(entry, kTimEntryDataOffset);
     }
     dispatcher->m_agent3Func[agentType & 0xFF].m_createFunc(in3, entry, agentData);
-    entry->m_size = (unsigned char)(track.m_nnTrackType.m_storage << 6);
+    entry->m_size = (unsigned char)(track.m_nnTrackType.m_storage * HK_AGENT3_MIDPHASE_AGENT_SIZE);
     return entry;
 }
 

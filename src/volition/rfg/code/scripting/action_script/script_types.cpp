@@ -823,8 +823,8 @@ bool script_arg_list_parse(script_node** dest, script_arg_list* args, xml_elemen
 // 0x00B235F0 (:1042)
 script_node** script_param_alloc(int num_params)
 {
-    script_node** params = (script_node**)Script_mempool.alloc(num_params * 4, 4);
-    memset(params, 0, num_params * 4);
+    script_node** params = (script_node**)Script_mempool.alloc(num_params * sizeof(script_node*), sizeof(script_node*));
+    memset(params, 0, num_params * sizeof(script_node*));
     return params;
 }
 
@@ -886,8 +886,8 @@ void script_node_load(script_node*& node, cfile* file)
 void script_params_load(script_node**& params, cfile* file)
 {
     const unsigned int count = cf_read_uint32(file);
-    const unsigned int size = count * 4 + 4;
-    params = (script_node**)Script_mempool.alloc(size, 4);
+    const unsigned int size = (count + 1) * sizeof(script_node*);
+    params = (script_node**)Script_mempool.alloc(size, sizeof(script_node*));
     memset(params, 0, size);
     for (unsigned int i = 0; i < count; i++)
     {

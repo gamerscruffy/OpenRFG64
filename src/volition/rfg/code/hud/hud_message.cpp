@@ -27,7 +27,7 @@ struct hud_message_minor_info
     int str_width; // 0x54
     timestamp duration; // 0x58
 };
-static_assert(sizeof(hud_message_minor_info) == 0x5C, "hud_message_minor_info");
+OPENRFG_SIZE_ASSERT(sizeof(hud_message_minor_info) == 0x5C, "hud_message_minor_info");
 
 // ---- file-static globals
 static hud_message_minor_info Hud_message_minor; // 0x01661788

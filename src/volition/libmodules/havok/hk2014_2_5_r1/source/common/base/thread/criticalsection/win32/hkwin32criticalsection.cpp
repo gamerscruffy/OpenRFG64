@@ -8,7 +8,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-static_assert(sizeof(CRITICAL_SECTION) == sizeof(((hkCriticalSection*)nullptr)->m_section), "hkCriticalSection holds an RTL_CRITICAL_SECTION");
+OPENRFG_SIZE_ASSERT(sizeof(CRITICAL_SECTION) == sizeof(((hkCriticalSection*)nullptr)->m_section), "hkCriticalSection holds an RTL_CRITICAL_SECTION");
 
 // Not reimplemented: hkHardwareInfo::calcNumHardwareThreads (S phase) reads the processor count the same way.
 static int calcNumHardwareThreads()

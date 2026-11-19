@@ -29,7 +29,7 @@ struct cheat_achievement_mapping
     steam_achievement_ids ids[2]; // 0x00
     const char* menu_text; // 0x08
 };
-static_assert(sizeof(cheat_achievement_mapping) == 0xC, "cheat_achievement_mapping");
+OPENRFG_SIZE_ASSERT(sizeof(cheat_achievement_mapping) == 0xC, "cheat_achievement_mapping");
 
 // Magic number: the number of cheats.
 static const int Num_cheats = 11;

@@ -12,7 +12,7 @@
 
 #include <math.h>
 
-static_assert(sizeof(rfg_camera) == 0xA30, "sizeof(rfg_camera)");
+OPENRFG_SIZE_ASSERT(sizeof(rfg_camera) == 0xA30, "sizeof(rfg_camera)");
 
 rl_camera* Camera_main_scene_p = nullptr; // 0x01DE48E4
 

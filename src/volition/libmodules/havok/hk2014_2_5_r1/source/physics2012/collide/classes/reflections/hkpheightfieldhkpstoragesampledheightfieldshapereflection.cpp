@@ -69,7 +69,7 @@ static const void* getVtablehkpStorageSampledHeightFieldShape()
     ::new (u.buf) hkpStorageSampledHeightFieldShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpStorageSampledHeightFieldShape) == 144, "hkpStorageSampledHeightFieldShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpStorageSampledHeightFieldShape) == 144, "hkpStorageSampledHeightFieldShape size");
 extern const hkTypeInfo hkpStorageSampledHeightFieldShapeTypeInfo;
 const hkTypeInfo hkpStorageSampledHeightFieldShapeTypeInfo(
     "hkpStorageSampledHeightFieldShape",

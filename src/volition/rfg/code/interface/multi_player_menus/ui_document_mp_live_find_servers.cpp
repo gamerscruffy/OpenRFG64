@@ -65,7 +65,7 @@ struct mp_live_find_servers_shell_info
     unsigned int control_id; // 0x6C
     int input_id; // 0x70
 };
-static_assert(sizeof(mp_live_find_servers_shell_info) == 0x74, "mp_live_find_servers_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_live_find_servers_shell_info) == 0x74, "mp_live_find_servers_shell_info");
 
 // ---- file-static globals
 static void lfs_process_data_item_hint_text(vint_data_item* vdi);

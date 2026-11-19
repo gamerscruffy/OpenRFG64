@@ -17,7 +17,7 @@ template<typename K, typename V, typename ALLOCATOR = hkContainerHeapAllocator>
 class hkPointerMap
 {
 public:
-    typedef typename std::conditional<(sizeof(K) > 4), unsigned __int64, unsigned long>::type Storage;
+    typedef typename std::conditional<(sizeof(K) > 4 || sizeof(V) > 4), unsigned __int64, unsigned long>::type Storage;
     typedef hkMap<Storage, Storage, hkMapOperations<Storage>, ALLOCATOR> Map;
     typedef typename Map::Iterator Iterator;
 

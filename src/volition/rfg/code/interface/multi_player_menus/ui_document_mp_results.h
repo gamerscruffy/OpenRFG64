@@ -44,7 +44,7 @@ struct mp_match_results_shell_info
     unsigned int control_id; // 0x84
     int input_id; // 0x88
 };
-static_assert(sizeof(mp_match_results_shell_info) == 0x8C, "mp_match_results_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_match_results_shell_info) == 0x8C, "mp_match_results_shell_info");
 
 extern mp_match_results_shell_info Mp_match_results_info; // 0x01666900
 extern timestamp_realtime Auto_continue_timestamp; // 0x0166698C

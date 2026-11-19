@@ -56,7 +56,7 @@ static void cleanupLoadedObjecthkPackfileSectionHeader(void* p)
 {
     static_cast<hkPackfileSectionHeader*>(p)->~hkPackfileSectionHeader();
 }
-static_assert(sizeof(hkPackfileSectionHeader) == 64, "hkPackfileSectionHeader size");
+OPENRFG_SIZE_ASSERT(sizeof(hkPackfileSectionHeader) == 64, "hkPackfileSectionHeader size");
 extern const hkTypeInfo hkPackfileSectionHeaderTypeInfo;
 const hkTypeInfo hkPackfileSectionHeaderTypeInfo(
     "hkPackfileSectionHeader",

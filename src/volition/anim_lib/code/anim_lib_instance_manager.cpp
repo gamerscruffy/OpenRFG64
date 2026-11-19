@@ -144,7 +144,7 @@ static void setup_bone_data(const anim_file* const amf, animlib_compressed_data_
     bone_data.bone_idx++;
     bone_data.time_as_shorts = ((amf->flags >> 1) & 1) != 0;
     if (amf->flags & 0x80) {
-        p = (unsigned char*)(((unsigned int)p + 1) & ~1u);
+        p = (unsigned char*)(((uintptr_t)p + 1) & ~(uintptr_t)1);
         bone_data.num_rotation_keys = ((unsigned short*)p)[0];
         bone_data.num_translation_keys = ((unsigned short*)p)[1];
         p += 4;
@@ -174,7 +174,7 @@ static void setup_bone_data(const anim_file* const amf, animlib_compressed_data_
     bone_data.rotation_keys = (afc_rotation_key*)(p + bone_data.num_rotation_offsets * 5);
     p = (unsigned char*)bone_data.rotation_keys + num_rotation_keys * 4;
     if (amf->flags & 2) {
-        p = (unsigned char*)(((unsigned int)p + 1) & ~1u);
+        p = (unsigned char*)(((uintptr_t)p + 1) & ~(uintptr_t)1);
         bone_data.rotation_times = p;
         p += num_rotation_keys * 2;
     } else {
@@ -183,7 +183,7 @@ static void setup_bone_data(const anim_file* const amf, animlib_compressed_data_
     }
     const int num_translation_keys = bone_data.num_translation_keys;
     bone_data.num_translation_offsets = 0;
-    afc_translation_offset* offsets = (afc_translation_offset*)(((unsigned int)p + 1) & ~1u);
+    afc_translation_offset* offsets = (afc_translation_offset*)(((uintptr_t)p + 1) & ~(uintptr_t)1);
     bone_data.translation_offsets = offsets;
     for (int keys = 0; keys < num_translation_keys;) {
         keys += offsets[bone_data.num_translation_offsets].num_keys;
@@ -192,7 +192,7 @@ static void setup_bone_data(const anim_file* const amf, animlib_compressed_data_
     bone_data.translation_keys = (afc_translation_key*)(offsets + bone_data.num_translation_offsets);
     p = (unsigned char*)bone_data.translation_keys + num_translation_keys * 3;
     if (amf->flags & 2) {
-        p = (unsigned char*)(((unsigned int)p + 1) & ~1u);
+        p = (unsigned char*)(((uintptr_t)p + 1) & ~(uintptr_t)1);
         bone_data.translation_times = p;
         p += num_translation_keys * 2;
     } else {
@@ -201,7 +201,7 @@ static void setup_bone_data(const anim_file* const amf, animlib_compressed_data_
     }
     const int num_scale_keys = bone_data.num_scale_keys;
     if (num_scale_keys > 0) {
-        bone_data.scale_keys = (afc_scale_key*)(((unsigned int)p + 3) & ~3u);
+        bone_data.scale_keys = (afc_scale_key*)(((uintptr_t)p + 3) & ~(uintptr_t)3);
         p = (unsigned char*)(bone_data.scale_keys + num_scale_keys);
         bone_data.scale_times = p;
         p += (amf->flags & 2) ? num_scale_keys * 2 : num_scale_keys;
@@ -238,7 +238,7 @@ static void setup_bone_weights(const anim_file* const amf, char* data_pointer, a
         last_count = *(const unsigned short*)(end - 2);
     }
     const int total = (int)last_count + bone_data.weight_indicies[num_bones - 1];
-    bone_data.weight_keys = (afc_weight_key*)(((unsigned int)end + 3) & ~3u);
+    bone_data.weight_keys = (afc_weight_key*)(((uintptr_t)end + 3) & ~(uintptr_t)3);
     bone_data.weight_times = bone_data.weight_keys + total;
     if (amf->flags & 2) {
         bone_data.next_bone_start = (char*)bone_data.weight_times + total * 2;
@@ -257,7 +257,7 @@ void anim_get_bone_data(anim_file* amf, animlib_compressed_data_reader& bone_dat
         data_pointer += 8; // the anim_morph table
     }
     const int map_offset = amf->anim_to_rig_bone_mapping.get_offset();
-    if (map_offset != -1 && map_offset != 0 && (int)&amf->anim_to_rig_bone_mapping + map_offset != 0) {
+    if (map_offset != -1 && map_offset != 0 && (intptr_t)&amf->anim_to_rig_bone_mapping + map_offset != 0) {
         memset(bone_data.rig_to_anim_bone_mapping, 0xFF, amf->num_rig_bones);
         const unsigned char* map = (const unsigned char*)amf + map_offset;
         for (unsigned char b = 0; b < amf->num_bones; b++) {
@@ -1178,7 +1178,7 @@ bool anim_instance_manager::allocate_bone_matrices()
     if (buf == nullptr) {
         return false;
     }
-    const unsigned int misalign = (unsigned int)buf & 0xF;
+    const unsigned int misalign = (unsigned int)((uintptr_t)buf & 0xF);
     matrix43* matrices = (matrix43*)((char*)buf + (misalign == 0 ? 0 : 0x10 - misalign));
     cache_instanced_model = matrices + num_bones;
     cache_vertex_to_model = matrices;
@@ -1842,7 +1842,7 @@ void anim_instance_manager::get_local_bone_matrices(matrix43* bone_matrix, int* 
             return;
         }
         const int map_offset = amf->anim_to_rig_bone_mapping.get_offset();
-        const bool mapped = map_offset != -1 && map_offset != 0 && (int)&amf->anim_to_rig_bone_mapping + map_offset != 0;
+        const bool mapped = map_offset != -1 && map_offset != 0 && (intptr_t)&amf->anim_to_rig_bone_mapping + map_offset != 0;
         const unsigned char* map = (const unsigned char*)amf + map_offset;
         for (int j = 0; j < amf->num_bones; j++) {
             setup_bone_data(amf, readers[i]);
@@ -1915,7 +1915,7 @@ void anim_instance_manager::get_local_bone_matrices(matrix43* bone_matrix, int* 
             return;
         }
         const int map_offset = amf->anim_to_rig_bone_mapping.get_offset();
-        const bool mapped = map_offset != -1 && map_offset != 0 && (int)&amf->anim_to_rig_bone_mapping + map_offset != 0;
+        const bool mapped = map_offset != -1 && map_offset != 0 && (intptr_t)&amf->anim_to_rig_bone_mapping + map_offset != 0;
         const unsigned char* map = (const unsigned char*)amf + map_offset;
         for (int j = 0; j < amf->num_bones; j++) {
             setup_bone_data(amf, readers[i]);
@@ -2416,7 +2416,7 @@ static bool anim_file_has_rig_bone(const anim_file* amf, int bone_index)
         return false;
     }
     const int map_offset = amf->anim_to_rig_bone_mapping.get_offset();
-    const bool mapped = map_offset != -1 && map_offset != 0 && (int)&amf->anim_to_rig_bone_mapping + map_offset != 0;
+    const bool mapped = map_offset != -1 && map_offset != 0 && (intptr_t)&amf->anim_to_rig_bone_mapping + map_offset != 0;
     if (!mapped) {
         return bone_index < amf->num_bones;
     }
@@ -2467,7 +2467,7 @@ bool anim_instance_manager::is_bone_animating(int bone_index)
             continue;
         }
         const int map_offset = amf->anim_to_rig_bone_mapping.get_offset();
-        const bool mapped = map_offset != -1 && map_offset != 0 && (int)&amf->anim_to_rig_bone_mapping + map_offset != 0;
+        const bool mapped = map_offset != -1 && map_offset != 0 && (intptr_t)&amf->anim_to_rig_bone_mapping + map_offset != 0;
         if (!mapped && bone_index < amf->num_bones) {
             return true;
         }

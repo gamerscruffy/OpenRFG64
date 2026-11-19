@@ -43,7 +43,7 @@ struct mp_match_stats_shell_info
     unsigned int control_id; // 0x88
     int input_id; // 0x8C
 };
-static_assert(sizeof(mp_match_stats_shell_info) == 0x90, "mp_match_stats_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_match_stats_shell_info) == 0x90, "mp_match_stats_shell_info");
 
 extern mp_match_stats_shell_info Mp_match_stats_info; // 0x01666A20
 

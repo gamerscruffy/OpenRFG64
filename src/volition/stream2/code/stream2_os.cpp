@@ -35,6 +35,10 @@ static bool Stream2_os_init; // 0x01AC3B4B
 
 // ---- index list helpers (inlined in the original)
 
+// Request handles are 32-bit: on x64 a handle is (device index << 16) | request index instead of a pointer.
+static unsigned int stream2_make_handle(const stream2_os_device* device, const stream2_os_request* r);
+static stream2_os_request* stream2_handle_to_request(unsigned int handle);
+
 static unsigned short request_index(const stream2_os_request* pool, const stream2_os_request* r)
 {
     return (unsigned short)(r - pool);
@@ -277,8 +281,29 @@ unsigned int stream2_os_device::read(stream2_os_file& _request)
     }
     trigger_event.signal();
     cs.leave();
-    return (unsigned int)r;
+    return stream2_make_handle(this, r);
 }
+
+#ifdef OPENRFG_X64
+static unsigned int stream2_make_handle(const stream2_os_device* device, const stream2_os_request* r)
+{
+    for (int i = 0; i < Stream2_device.size(); i++)
+    {
+        if (Stream2_device[i] == device)
+        {
+            return ((unsigned int)i << 16) | (unsigned int)(r - device->request_pool);
+        }
+    }
+    return 0xFFFFFFFFu;
+}
+static stream2_os_request* stream2_handle_to_request(unsigned int handle)
+{
+    return &Stream2_device[(int)(handle >> 16)]->request_pool[handle & 0xFFFFu];
+}
+#else
+static unsigned int stream2_make_handle(const stream2_os_device*, const stream2_os_request* r) { return (unsigned int)r; }
+static stream2_os_request* stream2_handle_to_request(unsigned int handle) { return (stream2_os_request*)handle; }
+#endif
 
 // 0x004AAB90 (:248)
 void stream2_os_device::cancel(unsigned int _req)
@@ -287,7 +312,7 @@ void stream2_os_device::cancel(unsigned int _req)
     {
         return;
     }
-    stream2_os_request* const r = (stream2_os_request*)_req;
+    stream2_os_request* const r = stream2_handle_to_request(_req);
     cs.enter();
     if (r->status == SREQ_UNUSED)
     {
@@ -316,7 +341,7 @@ req_status stream2_os_device::poll(unsigned int _req)
     {
         return SREQ_UNKNOWN;
     }
-    return ((stream2_os_request*)_req)->status;
+    return (stream2_handle_to_request(_req))->status;
 }
 
 // 0x004AACF0 (:299)
@@ -327,7 +352,7 @@ void stream2_os_device::release_handle(unsigned int _req)
         VLIB_CRITICAL_FAILURE();
         return;
     }
-    stream2_os_request* const r = (stream2_os_request*)_req;
+    stream2_os_request* const r = stream2_handle_to_request(_req);
     const req_status status = r->status;
     if (status == SREQ_UNKNOWN || status == SREQ_UNUSED || status == SREQ_PENDING || status == SREQ_ACTIVE || status == SREQ_CANCEL_PENDING)
     {
@@ -558,7 +583,7 @@ void stream2_os_cancel(unsigned int req)
 {
     if (req != 0xFFFFFFFF)
     {
-        ((stream2_os_request*)req)->device->cancel(req);
+        (stream2_handle_to_request(req))->device->cancel(req);
     }
 }
 
@@ -567,7 +592,7 @@ stream2_os_req_status stream2_os_poll(unsigned int req)
 {
     if (req != 0xFFFFFFFF)
     {
-        switch (((stream2_os_request*)req)->status)
+        switch ((stream2_handle_to_request(req))->status)
         {
         case SREQ_PENDING:
         case SREQ_ACTIVE:
@@ -591,7 +616,7 @@ void stream2_os_release_handle(unsigned int req)
 {
     if (req != 0xFFFFFFFF)
     {
-        ((stream2_os_request*)req)->device->release_handle(req);
+        (stream2_handle_to_request(req))->device->release_handle(req);
     }
 }
 

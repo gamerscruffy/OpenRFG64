@@ -24,7 +24,7 @@ struct floating_string
     floating_string* next; // 0x34
     floating_string* prev; // 0x38
 };
-static_assert(sizeof(floating_string) == 0x3C, "floating_string");
+OPENRFG_SIZE_ASSERT(sizeof(floating_string) == 0x3C, "floating_string");
 
 // ---- file-static globals
 static floating_string* Floating_string_list; // 0x02B9DC74

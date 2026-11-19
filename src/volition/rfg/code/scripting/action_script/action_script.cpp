@@ -40,6 +40,7 @@ static str_data_hash_table_cached<int,128,unsigned char> Variable_table; // 0x03
 // The game trace (game_trace.h; not in rfg.exe). rfg.exe keeps no script names, so the trace keeps them by pool index:
 // from the scriptx at parsing, passed on to a managed group's running copies. Scripts restored from a save have none
 // (the save has no names): those show as ? with their group.
+void openrfg_log(const char*);
 static const char* Script_trace_names[2048];
 
 static const char* script_trace_name(const action_script* script)
@@ -735,6 +736,21 @@ void script_do_frame()
     }
     script_cache_vip_npcs();
     script_timers_do_frame();
+    { // DBGSCRDUMP: one-time list of waiting Tutorial scripts and their actions
+        static bool s_done = false;
+        if (!s_done)
+        {
+            for (action_script* d = Action_scripts.get_first(SCRIPT_WAITING); d != nullptr; d = Action_scripts.get_next(d))
+            {
+                if (strcmp(script_trace_group(d), "Tutorial") != 0) continue;
+                s_done = true;
+                char b[900]; int u = snprintf(b, sizeof(b), "DBGSCR %s rep=%d acts:", script_trace_name(d), d->repeat);
+                for (script_action* a = d->action.get_first(SAC_RUNNING); a != nullptr && u < 800; a = d->action.get_next(a))
+                    u += snprintf(b + u, sizeof(b) - u, " %s", dictionary<script_action_definition>::find(a->definition));
+                openrfg_log(b);
+            }
+        }
+    }
     for (int count = Action_scripts.get_count(SCRIPT_WAITING); count > 0; count--)
     {
         if (Cur_script_eval == nullptr)

@@ -208,11 +208,11 @@ public:
     struct MustEndWithSemiColon; // no definition in PDB
 
     // HK_DECLARE_CLASS_ALLOCATOR (the PDB records the operators without their names)
-    static void* operator new(unsigned int, void*);
-    static void* operator new(unsigned int nbytes); // 0x0071AC20 (.h:485)
+    static void* operator new(size_t, void*);
+    static void* operator new(size_t nbytes); // 0x0071AC20 (.h:485)
     static void operator delete(void*, void*);
-    static void operator delete(void* p, unsigned int nbytes); // 0x00736A90 (.h:485)
-    static void* operator new[](unsigned int, void*);
+    static void operator delete(void* p, size_t nbytes); // 0x00736A90 (.h:485)
+    static void* operator new[](size_t, void*);
     static void operator delete[](void*, void*);
 private:
     unsigned char* allocate_buffer(); // 0x007279C0 (:1140)

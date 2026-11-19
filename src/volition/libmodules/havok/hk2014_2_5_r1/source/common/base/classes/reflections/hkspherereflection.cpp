@@ -50,7 +50,7 @@ static void cleanupLoadedObjecthkSphere(void* p)
 {
     static_cast<hkSphere*>(p)->~hkSphere();
 }
-static_assert(sizeof(hkSphere) == 16, "hkSphere size");
+OPENRFG_SIZE_ASSERT(sizeof(hkSphere) == 16, "hkSphere size");
 extern const hkTypeInfo hkSphereTypeInfo;
 const hkTypeInfo hkSphereTypeInfo(
     "hkSphere",

@@ -82,9 +82,9 @@ static void hkWorldOperationQueue_copyArray(BiggestOperation& op, const BaseOper
 {
     void*& data = *reinterpret_cast<void**>(&op.dummy[0]);
     const unsigned short num = *reinterpret_cast<const unsigned short*>(&op.dummy[1]);
-    data = hkWorldOperationQueue_alloc(num * 4);
+    data = hkWorldOperationQueue_alloc(num * sizeof(void*));
     const AddEntityBatch& batch = static_cast<const AddEntityBatch&>(operation); // the same layout for every batch
-    memcpy(data, batch.m_entities, batch.m_numEntities * 4); // hkString::memCpy
+    memcpy(data, batch.m_entities, batch.m_numEntities * sizeof(void*)); // hkString::memCpy
     hkReferencedObject** objects = static_cast<hkReferencedObject**>(data);
     for (int i = 0; i < num; i++)
     {
@@ -153,7 +153,7 @@ void hkpWorldOperationQueue::queueOperation(const BaseOperation& operation)
         addReferenceTo(obj0);
         hkAabb* aabb = static_cast<hkAabb*>(hkWorldOperationQueue_alloc(sizeof(hkAabb)));
         *aabb = *static_cast<const UpdatePhantomBP&>(operation).m_aabb;
-        op.dummy[1] = reinterpret_cast<unsigned long>(aabb);
+        op.dummy[1] = reinterpret_cast<uintptr_t>(aabb);
         break;
     }
     case UPDATE_FILTER_ENTITY_PAIR:
@@ -231,7 +231,7 @@ static void hkWorldOperationQueue_releaseArray(const BiggestOperation& op)
     hkReferencedObject** objects = reinterpret_cast<hkReferencedObject**>(op.dummy[0]);
     const unsigned short num = *reinterpret_cast<const unsigned short*>(&op.dummy[1]);
     hkReferencedObject::removeReferences(objects, num, sizeof(hkReferencedObject*));
-    hkWorldOperationQueue_free(objects, num * 4);
+    hkWorldOperationQueue_free(objects, num * sizeof(void*));
 }
 
 // A velocity or impulse stored as three floats (w becomes 0).
@@ -510,7 +510,7 @@ void hkpWorldOperationQueue::executeAllPending()
             {
                 o.m_entities[e]->removeReference();
             }
-            hkWorldOperationQueue_free(o.m_entities, o.m_numEntities * 4);
+            hkWorldOperationQueue_free(o.m_entities, o.m_numEntities * sizeof(void*));
             releaseObject0 = false;
             break;
         }

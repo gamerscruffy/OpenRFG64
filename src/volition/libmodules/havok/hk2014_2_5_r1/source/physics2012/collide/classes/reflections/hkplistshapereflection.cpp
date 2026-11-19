@@ -54,7 +54,7 @@ static void cleanupLoadedObjecthkpListShapeChildInfo(void* p)
 {
     static_cast<hkpListShape::ChildInfo*>(p)->~ChildInfo();
 }
-static_assert(sizeof(hkpListShape::ChildInfo) == 16, "hkpListShape::ChildInfo size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpListShape::ChildInfo) == 16, "hkpListShape::ChildInfo size");
 extern const hkTypeInfo hkpListShapeChildInfoTypeInfo;
 const hkTypeInfo hkpListShapeChildInfoTypeInfo(
     "hkpListShapeChildInfo",
@@ -133,7 +133,7 @@ static const void* getVtablehkpListShape()
     ::new (u.buf) hkpListShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpListShape) == 112, "hkpListShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpListShape) == 112, "hkpListShape size");
 extern const hkTypeInfo hkpListShapeTypeInfo;
 const hkTypeInfo hkpListShapeTypeInfo(
     "hkpListShape",

@@ -574,10 +574,10 @@ hkpRigidBody* hkpRigidBody::clone() const
     {
         hkpMaxSizeMotion* saved = new hkpMaxSizeMotion();
         body->m_motion.m_savedMotion = saved;
-        unsigned int memSizeAndRefCount; // hkReferencedObject::m_memSizeAndRefCount (+4)
-        memcpy(&memSizeAndRefCount, (char*)saved + 4, sizeof(memSizeAndRefCount));
+        int dbgMemSize = saved->getMemorySizeAndFlags(); int dbgRefCount = saved->getReferenceCount();
+        
         memcpy((void*)saved, (const void*)m_motion.m_savedMotion, sizeof(hkpMaxSizeMotion));
-        memcpy((char*)saved + 4, &memSizeAndRefCount, sizeof(memSizeAndRefCount)); // (two atomic 16-bit writes in the original)
+        saved->setMemorySizeFlagsAndReferenceCount(dbgMemSize, dbgRefCount);
     }
     body->m_collidable.m_motion = body->getMotionState();
     body->copyProperties(this);

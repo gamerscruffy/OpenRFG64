@@ -80,7 +80,7 @@ static const void* getVtablehkpCapsuleShape()
     ::new (u.buf) hkpCapsuleShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpCapsuleShape) == 64, "hkpCapsuleShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpCapsuleShape) == 64, "hkpCapsuleShape size");
 extern const hkTypeInfo hkpCapsuleShapeTypeInfo;
 const hkTypeInfo hkpCapsuleShapeTypeInfo(
     "hkpCapsuleShape",

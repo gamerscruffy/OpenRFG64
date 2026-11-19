@@ -741,7 +741,7 @@ bool world::serialize_zone(world_zone* wz, zone_file* orig_zone, bool preload)
             cf_close(f);
         }
     }
-    const unsigned int list_size = (orig_zone->header.num_objects + saved_zone.header.num_objects) * 4;
+    const unsigned int list_size = (orig_zone->header.num_objects + saved_zone.header.num_objects) * sizeof(void*);
     zone_object** zobj_list = (zone_object**)Common_mempool.alloc(list_size, 0);
     object** stub_list = (object**)Common_mempool.alloc(list_size, 0);
     int num_stubs = 0;

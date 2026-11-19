@@ -737,7 +737,7 @@ void cartographer::level_init_pre()
         m_edf_bldg_mat = nullptr;
         // Magic numbers: the structure colors, red first (little endian 0xAABBGGRR).
         Structure_colors[0] = rl_color(0xFF, 0x00, 0x00, 0xFF);
-        Structure_colors[1] = rl_color(0x00, 0x0D, 0x94, 0xFF);
+        Structure_colors[1] = rl_color(0x94, 0x0D, 0x00, 0xFF);
         Structure_colors[2] = rl_color(0x00, 0x00, 0xDC, 0xFF);
         Structure_colors[3] = rl_color(0xFF, 0x00, 0xFF, 0xFF);
         Structure_colors[4] = rl_color(0x37, 0x37, 0x37, 0xFF);

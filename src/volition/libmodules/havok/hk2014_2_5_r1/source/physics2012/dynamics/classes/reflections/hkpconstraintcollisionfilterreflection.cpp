@@ -64,7 +64,7 @@ static const void* getVtablehkpConstraintCollisionFilter()
     ::new (u.buf) hkpConstraintCollisionFilter(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpConstraintCollisionFilter) == 68, "hkpConstraintCollisionFilter size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpConstraintCollisionFilter) == 68, "hkpConstraintCollisionFilter size");
 extern const hkTypeInfo hkpConstraintCollisionFilterTypeInfo;
 const hkTypeInfo hkpConstraintCollisionFilterTypeInfo(
     "hkpConstraintCollisionFilter",

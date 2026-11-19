@@ -43,7 +43,7 @@ struct credits_entity
     credits_entity* next; // 0x08
     credits_entity* prev; // 0x0C
 };
-static_assert(sizeof(credits_entity) == 0x10, "credits_entity");
+OPENRFG_SIZE_ASSERT(sizeof(credits_entity) == 0x10, "credits_entity");
 
 enum credits_type
 {
@@ -63,7 +63,7 @@ struct credits_heading
     credits_heading* next; // 0x0C
     credits_heading* prev; // 0x10
 };
-static_assert(sizeof(credits_heading) == 0x14, "credits_heading");
+OPENRFG_SIZE_ASSERT(sizeof(credits_heading) == 0x14, "credits_heading");
 
 // size 0x10
 struct credits_section
@@ -73,7 +73,7 @@ struct credits_section
     credits_section* next; // 0x08
     credits_section* prev; // 0x0C
 };
-static_assert(sizeof(credits_section) == 0x10, "credits_section");
+OPENRFG_SIZE_ASSERT(sizeof(credits_section) == 0x10, "credits_section");
 
 // ---- file-static globals
 static bool Credits_finished = true; // 0x01662CD1

@@ -4,6 +4,7 @@
 // corner uvs (0,0), (0,1), (1,0), (1,1); the vertex shader expands them to camera-facing quads. Parametric particles
 // write the particle itself to all four corners (the shader evaluates its curves).
 
+#include <string.h>
 #include "volition/render_lib/code/rl_particle_renderer.h"
 
 #include "volition/render_lib/code/rl_renderable_particles.h"
@@ -44,7 +45,7 @@ static void billboard_write_parametric(const rl_particle_parametric& particle, u
     rl_particle_renderer::parametric_vertex* vertices_p = (rl_particle_renderer::parametric_vertex*)vertex_p;
     for (int i = 0; i < 4; i++)
     {
-        vertices_p[i] = vertex;
+        memcpy(&vertices_p[i], &vertex, sizeof(vertex)); // OpenRFG: unaligned dest (SSE store faulted)
     }
     num_verts += 4;
     vertex_p += current_vertex_stride * 4;
@@ -69,7 +70,7 @@ void rl_particle_renderer::billboard_add_particle(const rl_particle_iterative& p
     // The corners: uvs (0,0), (0,1), (1,0), (1,1).
     for (int i = 0; i < 4; i++)
     {
-        vertices_p[i] = vertex;
+        memcpy(&vertices_p[i], &vertex, sizeof(vertex)); // OpenRFG: unaligned dest (SSE store faulted)
         vertices_p[i].uvs.x = (i & 2) != 0 ? 1.0f : 0.0f;
         vertices_p[i].uvs.y = (i & 1) != 0 ? 1.0f : 0.0f;
     }

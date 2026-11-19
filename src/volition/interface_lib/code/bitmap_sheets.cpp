@@ -26,7 +26,7 @@ struct bm_sheet
     int bmpman_id; // 0x04
     unsigned int mem_mark; // 0x08
 };
-static_assert(sizeof(bm_sheet) == 0xC, "bm_sheet");
+OPENRFG_SIZE_ASSERT(sizeof(bm_sheet) == 0xC, "bm_sheet");
 
 // ---- public globals
 unsigned int Num_bitmap_images; // 0x01A48620

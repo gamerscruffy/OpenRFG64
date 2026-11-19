@@ -38,6 +38,13 @@ option(OPENRFG_STUB_DISCORD "Build the stand-in discord_rpc.cpp instead of linki
 # linking GfeSDK.dll's import library; the programs then do not need GfeSDK.dll.
 option(OPENRFG_STUB_GFESDK "Build the stand-in gfesdk.cpp instead of linking lib/win32/GfeSDK.lib (no NVIDIA highlights)" OFF)
 
+# 64-bit: the 32-bit DLLs/import libs cannot be linked, so the stand-ins are forced on.
+if(OPENRFG_X64)
+    foreach(o OPENRFG_STUB_SWAPI OPENRFG_STUB_BINK OPENRFG_STUB_DISCORD OPENRFG_STUB_GFESDK)
+        set(${o} ON CACHE BOOL "forced by the 64-bit build" FORCE)
+    endforeach()
+endif()
+
 set(OPENRFG_PLATFORM_DLLS)
 
 if(OPENRFG_STUB_GFESDK)

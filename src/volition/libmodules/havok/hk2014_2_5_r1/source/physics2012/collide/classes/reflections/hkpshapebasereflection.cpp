@@ -64,7 +64,7 @@ static const void* getVtablehkpShapeBase()
     ::new (u.buf) hkpShapeBase(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpShapeBase) == 12, "hkpShapeBase size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpShapeBase) == 12, "hkpShapeBase size");
 extern const hkTypeInfo hkpShapeBaseTypeInfo;
 const hkTypeInfo hkpShapeBaseTypeInfo(
     "hkpShapeBase",

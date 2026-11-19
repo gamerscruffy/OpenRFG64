@@ -1,3 +1,4 @@
+#include <stdio.h>
 // Original: volition/rfg/code/destruction/rfg_shapes.cpp
 //
 // Destructible shapes (decompiled; header comment in rfg_shapes.h). Also defines the inline functions of
@@ -411,7 +412,7 @@ rfg_destroyable_shape* rfg_subpiece::get_destroyable() const
     {
         return nullptr;
     }
-    return (rfg_destroyable_shape*)((char*)&my_owner_gm_handle + offset);
+    return my_owner_gm_handle.to_pointer(); // (uses the far-pointer table when the shape is >2GB away)
 }
 
 // 0x00710A70 (rfg_shapes.inl:95)
@@ -527,19 +528,23 @@ bool rfg_dynamic_link::should_save(unsigned int handle) const
 
 // ---- rfg_destroyable_shape
 // 0x0071AC20 (.h:485)
-void* rfg_destroyable_shape::operator new(unsigned int nbytes)
+void* rfg_destroyable_shape::operator new(size_t nbytes)
 {
-    return hkContainerHeapAllocator::s_alloc.blockAlloc((int)nbytes);
+    void* dbgp = hkContainerHeapAllocator::s_alloc.blockAlloc((int)nbytes);
+    { extern void openrfg_log(const char*); char b[128]; sprintf(b, "DBGSHNEW p=%p n=%d", dbgp, (int)nbytes); openrfg_log(b); }
+    return dbgp;
 }
 
 // 0x00736A90 (.h:485)
 // The Havok object header keeps the allocation size (0xFFFF = use nbytes).
-void rfg_destroyable_shape::operator delete(void* p, unsigned int nbytes)
+void rfg_destroyable_shape::operator delete(void* p, size_t nbytes)
 {
-    if (*(unsigned short*)((char*)p + 6) != 0xFFFF)
+    const int dbg_memsize = ((const hkReferencedObject*)p)->getMemorySizeAndFlags();
+    if (dbg_memsize != 0xFFFF)
     {
-        nbytes = *(unsigned short*)((char*)p + 6);
+        nbytes = (unsigned int)dbg_memsize;
     }
+    { extern void openrfg_log(const char*); char b[128]; sprintf(b, "DBGSHDEL p=%p n=%d ms=%d rc=%d", p, (int)nbytes, dbg_memsize, ((const hkReferencedObject*)p)->getReferenceCount()); openrfg_log(b); }
     hkContainerHeapAllocator::s_alloc.blockFree(p, (int)nbytes);
 }
 

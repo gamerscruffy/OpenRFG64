@@ -31,7 +31,7 @@ struct lua_active_state
     lua_State* lua_state; // 0x00
     void (*error_cb)(lua_thread*); // 0x04
 };
-static_assert(sizeof(lua_active_state) == 0x8, "lua_active_state");
+OPENRFG_SIZE_ASSERT(sizeof(lua_active_state) == 0x8, "lua_active_state");
 
 // ---- file-static globals (shared with lua_thread.cpp and lua_system_actions.cpp through lua_lib_unity)
 static unsigned int Paused_lua_state_count[4]; // 0x038B7170
@@ -44,7 +44,7 @@ static int (*Get_total_mem)(); // 0x038B91FC
 static int (*Get_free_mem)(); // 0x038B9200
 static int Num_script_threads; // 0x038B9204
 static unsigned short Next_thread_handle; // 0x038B9208
-static void* (*Realloc_cb)(void*, unsigned int); // 0x038B9214
+static void* (*Realloc_cb)(void*, size_t); // 0x038B9214
 static void (*Free_cb)(void*); // 0x038B9218
 
 static const int Max_lua_states = 4;
@@ -256,7 +256,7 @@ void lua_dump_state(lua_State* L, int depth)
 
 // 0x00C31740 (:401)
 // Without all four callbacks Lua uses the CRT heap and the memory statistics report -1.
-void lua_system_init(void* (*realloc_cb)(void*, unsigned int), void (*free_cb)(void*), int (*get_total_mem)(), int (*get_free_mem)())
+void lua_system_init(void* (*realloc_cb)(void*, size_t), void (*free_cb)(void*), int (*get_total_mem)(), int (*get_free_mem)())
 {
     if (realloc_cb == NULL || free_cb == NULL || get_total_mem == NULL || get_free_mem == NULL)
     {

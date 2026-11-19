@@ -5,6 +5,7 @@
 // ribbon to the camera. The u coordinate alternates with the particle's emit number (a seam texture trick); the first
 // particle gets 0.1 / 1.1 (+2 when there are more) so the shader can tell the ends apart.
 
+#include <string.h>
 #include "volition/render_lib/code/rl_particle_renderer.h"
 
 #include "volition/render_lib/code/rl_renderable_particles.h"
@@ -47,7 +48,8 @@ void rl_particle_renderer::filler_ribbon_parametric(rl_renderable_particles_inst
 {
     const pool_list<rl_particle_parametric>& particles = instance_p->get_particle_parametric_list();
     const int num_particles = particles.size();
-    for (int index = num_particles - 1; -1 < index; index--)
+    if (num_particles < 2) { return; } // OpenRFG: index 0 pairs with index 1; a 1-particle ribbon crashed here
+    for (int index = (num_particles > 499 ? 499 : num_particles) - 1; -1 < index; index--) // OpenRFG: the vertex buffer only holds 499 particles
     {
         const rl_particle_parametric& particle = particles[index];
         const rl_particle_parametric& other = index == 0 ? particles[1] : particles[index - 1];
@@ -67,9 +69,9 @@ void rl_particle_renderer::filler_ribbon_parametric(rl_renderable_particles_inst
         vertex.random_2.w = other.random.w;
         ribbon_parametric_vertex* vertices_p = (ribbon_parametric_vertex*)vertex_p;
         vertex.uvs.y = 0.0f;
-        vertices_p[0] = vertex;
+        memcpy(&vertices_p[0], &vertex, sizeof(vertex)); // OpenRFG: unaligned dest (SSE store faulted)
         vertex.uvs.y = 1.0f;
-        vertices_p[1] = vertex;
+        memcpy(&vertices_p[1], &vertex, sizeof(vertex)); // OpenRFG: unaligned dest (SSE store faulted)
         num_verts += 2;
         vertex_p += current_vertex_stride * 2;
         num_prims += 2;
@@ -86,7 +88,7 @@ void rl_particle_renderer::filler_ribbon_iterative(rl_renderable_particles_insta
     const int num_particles = particles.size();
     float anim_time = 0.0f;
     int count = 0;
-    for (int index = num_particles - 1; -1 < index; index--)
+    for (int index = (num_particles > 499 ? 499 : num_particles) - 1; -1 < index; index--) // OpenRFG: the vertex buffer only holds 499 particles
     {
         const rl_particle_iterative& particle = particles[index];
         if ((count & 1) == 0)
@@ -120,10 +122,10 @@ void rl_particle_renderer::filler_ribbon_iterative(rl_renderable_particles_insta
         ribbon_vertex* vertices_p = (ribbon_vertex*)vertex_p;
         vertex.uvs.y = 0.0f;
         vertex.v_trans.x = particle.current_size;
-        vertices_p[0] = vertex;
+        memcpy(&vertices_p[0], &vertex, sizeof(vertex)); // OpenRFG: unaligned dest (SSE store faulted)
         vertex.uvs.y = 1.0f;
         vertex.v_trans.x = -particle.current_size;
-        vertices_p[1] = vertex;
+        memcpy(&vertices_p[1], &vertex, sizeof(vertex)); // OpenRFG: unaligned dest (SSE store faulted)
         num_verts += 2;
         vertex_p += current_vertex_stride * 2;
         num_prims += 2;

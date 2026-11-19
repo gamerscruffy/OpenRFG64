@@ -54,6 +54,9 @@
 #include "volition/rfg/code/objects/humans/npc.h"
 #include "volition/rfg/code/objects/object_mission_start_node.h"
 #include "volition/rfg/code/objects/object_player_start.h"
+#include "volition/rfg/code/control/control_gameplay.h"
+#include "volition/rfg/code/objects/object_safehouse.h"
+#include "volition/vlib/code/input/key.h"
 #include "volition/rfg/code/objects/object_spawn_node.h"
 #include "volition/rfg/code/objects/object_squad.h"
 #include "volition/rfg/code/objects/object_upgrade_node.h"
@@ -622,10 +625,98 @@ void mission_end_warp_to_object(unsigned int warp_to_obj_handle)
     Mission_warp_obj_after_unlocks = warp_to_obj_handle;
 }
 
+extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vKey);
+
 // 0x007B4CB0 (:766)
 void mission_system_do_frame()
 {
     critical_area_do_frame();
+    // OpenRFG debug menu: F8 = godmode on/off, F9 = cycle run speed (normal, 10, 20, 40, 80 m/s).
+    {
+        extern float Player_max_movement_speed_override;
+        static bool dbg_god = false;
+        static int dbg_spd = 0;
+        static bool dbg_was_god = false;
+        static bool dbg_f8_prev = false, dbg_f9_prev = false;
+        const bool f8 = (GetAsyncKeyState(0x77) & 0x8000) != 0; // VK_F8
+        const bool f9 = (GetAsyncKeyState(0x78) & 0x8000) != 0; // VK_F9
+        static const float dbg_speeds[5] = { 0.0f, 10.0f, 20.0f, 40.0f, 80.0f };
+        if (f8 && !dbg_f8_prev) { dbg_god = !dbg_god; GAME_TRACE("debug", "F8 godmode %s", dbg_god ? "ON" : "OFF"); }
+        if (f9 && !dbg_f9_prev) { dbg_spd = (dbg_spd + 1) % 5; GAME_TRACE("debug", "F9 run speed override %.0f (0 = normal)", dbg_speeds[dbg_spd]); }
+        dbg_f8_prev = f8;
+        dbg_f9_prev = f9;
+        player* dbg_p = player_get_local_player();
+        if (dbg_p != nullptr)
+        {
+            if (dbg_god && !dbg_p->hflags.invulnerable) { player_set_player_invulnerable(dbg_p, true); dbg_was_god = true; }
+            else if (!dbg_god && dbg_was_god) { player_set_player_invulnerable(dbg_p, false); dbg_was_god = false; }
+        }
+        Player_max_movement_speed_override = dbg_speeds[dbg_spd];
+    }
+    // OpenRFG debug: F10 = free camera (slew mode) on/off. See camera_slew.cpp for its keys.
+    {
+        static bool dbg_slew = false;
+        static bool dbg_f10_prev = false;
+        static vector dbg_home_pos; static matrix dbg_home_orient; static bool dbg_had_home = false, dbg_was_inv = false;
+        const bool f10 = (GetAsyncKeyState(0x79) & 0x8000) != 0; // VK_F10
+        if (f10 && !dbg_f10_prev)
+        {
+            dbg_slew = !dbg_slew;
+            if (dbg_slew)
+            {
+                Rfg_camera.ideal_pos = Rfg_camera.real_pos;
+                Rfg_camera.ideal_orient = Rfg_camera.real_orient;
+                camera_start_slew_mode();
+                player* sp = player_get_local_player();
+                if (sp != nullptr) { dbg_home_pos = sp->pos; dbg_home_orient = sp->orient; dbg_had_home = true; dbg_was_inv = sp->hflags.invulnerable; player_set_player_invulnerable(sp, true); }
+                control_enable_player_input(false);
+            }
+            else
+            {
+                camera_stop_slew_mode();
+                player* sp = player_get_local_player();
+                if (sp != nullptr && dbg_had_home)
+                {
+                    human_teleport_unsafe(sp, dbg_home_pos, dbg_home_orient);
+                    if (!dbg_was_inv) { player_set_player_invulnerable(sp, false); }
+                }
+                dbg_had_home = false;
+                control_enable_player_input(true);
+                if (sp != nullptr) { sp->set_is_visible(true); }
+            }
+            GAME_TRACE("debug", "F10 slew camera %s", dbg_slew ? "ON" : "OFF");
+        }
+        dbg_f10_prev = f10;
+        // While the free camera is on, the player body follows it, so the world streams, spawns NPCs and vehicles around the camera.
+        if (dbg_slew)
+        {
+            player* sp = player_get_local_player();
+            if (sp != nullptr) { human_teleport_unsafe(sp, Rfg_camera.ideal_pos, sp->orient); sp->set_is_visible(false); }
+        }
+    }
+    // OpenRFG debug: F7 during the tutorial finishes it and warps to the nearest safehouse.
+    static bool dbg_f7_prev = false;
+    const bool dbg_f7_now = (GetAsyncKeyState(0x76) & 0x8000) != 0; // VK_F7
+    const bool dbg_f7_edge = dbg_f7_now && !dbg_f7_prev;
+    dbg_f7_prev = dbg_f7_now;
+    if (dbg_f7_edge) { GAME_TRACE("mission", "F7 pressed active=%d mode=%d", mission_is_active() ? 1 : 0, (int)mission_get_mode()); }
+    if (dbg_f7_edge && mission_is_active() && mission_get_mode() == MISSION_MODE_TUTORIAL)
+    {
+        player* dbg_pp = player_get_local_player();
+        if (dbg_pp != nullptr)
+        {
+            object_safehouse* dbg_sh = safehouse_find_nearest_safehouse(dbg_pp->pos, true, true);
+            if (dbg_sh != nullptr)
+            {
+                vector dbg_pos; matrix dbg_orient;
+                if (safehouse_get_start_pos_orient(dbg_pos, dbg_orient, dbg_sh)) { human_teleport(dbg_pp, dbg_pos, dbg_orient, 2.0f, true); }
+            }
+            GAME_TRACE("mission", "F7: skipping the tutorial, safehouse=%d", dbg_sh != nullptr ? 1 : 0);
+            control_enable_player_input(true);
+//F7NOSUCCESS             mission_success_event dbg_data;
+//F7NOSUCCESS             gem_post_event(dbg_data);
+        }
+    }
     mission_info* active = active_mission_info();
     if (active != nullptr && active->mis_mode == MISSION_MODE_PARTYTIME)
     {

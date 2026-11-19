@@ -32,7 +32,7 @@ struct heartbeat_table_entry
     float saturation; // 0x20
     float bloom; // 0x24
 };
-static_assert(sizeof(heartbeat_table_entry) == 0x28, "heartbeat_table_entry");
+OPENRFG_SIZE_ASSERT(sizeof(heartbeat_table_entry) == 0x28, "heartbeat_table_entry");
 
 // ---- file-static globals
 static const char HEARTBEAT_DATA_FILE_NAME[22] = "effect_heartbeat.xtbl"; // 0x012FB170

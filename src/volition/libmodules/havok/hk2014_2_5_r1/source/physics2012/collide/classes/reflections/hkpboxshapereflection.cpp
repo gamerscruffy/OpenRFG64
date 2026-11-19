@@ -68,7 +68,7 @@ static const void* getVtablehkpBoxShape()
     ::new (u.buf) hkpBoxShape(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpBoxShape) == 48, "hkpBoxShape size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpBoxShape) == 48, "hkpBoxShape size");
 extern const hkTypeInfo hkpBoxShapeTypeInfo;
 const hkTypeInfo hkpBoxShapeTypeInfo(
     "hkpBoxShape",

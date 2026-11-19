@@ -68,7 +68,7 @@ struct mp_wreck_customization_shell_info
     unsigned int control_id; // 0x6C
     int input_id; // 0x70
 };
-static_assert(sizeof(mp_wreck_customization_shell_info) == 0x74, "mp_wreck_customization_shell_info");
+OPENRFG_SIZE_ASSERT(sizeof(mp_wreck_customization_shell_info) == 0x74, "mp_wreck_customization_shell_info");
 
 enum wccs_hint_choices
 {
@@ -86,7 +86,7 @@ struct menu_option_info_uiwccs
     const char* m_option; // 0x00
     bool selectability; // 0x04
 };
-static_assert(sizeof(menu_option_info_uiwccs) == 0x8, "menu_option_info_uiwccs");
+OPENRFG_SIZE_ASSERT(sizeof(menu_option_info_uiwccs) == 0x8, "menu_option_info_uiwccs");
 
 static void wccs_process_data_item_hint_text(vint_data_item* vdi);
 static void wccs_process_data_item_titles(vint_data_item* vdi);

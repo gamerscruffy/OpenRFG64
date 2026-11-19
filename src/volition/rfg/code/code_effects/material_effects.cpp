@@ -45,7 +45,7 @@ struct ri_effects_tracker
     material_effect* applied_effects_list; // 0x04
     unsigned int flags; // 0x08
 };
-static_assert(sizeof(ri_effects_tracker) == 0xC, "ri_effects_tracker");
+OPENRFG_SIZE_ASSERT(sizeof(ri_effects_tracker) == 0xC, "ri_effects_tracker");
 
 // material_effect_parameters::flags (names inferred): 1 = fade out (time runs backwards), 2 = partial fade (up and down
 // to Partial_fade_percentage), 4 = remove at the next update render.

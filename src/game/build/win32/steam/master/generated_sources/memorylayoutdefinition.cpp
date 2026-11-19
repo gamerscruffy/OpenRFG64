@@ -15,7 +15,7 @@ namespace keen
     {
         { 1000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_SysMempoolProvider" }, // 0
         { 80000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_VramMempoolProvider" }, // 1
-        { 1146000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_MempoolProvider" }, // 2
+        { 1700000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_MempoolProvider" }, // 2
         { 300000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_GpuScratchMem" }, // 3
         { 0u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_Graphics" }, // 4
         { 0u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_Framebuffers" }, // 5

@@ -45,6 +45,7 @@ void mouse_generic_update_front_thread()
 }
 
 // 0x005B88F0 (:84)
+void openrfg_log(const char*);
 void mouse_generic_poll()
 {
     if (Mouse_using_relative_movement != Mouse_using_relative_movement_previous)
@@ -81,6 +82,7 @@ void mouse_generic_poll()
     Mouse_x = Mouse_raw_x;
     for (unsigned int i = 0; i < 5; i++)
     {
+        { static int n = 0; if (n < 10 && Cached_input_states[Current_cached_input_state].mouse.buttons[i]) { n++; openrfg_log("DBGMOUSE button seen in poll"); } }
         mouse_mark_button(i, Cached_input_states[Current_cached_input_state].mouse.buttons[i]);
     }
 }

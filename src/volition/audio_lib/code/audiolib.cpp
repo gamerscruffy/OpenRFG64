@@ -52,7 +52,7 @@ struct preloaded_soundheader_data
     unsigned char* data; // 0x00
     unsigned int size; // 0x04
 };
-static_assert(sizeof(preloaded_soundheader_data) == 0x8, "preloaded_soundheader_data");
+OPENRFG_SIZE_ASSERT(sizeof(preloaded_soundheader_data) == 0x8, "preloaded_soundheader_data");
 
 // size 0xC
 struct audiolib_veh_engine_lookup_data_list
@@ -61,7 +61,7 @@ struct audiolib_veh_engine_lookup_data_list
     int total; // 0x04
     audiolib_vehicle_engine_data* engine_list; // 0x08
 };
-static_assert(sizeof(audiolib_veh_engine_lookup_data_list) == 0xC, "audiolib_veh_engine_lookup_data_list");
+OPENRFG_SIZE_ASSERT(sizeof(audiolib_veh_engine_lookup_data_list) == 0xC, "audiolib_veh_engine_lookup_data_list");
 
 // ---- public globals (rfg.pdb; no header declares them)
 // The defaults until foley_settings.xtbl is read (rfg.exe .data).

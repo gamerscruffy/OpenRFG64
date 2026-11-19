@@ -64,7 +64,7 @@ static const void* getVtablehkpDefaultConvexListFilter()
     ::new (u.buf) hkpDefaultConvexListFilter(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpDefaultConvexListFilter) == 8, "hkpDefaultConvexListFilter size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpDefaultConvexListFilter) == 8, "hkpDefaultConvexListFilter size");
 extern const hkTypeInfo hkpDefaultConvexListFilterTypeInfo;
 const hkTypeInfo hkpDefaultConvexListFilterTypeInfo(
     "hkpDefaultConvexListFilter",

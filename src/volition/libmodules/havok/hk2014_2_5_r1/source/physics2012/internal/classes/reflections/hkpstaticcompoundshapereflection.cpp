@@ -59,7 +59,7 @@ static void cleanupLoadedObjecthkpStaticCompoundShapeInstance(void* p)
 {
     static_cast<hkpStaticCompoundShape::Instance*>(p)->~Instance();
 }
-static_assert(sizeof(hkpStaticCompoundShape::Instance) == 64, "hkpStaticCompoundShape::Instance size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpStaticCompoundShape::Instance) == 64, "hkpStaticCompoundShape::Instance size");
 extern const hkTypeInfo hkpStaticCompoundShapeInstanceTypeInfo;
 const hkTypeInfo hkpStaticCompoundShapeInstanceTypeInfo(
     "hkpStaticCompoundShapeInstance",

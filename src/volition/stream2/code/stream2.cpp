@@ -18,6 +18,7 @@
 //   the container types.
 
 #include "volition/stream2/code/stream2.h"
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGSTRQ
 
 #include "volition/rfg/code/gamewide/downloadable_content.h"
 #include "volition/stream2/code/stream2_allocator.h"
@@ -31,6 +32,45 @@
 
 #include <stdio.h>
 #include <string.h>
+
+#ifdef OPENRFG_X64
+#include <mutex>
+#include <unordered_map>
+static std::mutex s_scIdMutex;
+static std::unordered_map<const stream2_container*, unsigned int> s_scToId;
+static std::unordered_map<unsigned int, stream2_container*> s_idToSc;
+static unsigned int s_scNextId = 0;
+unsigned int stream2_sc_id(const stream2_container* sc)
+{
+    if (sc == nullptr)
+    {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(s_scIdMutex);
+    auto it = s_scToId.find(sc);
+    if (it != s_scToId.end())
+    {
+        return it->second;
+    }
+    const unsigned int id = ++s_scNextId;
+    s_scToId[sc] = id;
+    s_idToSc[id] = const_cast<stream2_container*>(sc);
+    return id;
+}
+stream2_container* stream2_sc_ptr(unsigned int srid)
+{
+    if (srid == 0 || srid == 0xFFFFFFFFu)
+    {
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(s_scIdMutex);
+    auto it = s_idToSc.find(srid);
+    return it == s_idToSc.end() ? nullptr : it->second;
+}
+#else
+unsigned int stream2_sc_id(const stream2_container* sc) { return (unsigned int)sc; }
+stream2_container* stream2_sc_ptr(unsigned int srid) { return (stream2_container*)srid; }
+#endif
 
 // Primitive lookup by (file name, allocator): the key combines the name hash and the allocator index (make_key), so
 // the same file streamed into two allocators is two primitives. Defined in this file (its members are recorded at
@@ -394,7 +434,7 @@ static void queue_process_passive()
             if ((prim->flags & 0x1) == 0 && prim->pdef->flags.load_threaded)
             {
                 const bool split = (prim->flags & 0x4) != 0;
-                if (!prim->pdef->load_cb(prim->name, (unsigned int)sc, prim->cpu_data, prim->cpu_size, split ? prim->gpu_data : nullptr, split ? prim->gpu_size : 0))
+                if (!prim->pdef->load_cb(prim->name, stream2_sc_id(sc), prim->cpu_data, prim->cpu_size, split ? prim->gpu_data : nullptr, split ? prim->gpu_size : 0))
                 {
                     break;
                 }
@@ -412,7 +452,7 @@ static void queue_process_passive()
             if ((prim->flags & 0x1) == 0 && !prim->pdef->flags.load_threaded)
             {
                 const bool split = (prim->flags & 0x4) != 0;
-                if (!prim->pdef->load_cb(prim->name, (unsigned int)sc, prim->cpu_data, prim->cpu_size, split ? prim->gpu_data : nullptr, split ? prim->gpu_size : 0))
+                if (!prim->pdef->load_cb(prim->name, stream2_sc_id(sc), prim->cpu_data, prim->cpu_size, split ? prim->gpu_data : nullptr, split ? prim->gpu_size : 0))
                 {
                     failed = true;
                     break;
@@ -422,7 +462,7 @@ static void queue_process_passive()
         }
         if (!failed && sc->cdef->load_cb != nullptr)
         {
-            sc->cdef->load_cb((unsigned int)sc);
+            sc->cdef->load_cb(stream2_sc_id(sc));
         }
         sc->flags |= 0x1;
         dequeue(sc);
@@ -554,7 +594,7 @@ void stream2_container_system_shutdown()
 // 0x004A9DE0 (:540)
 void stream2_set_priority(unsigned int srid, unsigned char priority)
 {
-    stream2_container* const sc = (stream2_container*)srid;
+    stream2_container* const sc = stream2_sc_ptr(srid);
     if (sc != nullptr && sc->cur_priority <= (short)priority)
     {
         sc->cur_priority = priority;
@@ -570,7 +610,7 @@ void stream2_set_category(unsigned int srid, unsigned char category)
 {
     if (srid != 0)
     {
-        ((stream2_container*)srid)->cur_category = category;
+        (stream2_sc_ptr(srid))->cur_category = category;
     }
 }
 
@@ -581,7 +621,7 @@ bool stream2_container_get_passive(unsigned int srid)
     {
         return false;
     }
-    return (((stream2_container*)srid)->flags & 0x100) != 0;
+    return ((stream2_sc_ptr(srid))->flags & 0x100) != 0;
 }
 
 // 0x004AC200 (:606)
@@ -591,7 +631,7 @@ bool stream2_container_set_passive(unsigned int srid, bool passive)
     {
         return false;
     }
-    return ((stream2_container*)srid)->set_passive(passive);
+    return (stream2_sc_ptr(srid))->set_passive(passive);
 }
 
 // 0x004AC230 (:1149)
@@ -631,6 +671,7 @@ bool stream2_do_frame(bool do_passive)
     }
     queue_process_unload();
     queue_process();
+    { static int dq_ = 0; if ((dq_++ % 120) == 0) { int n_ = 0; stream2_container* h_ = Stream_q; if (h_) { stream2_container* c_ = h_; do { n_++; c_ = c_->q_next; } while (c_ && c_ != h_ && n_ < 999); } GAME_TRACE("strq", "queue len=%d paused=%d head=%s flags=0x%x pri=%d", n_, (int)Stream_q_paused, h_ && h_->name ? h_->name : "-", h_ ? (unsigned)h_->flags : 0u, h_ ? (int)h_->cur_priority : -1); } } // DBGSTRQ
     if (do_passive)
     {
         queue_process_passive();
@@ -677,7 +718,7 @@ bool stream2_request(unsigned int srid)
     {
         return false;
     }
-    stream2_container* const sc = (stream2_container*)srid;
+    stream2_container* const sc = stream2_sc_ptr(srid);
     if (sc == nullptr || (sc->flags & 0x40) != 0)
     {
         return false;
@@ -755,7 +796,7 @@ void stream2_release(unsigned int srid)
     {
         return;
     }
-    stream2_container* const sc = (stream2_container*)srid;
+    stream2_container* const sc = stream2_sc_ptr(srid);
     if (sc->get_ref_count() == 1 && (sc->flags & 0x8) != 0)
     {
         // The last reference of a container being read: abort the read.
@@ -776,7 +817,7 @@ void stream2_release(unsigned int srid)
 // 0x004AC250 (:1458)
 stream2_status_val stream2_get_status(unsigned int srid)
 {
-    const stream2_container* const sc = (const stream2_container*)srid;
+    const stream2_container* const sc = (const stream2_container*)stream2_sc_ptr(srid);
     if (sc == nullptr)
     {
         return ST_UNLOADED;
@@ -807,7 +848,7 @@ int stream2_get_ref_count(unsigned int srid)
     {
         return 0;
     }
-    return ((stream2_container*)srid)->get_ref_count();
+    return (stream2_sc_ptr(srid))->get_ref_count();
 }
 
 // 0x004AC2B0 (:1526)
@@ -1058,7 +1099,7 @@ unsigned int stream2_container_finish(bool skip_allocator_size_verification, boo
     build.clear();
     Build_stack_pos--;
     Stream2_container_count++;
-    return (unsigned int)sc;
+    return stream2_sc_id(sc);
 }
 
 // 0x004B1360 (:1855)
@@ -1067,7 +1108,7 @@ bool stream2_container_delete(const char* name)
     stream2_container* sc = nullptr;
     if (Stream_container_hash.get(name, sc) && sc != nullptr)
     {
-        return stream2_container_delete((unsigned int)sc);
+        return stream2_container_delete(stream2_sc_id(sc));
     }
     return false;
 }
@@ -1089,7 +1130,7 @@ bool stream2_container_delete(unsigned int srid)
         queue_process();
     } while (Stream_q != nullptr);
 
-    stream2_container* const sc = (stream2_container*)srid;
+    stream2_container* const sc = stream2_sc_ptr(srid);
     if (!sc->is_idle())
     {
         return false;
@@ -1156,7 +1197,7 @@ unsigned int stream2_container_find(const char* name)
     stream2_container* sc = nullptr;
     if (Stream_container_hash.get(name, sc))
     {
-        return (unsigned int)sc;
+        return stream2_sc_id(sc);
     }
     return 0;
 }
@@ -1179,7 +1220,7 @@ bool stream2_container_data_is_unique(unsigned int srid)
     {
         return false;
     }
-    return ((stream2_container*)srid)->cdef->mode == SCM_CONTAINER;
+    return (stream2_sc_ptr(srid))->cdef->mode == SCM_CONTAINER;
 }
 
 // 0x004AF0C0 (:1938)
@@ -1189,7 +1230,7 @@ bool stream2_container_enable_prim(unsigned int srid, const char* prim_name, boo
     {
         return false;
     }
-    return ((stream2_container*)srid)->enable_prim(prim_name, enable);
+    return (stream2_sc_ptr(srid))->enable_prim(prim_name, enable);
 }
 
 // 0x004A9F70 (:1956)
@@ -1199,19 +1240,19 @@ const char* stream2_get_container_name(unsigned int srid)
     {
         return nullptr;
     }
-    return ((stream2_container*)srid)->name;
+    return (stream2_sc_ptr(srid))->name;
 }
 
 // 0x004A9F80 (:1968)
 stream2_container* stream2_get_container(unsigned int srid)
 {
-    return (stream2_container*)srid;
+    return stream2_sc_ptr(srid);
 }
 
 // 0x004A9F90 (:1977)
 unsigned int stream2_get_srid(stream2_container* sc)
 {
-    return (unsigned int)sc;
+    return stream2_sc_id(sc);
 }
 
 // 0x004A9FA0 (:1987)
@@ -1319,7 +1360,7 @@ bool stream2_read_container_data(cfile* f, mempool_base* pool, bool report_error
                 cf_seek(f, (int)chain_sizes_pos, CF_SEEK_SET);
                 if (srid != 0)
                 {
-                    stream2_container* const sc = (stream2_container*)srid;
+                    stream2_container* const sc = stream2_sc_ptr(srid);
                     if ((sc->flags & 0x100) == 0)
                     {
                         for (int i = 0; i < num_chain_sizes; i++)

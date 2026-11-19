@@ -7,6 +7,7 @@
 //
 // The monitor timers ("TtPhysics 2012", "StIntegrate", ...) are not reproduced.
 
+#include <stddef.h>
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/world/simulation/hkpsimulation.h"
 
 #include <math.h>
@@ -319,7 +320,7 @@ hkpStepResult hkpSimulation::integrateInternal(const hkStepInfo& stepInfoIn)
         int numInactiveFrames;
         if (island->m_constraintInfo.m_sizeOfSchemas == 0)
         {
-            numInactiveFrames = hkRigidMotionUtilApplyForcesAndStep(world->m_dynamicsStepInfo.m_solverInfo, world->m_dynamicsStepInfo.m_stepInfo, world->m_dynamicsStepInfo.m_solverInfo.m_globalAccelerationPerStep, (hkpMotion* const*)island->m_entities.begin(), island->m_entities.getSize(), 0xE0); // the offset of hkpEntity::m_motion
+            numInactiveFrames = hkRigidMotionUtilApplyForcesAndStep(world->m_dynamicsStepInfo.m_solverInfo, world->m_dynamicsStepInfo.m_stepInfo, world->m_dynamicsStepInfo.m_solverInfo.m_globalAccelerationPerStep, (hkpMotion* const*)island->m_entities.begin(), island->m_entities.getSize(), (int)offsetof(hkpEntity, m_motion)); // the offset of hkpEntity::m_motion
             hkpEntityAabbUtil::entityBatchRecalcAabb(island->m_world->m_collisionInput, island->m_entities.begin(), island->m_entities.getSize());
         }
         else
@@ -628,7 +629,7 @@ void hkpSimulation::reintegrateAndRecollideEntities(hkpEntity** entities, int nu
                 hkSweptTransformUtil::backStepMotionState(world->getCurrentTime(), entities[i]->m_motion.m_motionState);
             }
         }
-        hkRigidMotionUtilStep(stepInfo, (hkpMotion* const*)entities, numEntities, 0xE0); // the offset of hkpEntity::m_motion
+        hkRigidMotionUtilStep(stepInfo, (hkpMotion* const*)entities, numEntities, (int)offsetof(hkpEntity, m_motion)); // the offset of hkpEntity::m_motion
         hkpEntityAabbUtil::entityBatchRecalcAabb(world->m_collisionInput, entities, numEntities);
     }
     if (reintegrateRecollideMode & 2)

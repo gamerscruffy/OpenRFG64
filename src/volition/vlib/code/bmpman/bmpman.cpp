@@ -582,7 +582,7 @@ static bool bm_fixup_peg_header(const char* fname, unsigned char* const peg_data
             {
                 if (pe->cache[0] == 0 && pe->cache[1] == 0)
                 {
-                    pe->cache[0] = (unsigned int)(pixel_base + pe->data.get_offset());
+                    pe->set_cache_ptr(pixel_base + pe->data.get_offset());
                 }
                 pe->data.set_offset(0);
             }

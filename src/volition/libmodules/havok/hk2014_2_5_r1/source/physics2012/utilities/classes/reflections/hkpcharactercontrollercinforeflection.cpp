@@ -64,7 +64,7 @@ static const void* getVtablehkpCharacterControllerCinfo()
     ::new (u.buf) hkpCharacterControllerCinfo(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpCharacterControllerCinfo) == 8, "hkpCharacterControllerCinfo size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpCharacterControllerCinfo) == 8, "hkpCharacterControllerCinfo size");
 extern const hkTypeInfo hkpCharacterControllerCinfoTypeInfo;
 const hkTypeInfo hkpCharacterControllerCinfoTypeInfo(
     "hkpCharacterControllerCinfo",

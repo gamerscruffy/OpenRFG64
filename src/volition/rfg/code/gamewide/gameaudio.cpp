@@ -61,7 +61,7 @@ struct LOS_collision_info_struct
     vector dir; // 0x04
     float value; // 0x10
 };
-static_assert(sizeof(LOS_collision_info_struct) == 0x14, "LOS_collision_info_struct");
+OPENRFG_SIZE_ASSERT(sizeof(LOS_collision_info_struct) == 0x14, "LOS_collision_info_struct");
 
 // size 0x6C
 struct LOS_data_struct
@@ -78,7 +78,7 @@ struct LOS_data_struct
     float value; // 0x64
     bool hit; // 0x68
 };
-static_assert(sizeof(LOS_data_struct) == 0x6C, "LOS_data_struct");
+OPENRFG_SIZE_ASSERT(sizeof(LOS_data_struct) == 0x6C, "LOS_data_struct");
 
 // size 0x8: a 2D cue and the 3D cue that plays for it away from the local player (game_audio.xtbl Crossover).
 struct crossover_link_2d_3d
@@ -86,7 +86,7 @@ struct crossover_link_2d_3d
     int twod; // 0x00
     int threed; // 0x04
 };
-static_assert(sizeof(crossover_link_2d_3d) == 0x8, "crossover_link_2d_3d");
+OPENRFG_SIZE_ASSERT(sizeof(crossover_link_2d_3d) == 0x8, "crossover_link_2d_3d");
 
 // size 0x8
 struct crossover_list_data_struct
@@ -94,7 +94,7 @@ struct crossover_list_data_struct
     int count; // 0x00
     crossover_link_2d_3d* data; // 0x04
 };
-static_assert(sizeof(crossover_list_data_struct) == 0x8, "crossover_list_data_struct");
+OPENRFG_SIZE_ASSERT(sizeof(crossover_list_data_struct) == 0x8, "crossover_list_data_struct");
 
 // ---- globals
 gameaudio_low_health_info low_health; // 0x0252D6C4

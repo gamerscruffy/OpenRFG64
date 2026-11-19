@@ -71,7 +71,7 @@ static void cleanupLoadedObjecthkpWeldingUtility(void* p)
 {
     static_cast<hkpWeldingUtility*>(p)->~hkpWeldingUtility();
 }
-static_assert(sizeof(hkpWeldingUtility) == 1, "hkpWeldingUtility size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpWeldingUtility) == 1, "hkpWeldingUtility size");
 extern const hkTypeInfo hkpWeldingUtilityTypeInfo;
 const hkTypeInfo hkpWeldingUtilityTypeInfo(
     "hkpWeldingUtility",

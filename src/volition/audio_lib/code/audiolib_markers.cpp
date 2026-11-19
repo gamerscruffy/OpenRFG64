@@ -30,7 +30,7 @@ struct audiolib_marker_file_list
     int num_files; // 0x00
     audiolib_marker_file_data* first_file; // 0x04
 };
-static_assert(sizeof(audiolib_marker_file_list) == 0x8, "audiolib_marker_file_list");
+OPENRFG_SIZE_ASSERT(sizeof(audiolib_marker_file_list) == 0x8, "audiolib_marker_file_list");
 
 // ---- public globals (rfg.pdb; no header declares them)
 // The text of a marker without one.

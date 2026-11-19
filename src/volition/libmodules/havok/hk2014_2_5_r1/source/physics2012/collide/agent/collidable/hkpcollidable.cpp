@@ -57,7 +57,7 @@ hkpCollidable::hkpCollidable(hkFinishLoadedObjectFlag flag)
 {
     if (flag.m_finishing)
     {
-        m_broadPhaseHandle.m_ownerOffset = -0x14; // the collidable is 0x14 bytes before its handle
+        m_broadPhaseHandle.m_ownerOffset = (signed char)((char*)this - (char*)&m_broadPhaseHandle); // the collidable is before its handle (0x14 bytes on 32-bit)
     }
 }
 

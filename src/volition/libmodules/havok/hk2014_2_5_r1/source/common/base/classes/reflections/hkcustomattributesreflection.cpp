@@ -48,7 +48,7 @@ static void cleanupLoadedObjecthkCustomAttributesAttribute(void* p)
 {
     static_cast<hkCustomAttributes::Attribute*>(p)->~Attribute();
 }
-static_assert(sizeof(hkCustomAttributes::Attribute) == 12, "hkCustomAttributes::Attribute size");
+OPENRFG_SIZE_ASSERT(sizeof(hkCustomAttributes::Attribute) == 12, "hkCustomAttributes::Attribute size");
 extern const hkTypeInfo hkCustomAttributesAttributeTypeInfo;
 const hkTypeInfo hkCustomAttributesAttributeTypeInfo(
     "hkCustomAttributesAttribute",
@@ -93,7 +93,7 @@ static void cleanupLoadedObjecthkCustomAttributes(void* p)
 {
     static_cast<hkCustomAttributes*>(p)->~hkCustomAttributes();
 }
-static_assert(sizeof(hkCustomAttributes) == 8, "hkCustomAttributes size");
+OPENRFG_SIZE_ASSERT(sizeof(hkCustomAttributes) == 8, "hkCustomAttributes size");
 extern const hkTypeInfo hkCustomAttributesTypeInfo;
 const hkTypeInfo hkCustomAttributesTypeInfo(
     "hkCustomAttributes",

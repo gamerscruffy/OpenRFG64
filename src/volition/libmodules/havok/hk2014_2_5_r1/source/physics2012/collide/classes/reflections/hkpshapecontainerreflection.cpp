@@ -93,7 +93,7 @@ static const void* getVtablehkpSingleShapeContainer()
     ::new (u.buf) hkpSingleShapeContainer(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpSingleShapeContainer) == 8, "hkpSingleShapeContainer size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpSingleShapeContainer) == 8, "hkpSingleShapeContainer size");
 extern const hkTypeInfo hkpSingleShapeContainerTypeInfo;
 const hkTypeInfo hkpSingleShapeContainerTypeInfo(
     "hkpSingleShapeContainer",

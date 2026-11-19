@@ -64,7 +64,7 @@ struct line_variation_to_disable
     unsigned short line; // 0x00
     unsigned short variation; // 0x02
 };
-static_assert(sizeof(line_variation_to_disable) == 0x4, "line_variation_to_disable");
+OPENRFG_SIZE_ASSERT(sizeof(line_variation_to_disable) == 0x4, "line_variation_to_disable");
 
 // The per-persona .vpd_pc file: a count, then that many (line, variation) pairs (the PDB records the first one).
 // size 0x8
@@ -73,7 +73,7 @@ struct human_voice_line_disable_data
     unsigned int num_entries; // 0x00
     line_variation_to_disable disable_data; // 0x04
 };
-static_assert(sizeof(human_voice_line_disable_data) == 0x8, "human_voice_line_disable_data");
+OPENRFG_SIZE_ASSERT(sizeof(human_voice_line_disable_data) == 0x8, "human_voice_line_disable_data");
 
 // size 0x8
 struct activity_voice_info
@@ -81,7 +81,7 @@ struct activity_voice_info
     unsigned int spawn_node_handle; // 0x00
     human_voice_persona_handle desired_persona_handle; // 0x04
 };
-static_assert(sizeof(activity_voice_info) == 0x8, "activity_voice_info");
+OPENRFG_SIZE_ASSERT(sizeof(activity_voice_info) == 0x8, "activity_voice_info");
 
 // The index of each situational voice_lines value in a loaded persona's lines (0xFFFF: none).
 // size 0x102
@@ -89,7 +89,7 @@ struct voice_lines_lookup_table
 {
     unsigned short entries[129]; // 0x00
 };
-static_assert(sizeof(voice_lines_lookup_table) == 0x102, "voice_lines_lookup_table");
+OPENRFG_SIZE_ASSERT(sizeof(voice_lines_lookup_table) == 0x102, "voice_lines_lookup_table");
 
 // ---- globals
 int INVALID_VOICE_SET_HANDLE = -1; // 0x01694400
@@ -1637,6 +1637,12 @@ bool human_voice_persona::can_load() const
 // 0x00A31CA0 (:3081): requested now when a slot is free, else at the next slot reallocation.
 void human_voice_persona::background_load_request()
 {
+    { // DBGPERS temp
+        extern void openrfg_log(const char*);
+        char b[240];
+        snprintf(b, sizeof(b), "DBGPERS bg_load_request srid=%u status=%d refcnt=%d is_loading=%d loaded_count=%d max=%d", srid, (int)stream2_get_status(srid), (int)stream2_get_ref_count(srid), (int)is_loading(), (int)count_loaded_personas(), (int)MAX_STREAMED_PERSONAS);
+        openrfg_log(b);
+    }
     if (is_loading())
     {
         return;
@@ -2440,6 +2446,12 @@ bool human_voice_activity_release_voice(unsigned int activity_spawn_handle)
 // 0x00A598B0 (:4027): always loaded voices need no slot.
 bool human_voice_cutscene_reserve_slot(const human_voice_persona* desired_voice)
 {
+    { // DBGPERS temp
+        extern void openrfg_log(const char*);
+        char b[240];
+        snprintf(b, sizeof(b), "DBGPERS reserve_slot p=%p full=%d always=%d handle=%d", (const void*)desired_voice, desired_voice ? 0 : -1, desired_voice ? (int)desired_voice->is_always_loaded() : -1, desired_voice ? (int)human_voice_persona_get_handle(desired_voice) : -9);
+        openrfg_log(b);
+    }
     if (desired_voice == nullptr || Cutscene_voice_list.full())
     {
         return false;
@@ -2524,7 +2536,8 @@ void human_voice_unload_set(int set_handle)
 human_voice_persona_handle human_voice_persona_get_handle(const human_voice_persona* persona)
 {
     // Magic number: 0x2C, the size of a persona (the handle is its index, computed from the address in rfg.exe).
-    const int index = (int)(((const char*)persona - (const char*)&Voice_personas[0]) / 0x2C);
+    // x64: the size is not 0x2C (pointer members), so the element difference is used.
+    const int index = (int)(persona - &Voice_personas[0]);
     if (index < 0 || index >= Voice_personas.size())
     {
         return INVALID_HUMAN_VOICE_PERSONA_HANDLE;

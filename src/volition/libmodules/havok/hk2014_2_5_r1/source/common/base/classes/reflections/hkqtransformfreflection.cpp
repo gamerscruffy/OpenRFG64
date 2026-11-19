@@ -51,7 +51,7 @@ static void cleanupLoadedObjecthkQTransformf(void* p)
 {
     static_cast<hkQTransformf*>(p)->~hkQTransformf();
 }
-static_assert(sizeof(hkQTransformf) == 32, "hkQTransformf size");
+OPENRFG_SIZE_ASSERT(sizeof(hkQTransformf) == 32, "hkQTransformf size");
 extern const hkTypeInfo hkQTransformfTypeInfo;
 const hkTypeInfo hkQTransformfTypeInfo(
     "hkQTransformf",

@@ -1,3 +1,4 @@
+#include <cstddef>
 // Original: volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/constraint/contact/hkpsimplecontactconstraintdata.cpp
 //
 // Havok 2014.2.5 (havok_impl.md HK8): the data of a contact constraint, from rfg.exe. It owns the contact atom
@@ -119,7 +120,7 @@ hkpSimpleContactConstraintData::~hkpSimpleContactConstraintData()
 // 0x00E2F610: the data is a member of the manager (at 0x14)
 hkpSimpleConstraintContactMgr* hkpSimpleContactConstraintData::getSimpleConstraintContactMgr() const
 {
-    return reinterpret_cast<hkpSimpleConstraintContactMgr*>(const_cast<char*>(reinterpret_cast<const char*>(this) - 0x14));
+    return reinterpret_cast<hkpSimpleConstraintContactMgr*>(const_cast<char*>(reinterpret_cast<const char*>(this) - offsetof(hkpSimpleConstraintContactMgr, m_contactConstraintData)));
 }
 
 // 0x00F20C60

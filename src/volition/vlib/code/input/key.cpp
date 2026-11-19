@@ -317,6 +317,7 @@ bool key_query_modifier(unsigned int key)
 // 0x0059A290 (:633)
 // Queues each key that differs from the snapshot's keyboard, clears the per-frame flags and masks, then applies the
 // queued changes in order.
+void openrfg_log(const char*);
 void key_poll()
 {
     const cached_keyboard_state& keyboard = Cached_input_states[Current_cached_input_state].keyboard;
@@ -326,6 +327,7 @@ void key_poll()
         const bool down = keyboard.keys[i];
         if (down != Key_states[i].down)
         {
+            { static int n = 0; if (n < 10) { n++; openrfg_log("DBGKEY key_poll sees change"); } }
             Key_state_changes[tail].code = i & 0xFF;
             Key_state_changes[tail].down = down;
             tail = tail == 31 ? 0 : tail + 1;

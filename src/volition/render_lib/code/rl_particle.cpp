@@ -3,6 +3,7 @@
 // The render-side particles (VFX.md FX2): an iterative particle's tails come from the particle renderer's tail pool
 // (reset each frame). The functions of rl_particle.h are here too (the original has them inline in the header).
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGPOOL
 #include "volition/render_lib/code/rl_particle.h"
 
 #include "volition/render_lib/code/rl_particle_renderer.h"
@@ -23,6 +24,7 @@ bool rl_particle_iterative::alloc_particle_tails(int count)
             return true;
         }
     }
+    { static int n_ = 0; if (count > 0 && n_++ < 20) GAME_TRACE("partpool", "tail pool FULL count=%d", count); } // DBGPOOL
     m_num_tails = 0;
     m_tails_list = nullptr;
     return false;

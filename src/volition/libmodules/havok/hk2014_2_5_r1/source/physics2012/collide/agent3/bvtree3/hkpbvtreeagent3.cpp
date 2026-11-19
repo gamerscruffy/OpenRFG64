@@ -28,9 +28,16 @@
 
 using namespace hkGskExact;
 
+#ifdef OPENRFG_X64
+#define AGENT1N_TRACK_OFFSET 8
+#define AGENT1N_END_OFFSET 0x20
+#else
+#define AGENT1N_TRACK_OFFSET 4
+#define AGENT1N_END_OFFSET 0x10
+#endif
 static inline hkpAgent1nTrack& hkBvTreeAgent3_track(void* agentData)
 {
-    return *reinterpret_cast<hkpAgent1nTrack*>(static_cast<char*>(agentData) + 4);
+    return *reinterpret_cast<hkpAgent1nTrack*>(static_cast<char*>(agentData) + AGENT1N_TRACK_OFFSET);
 }
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/collide/dispatch/hkpcollisiondispatcher.h"
 
@@ -195,5 +202,5 @@ void* hkBvTreeAgent3::process(const hkpAgent3ProcessInput& input, hkpAgentEntry*
     const hkpShapeContainer* container = input.m_bodyB.val()->getShape()->getContainer();
     hkAgent1nMachine_Process(hkBvTreeAgent3_track(agentData), input, container, numHits < 0 ? nullptr : hitList, output);
     stack.fastBlockFree(hitList, capacity * (int)sizeof(unsigned int));
-    return static_cast<char*>(agentData) + 0x10;
+    return static_cast<char*>(agentData) + AGENT1N_END_OFFSET;
 }

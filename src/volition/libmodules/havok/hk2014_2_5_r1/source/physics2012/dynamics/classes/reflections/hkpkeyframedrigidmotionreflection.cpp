@@ -64,7 +64,7 @@ static const void* getVtablehkpKeyframedRigidMotion()
     ::new (u.buf) hkpKeyframedRigidMotion(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpKeyframedRigidMotion) == 288, "hkpKeyframedRigidMotion size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpKeyframedRigidMotion) == 288, "hkpKeyframedRigidMotion size");
 extern const hkTypeInfo hkpKeyframedRigidMotionTypeInfo;
 const hkTypeInfo hkpKeyframedRigidMotionTypeInfo(
     "hkpKeyframedRigidMotion",
@@ -124,7 +124,7 @@ static const void* getVtablehkpMaxSizeMotion()
     ::new (u.buf) hkpMaxSizeMotion(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpMaxSizeMotion) == 288, "hkpMaxSizeMotion size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpMaxSizeMotion) == 288, "hkpMaxSizeMotion size");
 extern const hkTypeInfo hkpMaxSizeMotionTypeInfo;
 const hkTypeInfo hkpMaxSizeMotionTypeInfo(
     "hkpMaxSizeMotion",

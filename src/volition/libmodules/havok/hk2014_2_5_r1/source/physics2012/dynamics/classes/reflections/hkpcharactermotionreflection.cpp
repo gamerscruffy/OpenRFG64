@@ -64,7 +64,7 @@ static const void* getVtablehkpCharacterMotion()
     ::new (u.buf) hkpCharacterMotion(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpCharacterMotion) == 288, "hkpCharacterMotion size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpCharacterMotion) == 288, "hkpCharacterMotion size");
 extern const hkTypeInfo hkpCharacterMotionTypeInfo;
 const hkTypeInfo hkpCharacterMotionTypeInfo(
     "hkpCharacterMotion",

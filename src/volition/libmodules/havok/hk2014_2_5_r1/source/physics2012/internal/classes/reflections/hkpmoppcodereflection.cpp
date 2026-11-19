@@ -52,7 +52,7 @@ static void cleanupLoadedObjecthkpMoppCodeCodeInfo(void* p)
 {
     static_cast<hkpMoppCode::CodeInfo*>(p)->~CodeInfo();
 }
-static_assert(sizeof(hkpMoppCode::CodeInfo) == 16, "hkpMoppCode::CodeInfo size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpMoppCode::CodeInfo) == 16, "hkpMoppCode::CodeInfo size");
 extern const hkTypeInfo hkpMoppCodeCodeInfoTypeInfo;
 const hkTypeInfo hkpMoppCodeCodeInfoTypeInfo(
     "hkpMoppCodeCodeInfo",
@@ -142,7 +142,7 @@ static const void* getVtablehkpMoppCode()
     ::new (u.buf) hkpMoppCode(f);
     return u.ptr;
 }
-static_assert(sizeof(hkpMoppCode) == 48, "hkpMoppCode size");
+OPENRFG_SIZE_ASSERT(sizeof(hkpMoppCode) == 48, "hkpMoppCode size");
 extern const hkTypeInfo hkpMoppCodeTypeInfo;
 const hkTypeInfo hkpMoppCodeTypeInfo(
     "hkpMoppCode",

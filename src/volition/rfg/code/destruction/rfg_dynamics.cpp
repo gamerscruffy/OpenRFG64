@@ -3042,6 +3042,7 @@ static rfg_subpiece* rfg_dyn_apply_stress_to_subpiece(rfg_mover* movep, const in
     {
         return nullptr;
     }
+    if (subpiece_index < 0 || shape->parent == nullptr || subpiece_index >= shape->parent->num_objects) { return nullptr; } // OpenRFG: bad subpiece index crashed here in Oasis
     rfg_subpiece* sp = &shape->get_object_buffer()[subpiece_index];
     if (sp->get_destroyable() != shape)
     {

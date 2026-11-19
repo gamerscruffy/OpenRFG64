@@ -45,7 +45,7 @@ struct mover_fader
     mover_fader* next; // 0xCC
     mover_fader* prev; // 0xD0
 };
-static_assert(sizeof(mover_fader) == 0xD4, "mover_fader");
+OPENRFG_SIZE_ASSERT(sizeof(mover_fader) == 0xD4, "mover_fader");
 
 // ---- file-static globals
 static data_hash_table<unsigned int,mover_fader*,&hash_uint,255,unsigned char> Fader_hash(false); // 0x01695658
