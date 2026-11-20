@@ -325,6 +325,8 @@ void game_options_load_ini_file_into_cache()
 
 #else // OPENRFG_AUDIO
 
+extern int Ambient_range_pct; // OpenRFG: defined in the non-audio half above (read from the ini there, written below)
+
 #include "volition/rfg/code/gamewide/game_options.h"
 #include "volition/audio_lib/code/audiolib_api.h"
 #include "volition/rfg/code/camera/camera_first_person.h"
