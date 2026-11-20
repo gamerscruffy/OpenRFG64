@@ -25,10 +25,22 @@
 #include "keen/base/filesystem.hpp"
 #include "keen/base/filesystemtypes.hpp"
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGSTRD
+
+#include <chrono> // DBGSTRD
 #include <stdlib.h>
 #include <string.h>
 
 keen::FileSystem* g_pFileSystem; // 0x01CDBA14
+
+// DBGSTRD: times a call and adds the microseconds to acc.
+#define KCF_TIMED(acc, expr)                                                                                          \
+    ([&]() {                                                                                                          \
+        const auto t0_ = std::chrono::steady_clock::now();                                                            \
+        auto r_ = (expr);                                                                                             \
+        acc += (long)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0_).count(); \
+        return r_;                                                                                                    \
+    }())
 
 // ---- file-static globals
 static object_pool<cf_keen_open_file, 256, 1> Cfile_keen_open_files; // 0x01D3BEE0
@@ -119,6 +131,8 @@ unsigned int keen_cf_read_compressed_chain(unsigned char** dest_buf, unsigned in
     {
         return 0;
     }
+    long dbg_read_us = 0;
+    long dbg_inflate_us = 0;
     virtual_mempool pool;
     pool.init(Vlib_temp_page_pool, "cf_read_pool", 0xC0000, false, 0x1000);
     unsigned char* read_buffers[2];
@@ -140,8 +154,8 @@ unsigned int keen_cf_read_compressed_chain(unsigned char** dest_buf, unsigned in
 
     if (total_compressed_bytes_to_read < 0x1000)
     {
-        keen_cf_read_uncompressed(read_buffers[0], total_compressed_bytes_to_read, cfp, cur_file_pos);
-        total_read = cf_decompress_chain(total_compressed_bytes_to_read, read_buffers[0], decompressor, dest_buf, num_bytes_to_read, dest_buf_pos, dest_buf_index, dest_buf_read_remaining, inflate_buffer, 0x80000);
+        KCF_TIMED(dbg_read_us, keen_cf_read_uncompressed(read_buffers[0], total_compressed_bytes_to_read, cfp, cur_file_pos));
+        total_read = KCF_TIMED(dbg_inflate_us, cf_decompress_chain(total_compressed_bytes_to_read, read_buffers[0], decompressor, dest_buf, num_bytes_to_read, dest_buf_pos, dest_buf_index, dest_buf_read_remaining, inflate_buffer, 0x80000));
         cfp->m_async_num_bytes_read += total_read;
         decompressor->decompress_finish();
         cf_release_decompressor(decompressor);
@@ -167,7 +181,7 @@ unsigned int keen_cf_read_compressed_chain(unsigned char** dest_buf, unsigned in
     {
         unsigned int read_size = block_size <= total_compressed_bytes_to_read ? block_size : total_compressed_bytes_to_read;
         unsigned int last_size = 0xFFFFFFFF;
-        keen_cf_read_uncompressed(read_buffers[0], read_size, cfp, cur_file_pos);
+        KCF_TIMED(dbg_read_us, keen_cf_read_uncompressed(read_buffers[0], read_size, cfp, cur_file_pos));
         aborted = (cfp->m_flags & 8) != 0;
         if (!aborted)
         {
@@ -195,13 +209,13 @@ unsigned int keen_cf_read_compressed_chain(unsigned char** dest_buf, unsigned in
                     aborted = true;
                     break;
                 }
-                keen_cf_read_uncompressed(read_buffers[current], read_size, cfp, cur_file_pos);
+                KCF_TIMED(dbg_read_us, keen_cf_read_uncompressed(read_buffers[current], read_size, cfp, cur_file_pos));
                 if ((cfp->m_flags & 8) != 0)
                 {
                     aborted = true;
                     break;
                 }
-                const unsigned int num_inflated = cf_decompress_chain(previous_size, read_buffers[previous], decompressor, dest_buf, num_bytes_to_read, dest_buf_pos, dest_buf_index, dest_buf_read_remaining, inflate_buffer, 0x80000);
+                const unsigned int num_inflated = KCF_TIMED(dbg_inflate_us, cf_decompress_chain(previous_size, read_buffers[previous], decompressor, dest_buf, num_bytes_to_read, dest_buf_pos, dest_buf_index, dest_buf_read_remaining, inflate_buffer, 0x80000));
                 total_read += num_inflated;
                 cfp->m_async_num_bytes_read += num_inflated;
                 cur_file_pos += read_size;
@@ -211,7 +225,7 @@ unsigned int keen_cf_read_compressed_chain(unsigned char** dest_buf, unsigned in
             while (remaining != 0);
             if (!aborted)
             {
-                const unsigned int num_inflated = cf_decompress_chain(last_size, read_buffers[previous], decompressor, dest_buf, num_bytes_to_read, dest_buf_pos, dest_buf_index, dest_buf_read_remaining, inflate_buffer, 0x80000);
+                const unsigned int num_inflated = KCF_TIMED(dbg_inflate_us, cf_decompress_chain(last_size, read_buffers[previous], decompressor, dest_buf, num_bytes_to_read, dest_buf_pos, dest_buf_index, dest_buf_read_remaining, inflate_buffer, 0x80000));
                 total_read += num_inflated;
                 cfp->m_async_num_bytes_read += num_inflated;
             }
@@ -223,6 +237,10 @@ unsigned int keen_cf_read_compressed_chain(unsigned char** dest_buf, unsigned in
     }
     decompressor->decompress_finish();
     cf_release_decompressor(decompressor);
+    if (Game_trace_file != nullptr && dbg_read_us + dbg_inflate_us >= 30000)
+    {
+        GAME_TRACE("strd", "compressed=%uKB inflated=%uKB disk_read=%ldms inflate=%ldms", total_compressed_bytes_to_read / 1024, total_read / 1024, dbg_read_us / 1000, dbg_inflate_us / 1000);
+    }
     return total_read;
 }
 
