@@ -5,6 +5,9 @@
 // particle and corona drawing through keen's immediate vertex buffer. The fillers are in rl_particle_filler_*.cpp, the
 // deferred passes in rl_particle_renderer_deferred.cpp.
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGPART
+extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int); // DBGPART2
+static bool dbg_part_key(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; } // DBGPART2
 #include "volition/render_lib/code/rl_particle_renderer.h"
 
 #include "volition/render_lib/code/rl_batched_pass.h"
@@ -750,6 +753,14 @@ void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera
     {
         return;
     }
+#if 0 // DBGPART2 disabled (numpad hide keys)
+    { // DBGPART2: hold a numpad key to hide one kind of particle (find which kind streaks)
+        const rl_particle_base::render_type dbg_type = renderable_p->get_particle_type();
+        const bool dbg_iter = is_iterative;
+        if ((dbg_type == rl_particle_base::RENDER_TYPE_ORIENTED && dbg_part_key(0x61)) || (!dbg_iter && dbg_part_key(0x62)) || (dbg_iter && dbg_part_key(0x63)) || (dbg_type == rl_particle_base::RENDER_TYPE_BILLBOARD && dbg_part_key(0x64)) || (dbg_type == rl_particle_base::RENDER_TYPE_RIBBON && dbg_part_key(0x65)) || (dbg_part_key(0x66) && instance_p->get_local_emission_position().x == instance_p->get_local_emission_position().x && renderable_p->get_local_space_emission()))
+            return;
+    }
+#endif // DBGPART2 disabled
     const bool has_alternate_view = instance_p->get_has_alternate_view();
     if (!is_iterative)
     {
@@ -943,6 +954,56 @@ void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera
             break;
         }
         draw_particles(renderer, is_iterative, render_type, num_verts, num_prims);
+#if 0 // DBGPART disabled (debug trace)
+        { // DBGPART: sample of what is drawn (only with --game-trace)
+            static int calls_ = 0; static int logged_ = 0;
+            static int pr_ = 0; static int prc_ = 0;
+            if (!is_iterative && render_type == rl_particle_base::RENDER_TYPE_RIBBON && pr_ < 100000000 && (prc_++ % 60) == 0)
+            {
+                const pool_list<rl_particle_parametric>& pl = instance_p->get_particle_parametric_list();
+                const int n = pl.size();
+                float maxd = 0.0f; int maxi = -1;
+                for (int k = 1; k < n; k++)
+                {
+                    const vector d(pl[k].position.x - pl[k - 1].position.x, pl[k].position.y - pl[k - 1].position.y, pl[k].position.z - pl[k - 1].position.z);
+                    const float dd = d.x * d.x + d.y * d.y + d.z * d.z;
+                    if (dd > maxd) { maxd = dd; maxi = k; }
+                }
+                pr_++;
+                GAME_TRACE("part", "PRIB n=%d numv=%u prims=%u maxgap2=%.2f at=%d elapsed=%.3f local=%d tc0=%.3f life0=%.3f emit0=%d tcN=%.3f lifeN=%.3f emitN=%d", n, num_verts, num_prims, maxd, maxi, instance_p->get_current_elapsed_time(), (int)instance_p->get_is_local_space(), n > 0 ? pl[0].time_created : 0.0f, n > 0 ? pl[0].lifetime : 0.0f, n > 0 ? pl[0].emit_number : 0, n > 0 ? pl[n - 1].time_created : 0.0f, n > 0 ? pl[n - 1].lifetime : 0.0f, n > 0 ? pl[n - 1].emit_number : 0);
+                if (n >= 2) GAME_TRACE("part", "PRIP p0=%.1f,%.1f,%.1f p1=%.1f,%.1f,%.1f rnd0=%.2f,%.2f,%.2f rnd1=%.2f,%.2f,%.2f", pl[0].position.x, pl[0].position.y, pl[0].position.z, pl[1].position.x, pl[1].position.y, pl[1].position.z, pl[0].random.x, pl[0].random.y, pl[0].random.z, pl[1].random.x, pl[1].random.y, pl[1].random.z); // DBGPART
+            }
+            static int anom_ = 0;
+            if (is_iterative && anom_ < 400)
+            {
+                for (int k = 0; k < instance_p->get_particle_iterative_list().size(); k++)
+                {
+                    const rl_particle_iterative& q = instance_p->get_particle_iterative_list()[k];
+                    const float sp2 = q.velocity.x * q.velocity.x + q.velocity.y * q.velocity.y + q.velocity.z * q.velocity.z;
+                    const bool bad = !(sp2 < 2500.0f) || !(q.current_size < 60.0f) || !(q.current_length < 60.0f) || !(q.position.x > -1e5f && q.position.x < 1e5f && q.position.y > -1e5f && q.position.y < 1e5f && q.position.z > -1e5f && q.position.z < 1e5f) || q.get_particle_tail_list_size() > 64;
+                    if (bad)
+                    {
+                        anom_++;
+                        GAME_TRACE("part", "ANOM type=%d k=%d/%d pos=%.2f,%.2f,%.2f vel=%.2f,%.2f,%.2f size=%.3f len=%.3f ntail=%d stride=%u", (int)render_type, k, (int)instance_p->get_particle_iterative_list().size(), q.position.x, q.position.y, q.position.z, q.velocity.x, q.velocity.y, q.velocity.z, q.current_size, q.current_length, q.get_particle_tail_list_size(), stride);
+                        break;
+                    }
+                }
+            }
+            if ((calls_++ % 60) == 0 && logged_ < 2000)
+            {
+                logged_++;
+                GAME_TRACE("part", "type=%d iter=%d count=%d numv=%u verts=%u prims=%u stride=%u soft=%d tails=%d", (int)render_type, (int)is_iterative, count, num_vertices, num_verts, num_prims, stride, (int)((flags & rl_particle_material_data::MATERIAL_FLAG_SOFT_RENDER) != 0), is_iterative ? instance_p->get_tail_spawn_count() : 0);
+                if (is_iterative)
+                {
+                    for (int k = 0; k < 3 && k < instance_p->get_particle_iterative_list().size(); k++)
+                    {
+                        const rl_particle_iterative& q = instance_p->get_particle_iterative_list()[k];
+                        GAME_TRACE("part", "  p%d pos=%.2f,%.2f,%.2f vel=%.2f,%.2f,%.2f size=%.3f len=%.3f rot=%.3f col=%.2f,%.2f,%.2f,%.2f ntail=%d", k, q.position.x, q.position.y, q.position.z, q.velocity.x, q.velocity.y, q.velocity.z, q.current_size, q.current_length, q.rotation_angle, q.current_color.red, q.current_color.green, q.current_color.blue, q.current_color.alpha, q.get_particle_tail_list_size());
+                    }
+                }
+            }
+        }
+#endif // DBGPART disabled
     }
     instance_p->get_particle_parametric_list().clear();
     instance_p->get_particle_iterative_list().clear();
