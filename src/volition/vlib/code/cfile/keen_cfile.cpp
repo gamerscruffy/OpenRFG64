@@ -213,7 +213,25 @@ static bool keen_cf_read_compressed_fast(unsigned char** dest_buf, unsigned int 
         size_t out_avail = direct ? (size_t)num_bytes_to_read[0] : (size_t)out_total;
         size_t actual_out = 0;
         libdeflate_decompressor* ld = libdeflate_alloc_decompressor();
-        const bool ok = ld != nullptr && libdeflate_zlib_decompress(ld, comp, total_compressed, out, out_avail, &actual_out) == LIBDEFLATE_SUCCESS;
+        int rc = -1;
+        int rc_raw = -1;
+        bool ok = false;
+        if (ld != nullptr)
+        {
+            rc = (int)libdeflate_zlib_decompress(ld, comp, total_compressed, out, out_avail, &actual_out);
+            ok = rc == LIBDEFLATE_SUCCESS;
+            if (!ok && (comp[0] & 0x0F) == 8)
+            {
+                // Streams that end without a valid zlib trailer: inflate the raw deflate data after the 2 byte header.
+                actual_out = 0;
+                rc_raw = (int)libdeflate_deflate_decompress(ld, comp + 2, total_compressed - 2, out, out_avail, &actual_out);
+                ok = rc_raw == LIBDEFLATE_SUCCESS;
+            }
+            if (!ok && Game_trace_file != nullptr)
+            {
+                GAME_TRACE("strf", "libdeflate failed zlib_rc=%d raw_rc=%d in=%u out_expected=%llu hdr=%02x%02x tail=%02x%02x%02x%02x", rc, rc_raw, total_compressed, (unsigned long long)out_total, comp[0], comp[1], comp[total_compressed - 4], comp[total_compressed - 3], comp[total_compressed - 2], comp[total_compressed - 1]);
+            }
+        }
         if (ld != nullptr)
         {
             libdeflate_free_decompressor(ld);
