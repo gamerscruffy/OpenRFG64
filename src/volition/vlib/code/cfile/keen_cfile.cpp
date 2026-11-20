@@ -28,6 +28,16 @@
 #include "volition/rfg/code/gamewide/game_trace.h" // DBGSTRD
 
 #include <chrono> // DBGSTRD
+#ifdef OPENRFG_X64
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include "libdeflate.h"
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -124,13 +134,170 @@ void keen_cf_reset_async_abort(keen_cf_packfile_handle* cfp)
     cfp->file_handle->m_flags &= ~8u;
 }
 
+#ifdef OPENRFG_X64
+// Fast path (OpenRFG addition): reads the whole compressed entry into one buffer and inflates it with libdeflate
+// (about 2-3x faster than zlib on streamed containers, which spent most of the load time inflating). Needs the
+// number of chain entries so the output size is known; falls back to the zlib path below whenever it cannot be used.
+// Returns true when the read was handled (total_read holds the result, 0 on abort), false to use the original path.
+static bool keen_cf_read_compressed_fast(unsigned char** dest_buf, unsigned int total_compressed, unsigned int* num_bytes_to_read, unsigned int chain_count, cf_keen_open_file* cfp, uint64_t cur_file_pos, unsigned int& total_read_out)
+{
+    if (chain_count == 0 || total_compressed < 0x40000 || (cfp->m_flags & 8) != 0)
+    {
+        return false;
+    }
+    uint64_t out_total = 0;
+    for (unsigned int i = 0; i < chain_count; ++i)
+    {
+        out_total += num_bytes_to_read[i];
+    }
+    if (out_total == 0 || out_total > 0x60000000ull)
+    {
+        return false;
+    }
+    const bool direct = chain_count == 1 && dest_buf[0] != nullptr;
+
+    const auto t0 = std::chrono::steady_clock::now();
+    unsigned char* comp = (unsigned char*)VirtualAlloc(nullptr, (SIZE_T)total_compressed + 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    unsigned char* temp = nullptr;
+    if (comp != nullptr && !direct)
+    {
+        temp = (unsigned char*)VirtualAlloc(nullptr, (SIZE_T)out_total, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    }
+    if (comp == nullptr || (!direct && temp == nullptr))
+    {
+        if (comp != nullptr)
+        {
+            VirtualFree(comp, 0, MEM_RELEASE);
+        }
+        return false;
+    }
+
+    // Read the compressed data in 1 MB blocks (abort checked between blocks, last read padded for async files).
+    bool aborted = false;
+    unsigned int done = 0;
+    while (done < total_compressed)
+    {
+        unsigned int size = total_compressed - done;
+        if (size > 0x100000)
+        {
+            size = 0x100000;
+        }
+        unsigned int read_size = size;
+        if (done + size == total_compressed && (cfp->m_flags & 1) != 0)
+        {
+            const unsigned int pad = (read_size & 0x7FF) == 0 ? 0 : 0x800 - (read_size & 0x7FF);
+            read_size += pad;
+            cfp->m_async_pad_bytes = pad;
+        }
+        if ((cfp->m_flags & 8) != 0)
+        {
+            aborted = true;
+            break;
+        }
+        keen_cf_read_uncompressed(comp + done, read_size, cfp, cur_file_pos);
+        if ((cfp->m_flags & 8) != 0)
+        {
+            aborted = true;
+            break;
+        }
+        cur_file_pos += read_size;
+        done += size;
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+
+    unsigned int total_read = 0;
+    const char* path = "libdeflate";
+    if (!aborted)
+    {
+        unsigned char* out = direct ? dest_buf[0] : temp;
+        size_t out_avail = direct ? (size_t)num_bytes_to_read[0] : (size_t)out_total;
+        size_t actual_out = 0;
+        libdeflate_decompressor* ld = libdeflate_alloc_decompressor();
+        const bool ok = ld != nullptr && libdeflate_zlib_decompress(ld, comp, total_compressed, out, out_avail, &actual_out) == LIBDEFLATE_SUCCESS;
+        if (ld != nullptr)
+        {
+            libdeflate_free_decompressor(ld);
+        }
+        if (ok)
+        {
+            if (!direct)
+            {
+                size_t off = 0;
+                for (unsigned int i = 0; i < chain_count && off < actual_out; ++i)
+                {
+                    size_t n = num_bytes_to_read[i];
+                    if (n > actual_out - off)
+                    {
+                        n = actual_out - off;
+                    }
+                    if (dest_buf[i] != nullptr)
+                    {
+                        memcpy(dest_buf[i], temp + off, n);
+                    }
+                    off += n;
+                }
+            }
+            total_read = (unsigned int)actual_out;
+        }
+        else
+        {
+            // libdeflate refused the stream (or the output did not fit): redo it with zlib from the buffered data.
+            path = "zlib-fallback";
+            zlib_stream* decompressor = cf_alloc_decompressor();
+            if (decompressor != nullptr)
+            {
+                virtual_mempool pool;
+                pool.init(Vlib_temp_page_pool, "cf_read_pool", 0xC0000, false, 0x1000);
+                unsigned char* inflate_buffer = (unsigned char*)pool.alloc(0x80000, 0);
+                unsigned int dest_buf_read_remaining = num_bytes_to_read[0];
+                unsigned char* dest_buf_pos = dest_buf[0];
+                unsigned int dest_buf_index = 0;
+                decompressor->decompress_init();
+                total_read = cf_decompress_chain(total_compressed, comp, decompressor, dest_buf, num_bytes_to_read, dest_buf_pos, dest_buf_index, dest_buf_read_remaining, inflate_buffer, 0x80000);
+                decompressor->decompress_finish();
+                cf_release_decompressor(decompressor);
+            }
+        }
+        cfp->m_async_num_bytes_read += total_read;
+    }
+    const auto t2 = std::chrono::steady_clock::now();
+    VirtualFree(comp, 0, MEM_RELEASE);
+    if (temp != nullptr)
+    {
+        VirtualFree(temp, 0, MEM_RELEASE);
+    }
+    if (Game_trace_file != nullptr)
+    {
+        const auto t3 = std::chrono::steady_clock::now();
+        const long read_ms = (long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        const long inflate_ms = (long)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+        const long free_ms = (long)std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+        if (read_ms + inflate_ms + free_ms >= 30)
+        {
+            GAME_TRACE("strf", "%s compressed=%uKB inflated=%uKB alloc+read=%ldms inflate+scatter=%ldms free=%ldms", path, total_compressed / 1024, total_read / 1024, read_ms, inflate_ms, free_ms);
+        }
+    }
+    total_read_out = total_read;
+    return true;
+}
+#endif
+
 // 0x005B64A0 (:165)
-unsigned int keen_cf_read_compressed_chain(unsigned char** dest_buf, unsigned int total_compressed_bytes_to_read, unsigned int* num_bytes_to_read, cf_keen_open_file* cfp, cf_io_media_types media_type, uint64_t cur_file_pos)
+unsigned int keen_cf_read_compressed_chain(unsigned char** dest_buf, unsigned int total_compressed_bytes_to_read, unsigned int* num_bytes_to_read, cf_keen_open_file* cfp, cf_io_media_types media_type, uint64_t cur_file_pos, unsigned int chain_count)
 {
     if (media_type != CF_IO_MEDIA_HDD && media_type != CF_IO_MEDIA_DVD)
     {
         return 0;
     }
+#ifdef OPENRFG_X64
+    {
+        unsigned int fast_result = 0;
+        if (keen_cf_read_compressed_fast(dest_buf, total_compressed_bytes_to_read, num_bytes_to_read, chain_count, cfp, cur_file_pos, fast_result))
+        {
+            return fast_result;
+        }
+    }
+#endif
     long dbg_read_us = 0;
     long dbg_inflate_us = 0;
     virtual_mempool pool;
