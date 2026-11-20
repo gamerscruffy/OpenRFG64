@@ -135,6 +135,30 @@ void keen_cf_reset_async_abort(keen_cf_packfile_handle* cfp)
 }
 
 #ifdef OPENRFG_X64
+// Grow-only cached buffers (per thread, i.e. the stream device thread) so repeated big containers reuse already-faulted-in memory.
+struct keen_fast_buf { unsigned char* ptr = nullptr; SIZE_T cap = 0; };
+static thread_local keen_fast_buf t_fast_comp;
+static thread_local keen_fast_buf t_fast_temp;
+static unsigned char* keen_fast_buf_get(keen_fast_buf& b, SIZE_T size)
+{
+    if (b.cap >= size)
+    {
+        return b.ptr;
+    }
+    if (b.ptr != nullptr)
+    {
+        VirtualFree(b.ptr, 0, MEM_RELEASE);
+        b.ptr = nullptr;
+        b.cap = 0;
+    }
+    b.ptr = (unsigned char*)VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (b.ptr != nullptr)
+    {
+        b.cap = size;
+    }
+    return b.ptr;
+}
+
 // Fast path (OpenRFG addition): reads the whole compressed entry into one buffer and inflates it with libdeflate
 // (about 2-3x faster than zlib on streamed containers, which spent most of the load time inflating). Needs the
 // number of chain entries so the output size is known; falls back to the zlib path below whenever it cannot be used.
@@ -157,18 +181,14 @@ static bool keen_cf_read_compressed_fast(unsigned char** dest_buf, unsigned int 
     const bool direct = chain_count == 1 && dest_buf[0] != nullptr;
 
     const auto t0 = std::chrono::steady_clock::now();
-    unsigned char* comp = (unsigned char*)VirtualAlloc(nullptr, (SIZE_T)total_compressed + 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    unsigned char* comp = keen_fast_buf_get(t_fast_comp, (SIZE_T)total_compressed + 0x1000);
     unsigned char* temp = nullptr;
     if (comp != nullptr && !direct)
     {
-        temp = (unsigned char*)VirtualAlloc(nullptr, (SIZE_T)out_total, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        temp = keen_fast_buf_get(t_fast_temp, (SIZE_T)out_total);
     }
     if (comp == nullptr || (!direct && temp == nullptr))
     {
-        if (comp != nullptr)
-        {
-            VirtualFree(comp, 0, MEM_RELEASE);
-        }
         return false;
     }
 
@@ -281,11 +301,6 @@ static bool keen_cf_read_compressed_fast(unsigned char** dest_buf, unsigned int 
         cfp->m_async_num_bytes_read += total_read;
     }
     const auto t2 = std::chrono::steady_clock::now();
-    VirtualFree(comp, 0, MEM_RELEASE);
-    if (temp != nullptr)
-    {
-        VirtualFree(temp, 0, MEM_RELEASE);
-    }
     if (Game_trace_file != nullptr)
     {
         const auto t3 = std::chrono::steady_clock::now();
