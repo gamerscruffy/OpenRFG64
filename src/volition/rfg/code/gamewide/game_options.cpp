@@ -288,9 +288,9 @@ void game_options_ini_file_read_writer<0>::read_or_write_ini_file(keen::FilePath
     // Original: the ini file has the inverse of camera_shake.
     n.camera_shake = n.camera_shake == 0;
     n.camera_shake = !keen::readIniFileBool(path, "game", "camera_shake", n.camera_shake != 0);
-    // OpenRFG: ambient spawn/despawn range in percent (100-300).
+    // OpenRFG: ambient spawn/despawn range in percent (100-600).
     Ambient_range_pct = keen::readIniFileInt(path, "game", "ambient_range_pct", Ambient_range_pct);
-    if (Ambient_range_pct < 100 || Ambient_range_pct > 300)
+    if (Ambient_range_pct < 100 || Ambient_range_pct > 600)
     {
         Ambient_range_pct = 100;
     }
