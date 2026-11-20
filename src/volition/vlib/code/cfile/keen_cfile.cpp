@@ -218,13 +218,15 @@ static bool keen_cf_read_compressed_fast(unsigned char** dest_buf, unsigned int 
         bool ok = false;
         if (ld != nullptr)
         {
-            rc = (int)libdeflate_zlib_decompress(ld, comp, total_compressed, out, out_avail, &actual_out);
-            ok = rc == LIBDEFLATE_SUCCESS;
-            if (!ok && (comp[0] & 0x0F) == 8)
+            // The streams end with a sync flush (00 00 FF FF) and no final block or checksum, which libdeflate
+            // rejects. After a sync flush the data is byte aligned, so an empty final block (03 00) is appended and
+            // the raw deflate data after the 2 byte zlib header is inflated.
+            if ((comp[0] & 0x0F) == 8 && (comp[1] & 0x20) == 0)
             {
-                // Streams that end without a valid zlib trailer: inflate the raw deflate data after the 2 byte header.
+                comp[total_compressed] = 0x03;
+                comp[total_compressed + 1] = 0x00;
                 actual_out = 0;
-                rc_raw = (int)libdeflate_deflate_decompress(ld, comp + 2, total_compressed - 2, out, out_avail, &actual_out);
+                rc_raw = (int)libdeflate_deflate_decompress(ld, comp + 2, (size_t)total_compressed - 2 + 2, out, out_avail, &actual_out);
                 ok = rc_raw == LIBDEFLATE_SUCCESS;
             }
             if (!ok && Game_trace_file != nullptr)
