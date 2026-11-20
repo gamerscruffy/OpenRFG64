@@ -992,7 +992,7 @@ void stream2_container::get_structure_size(unsigned int& cpu_size, bool count_pr
     if ((flags & 0x100) == 0)
     {
         cpu_size = (unsigned int)align_up((int)(cpu_size + pf_chain_size * 4), 4);
-        cpu_size = (unsigned int)align_up((int)(cpu_size + 4 + pf_chain_size * 4), 4);
+        cpu_size = (unsigned int)align_up((int)(cpu_size + 8 + (pf_chain_size + 1) * sizeof(void*)), 4); // x64: read_dest is void*[chain+1] (8-aligned)
     }
     if (cdef->mode == SCM_CONTAINER)
     {
