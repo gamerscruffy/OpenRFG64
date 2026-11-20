@@ -23,6 +23,7 @@
 #include "volition/render_lib/code/rl_mesh_data.h"
 #include "volition/render_lib/code/rl_metrics.h"
 #include "volition/render_lib/code/rl_planar_decal.h"
+#include "volition/render_lib/code/rl_small_array.h"
 #include "volition/render_lib/code/rl_render_lib.h"
 #include "volition/render_lib/code/rl_renderer.h"
 #include "volition/render_lib/code/rl_renderer_core.h"
@@ -231,7 +232,7 @@ void rl_mesh_instance::get_material_block_counts(int* buffer, const rl_camera* p
 void rl_mesh_instance::add_material_stats_to_batch(rl_batched_pass* pass_p, const rl_camera* pCamera)
 {
     const int num_materials = m_mat_map->get_num_materials();
-    std::vector<int> counts(num_materials > 0 ? num_materials : 0, 0);
+    rl_small_array<int> counts(num_materials, 0);
     get_material_block_counts(counts.data(), pCamera);
     const unsigned int vis_flags = get_vis_pass_flags();
     for (int i = 0; i < m_mat_map->get_num_materials(); i++)
@@ -309,7 +310,7 @@ void rl_mesh_instance::add_to_batch(rl_batched_pass* pass_p, const rl_camera* pC
     rl_scene* scene_p = get_scene();
     const unsigned int non_shadow_flags = scene_p->get_visibility_manager()->get_non_shadow_vis_flags() & vis_flags;
     const int num_materials = m_mat_map->get_num_materials();
-    std::vector<int> counts(num_materials > 0 ? num_materials : 0, 0);
+    rl_small_array<int> counts(num_materials, 0);
     get_material_block_counts(counts.data(), pCamera);
     vector render_offset;
     scene_p->get_render_offset(render_offset);
@@ -350,8 +351,8 @@ void rl_mesh_instance::add_to_batch(rl_batched_pass* pass_p, const rl_camera* pC
             transform_index = 0xFFFF;
         }
         const rl_mesh* mesh_p = (const rl_mesh*)m_renderable_p;
-        std::vector<rl_batched_instance*> slots(num_materials > 0 ? num_materials : 0, nullptr);
-        std::vector<int> used(num_materials > 0 ? num_materials : 0, 0);
+        rl_small_array<rl_batched_instance*> slots(num_materials, nullptr);
+        rl_small_array<int> used(num_materials, 0);
         for (int i = 0; i < m_mat_map->get_num_materials(); i++)
         {
             if (counts[i] != 0)
