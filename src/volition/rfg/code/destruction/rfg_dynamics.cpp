@@ -20,6 +20,7 @@
 
 #include "volition/rfg/code/destruction/rfg_dynamics.h"
 
+#include "keen/base/trace.hpp"
 #include "volition/rfg/code/camera/camera_shake.h"
 #include "volition/rfg/code/camera/rfg_camera.h"
 #include "volition/render_lib/code/rl_color.h"
@@ -4107,6 +4108,26 @@ void rfg_dyn_do_frame_pre()
     for (int i = 0; i < num_movers; i++)
     {
         rfg_mover* rm = World.get_object<rfg_mover>(i);
+#ifdef OPENRFG_X64
+        // is_loaded() returns the raw flag byte but get_data() wants exactly 1; a byte holding anything else (seen at
+        // 15x15 after long freecam flights) means the mover is uninitialized, stale or overwritten. Skip it and log it.
+        if (rm == nullptr)
+        {
+            continue;
+        }
+        const unsigned char loaded_byte = *((const volatile unsigned char*)&rm->rdd + sizeof(rfg_mover::resource_dependent_data));
+        if (loaded_byte > 1)
+        {
+            static int reported = 0;
+            if (reported < 16)
+            {
+                reported++;
+                keen::debug::nativePrintArgs("rfg_dyn_do_frame_pre failed: mover %p (list %d of %d, handle 0x%08X, type %d, stub %d) has rdd loaded byte 0x%02X\n",
+                    rm, i, num_movers, rm->handle, (int)rm->obj_type, (int)rm->obj_flags.stub, (unsigned int)loaded_byte);
+            }
+            continue;
+        }
+#endif
         rfg_destroyable_shape* shape = rm->rdd.is_loaded() ? rm->rdd.get_data()->shape : nullptr;
         if (shape == nullptr)
         {
