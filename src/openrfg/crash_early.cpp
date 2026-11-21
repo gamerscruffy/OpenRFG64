@@ -2,6 +2,7 @@
 // started) with the function, file and line of the first access violations, including ones before WinMain.
 #include <windows.h>
 #include <dbghelp.h>
+#include <tlhelp32.h>
 #include <stdio.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -364,6 +365,69 @@ namespace
     HANDLE Main_thread = nullptr;
     volatile LONG Watchdog_started = 0;
 
+#ifdef _M_X64
+    // On the first HANG, the thread rfg_do_frame runs on is often only waiting for another thread (the frame handshake),
+    // so every other thread's stack is written too, one at a time, named when the thread has a description.
+    void report_other_threads()
+    {
+        typedef HRESULT(WINAPI * get_description_fn)(HANDLE, PWSTR*);
+        const get_description_fn get_description = (get_description_fn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetThreadDescription");
+        const DWORD pid = GetCurrentProcessId();
+        const DWORD self = GetCurrentThreadId();
+        const DWORD main_id = GetThreadId(Main_thread);
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snapshot == INVALID_HANDLE_VALUE)
+        {
+            return;
+        }
+        THREADENTRY32 entry;
+        entry.dwSize = sizeof(entry);
+        int count = 0;
+        for (BOOL ok = Thread32First(snapshot, &entry); ok && count < 64; ok = Thread32Next(snapshot, &entry))
+        {
+            if (entry.th32OwnerProcessID != pid || entry.th32ThreadID == self || entry.th32ThreadID == main_id)
+            {
+                continue;
+            }
+            HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
+            if (thread == nullptr)
+            {
+                continue;
+            }
+            char name[128] = "";
+            PWSTR wide = nullptr;
+            if (get_description != nullptr && SUCCEEDED(get_description(thread, &wide)) && wide != nullptr)
+            {
+                WideCharToMultiByte(CP_UTF8, 0, wide, -1, name, sizeof(name), nullptr, nullptr);
+                LocalFree(wide);
+            }
+            char title[200];
+            snprintf(title, sizeof(title), "HANG other thread %lu '%s'", entry.th32ThreadID, name);
+            if (SuspendThread(thread) != (DWORD)-1)
+            {
+                CONTEXT ctx;
+                memset(&ctx, 0, sizeof(ctx));
+                ctx.ContextFlags = CONTEXT_FULL;
+                if (GetThreadContext(thread, &ctx))
+                {
+                    EXCEPTION_RECORD rec;
+                    memset(&rec, 0, sizeof(rec));
+                    rec.ExceptionCode = 0xE0DB0002u;
+                    rec.ExceptionAddress = (PVOID)ctx.Rip;
+                    EXCEPTION_POINTERS ep;
+                    ep.ExceptionRecord = &rec;
+                    ep.ContextRecord = &ctx;
+                    report(&ep, title);
+                    ++count;
+                }
+                ResumeThread(thread);
+            }
+            CloseHandle(thread);
+        }
+        CloseHandle(snapshot);
+    }
+#endif
+
     DWORD WINAPI watchdog_proc(LPVOID)
     {
         LONG last = -1;
@@ -394,6 +458,12 @@ namespace
                 ++reports;
             }
             ResumeThread(Main_thread);
+#ifdef _M_X64
+            if (reports == 1)
+            {
+                report_other_threads();
+            }
+#endif
             stalled = 3; // report again 3 seconds later
         }
     }
