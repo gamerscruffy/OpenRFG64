@@ -3170,7 +3170,13 @@ bool item::is_offscreen() const
         else
         {
             // Original: without a loaded resource this reads the mesh instance through a null data pointer.
+#ifdef OPENRFG_X64
+            // OpenRFG: an unloaded item (a dropped ambient prop) has no mesh instance; it is culled as a point.
+            mi = data != nullptr ? data->smesh_instance_p : nullptr;
+            center.zero();
+#else
             mi = data->smesh_instance_p;
+#endif
         }
         if (mi != nullptr)
         {
