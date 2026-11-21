@@ -51,6 +51,9 @@ float Eps_start = 0.0001f; // 0x016F1944
 static const float VFX_EFFECT_EPS_MAX = 0.02f; // Eps_start wraps past this
 static const float VFX_EFFECT_EPS_RESET = 0.0001f; // to this
 static const float VFX_EFFECT_WEIGHT_EPSILON = 0.0001f; // a weight within this of zero is "no wind"
+struct vfx_synthetic_light_profile;
+static const vfx_synthetic_light_profile* vfx_synthetic_light_profile_find(const char* name);
+
 static const float VFX_EFFECT_LIGHT_MIN_INTENSITY = 0.001f; // dimmer lights are hidden
 static const float VFX_EFFECT_EMIT_NODE_FIRST_DELTA = 0.0001f; // first update of a spawned emit-node emitter
 static const float VFX_EFFECT_ROD_DOT_LIMIT = 0.9999f; // a rod mesh facing the camera along its axis keeps its rotation
