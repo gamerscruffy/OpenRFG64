@@ -3805,6 +3805,77 @@ static void openrfg_log_mover_pieces(rfg_mover* rm, const char* what, int count,
     openrfg_log(text);
 }
 
+// OpenRFG (not in the binary): every ~5 s, a NEAR summary of the buildings whose bounds are within 40 m of the player,
+// and a NEARBAD line for each one that is not streamed, has no render instance, no Havok body, or a body outside the
+// Havok world (first 1500 lines). Finds pieces you can see through or fall through.
+static void openrfg_log_movers_near_player()
+{
+    static int s_frame = 0;
+    static int s_logged = 0;
+    if (++s_frame < 300 || s_logged >= 1500)
+    {
+        return;
+    }
+    s_frame = 0;
+    player* local = player_get_local_player();
+    if (local == nullptr)
+    {
+        return;
+    }
+    const vector p = local->pos;
+    int near_count = 0;
+    int bad_count = 0;
+    const int num = World.get_num_objects<rfg_mover>();
+    for (int i = 0; i < num; i++)
+    {
+        rfg_mover* rm = World.get_object<rfg_mover>(i);
+        if (rm == nullptr)
+        {
+            continue;
+        }
+        const float dx = p.x < rm->last_known_bmin.x ? rm->last_known_bmin.x - p.x : (p.x > rm->last_known_bmax.x ? p.x - rm->last_known_bmax.x : 0.0f);
+        const float dy = p.y < rm->last_known_bmin.y ? rm->last_known_bmin.y - p.y : (p.y > rm->last_known_bmax.y ? p.y - rm->last_known_bmax.y : 0.0f);
+        const float dz = p.z < rm->last_known_bmin.z ? rm->last_known_bmin.z - p.z : (p.z > rm->last_known_bmax.z ? p.z - rm->last_known_bmax.z : 0.0f);
+        const float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (dist > 40.0f)
+        {
+            continue;
+        }
+        near_count++;
+        const bool streamed = rm->obj_flags.streamed != 0;
+        const bool loaded = rm->rdd.is_loaded();
+        const auto* data = loaded ? rm->rdd.get_data() : nullptr;
+        const bool has_instance = data != nullptr && data->model_instance_p != nullptr;
+        hkpRigidBody* rb = havok_get_pointer_from_rigid_body_handle(rm->havok_handle);
+        const bool in_world = rb != nullptr && rb->getWorld() != nullptr;
+        if (streamed && loaded && has_instance && in_world)
+        {
+            continue;
+        }
+        bad_count++;
+        if (s_logged >= 1500)
+        {
+            continue;
+        }
+        s_logged++;
+        c_chunk_base* chunk = chunk_get_base_by_uid(rm->chunk_uid);
+        rfg_destroyable_shape* shape = loaded && data != nullptr ? data->shape : nullptr;
+        char text[360];
+        snprintf(text, sizeof(text), "NEARBAD %s at <%.0f, %.0f, %.0f> %.0f m: streamed %d, loaded %d, render instance %d, havok handle 0x%08X, body %d, in havok world %d, pieces %d of %d, mover flags 0x%08X, destroyed %d",
+            chunk != nullptr ? chunk->name : "(chunk not loaded)", rm->pos.x, rm->pos.y, rm->pos.z, dist, (int)streamed, (int)loaded,
+            (int)has_instance, rm->havok_handle, (int)(rb != nullptr), (int)in_world, shape != nullptr ? shape->num_existing_child_shapes : -1,
+            shape != nullptr && shape->parent != nullptr ? shape->parent->num_objects : -1, rm->mover_flags, (int)rm->obj_flags.destroyed);
+        openrfg_log(text);
+    }
+    if (s_logged < 1500)
+    {
+        s_logged++;
+        char text[200];
+        snprintf(text, sizeof(text), "NEAR player at <%.0f, %.0f, %.0f>: %d buildings within 40 m, %d missing a part (of %d loaded movers)", p.x, p.y, p.z, near_count, bad_count, num);
+        openrfg_log(text);
+    }
+}
+
 // 0x0072F0B0 (:4456)
 // Removes deleted pieces from the instance: they fade out through a mover fader (unless no-fade, 0x80000000, or
 // script point hosts, 0x400000; nano pieces use the nano effect), their dlods are re-checked, and owned whole-mesh sub
@@ -4459,6 +4530,7 @@ void rfg_mover_set_thread_ownership()
 // Retries the live links (category 1), for movers that streamed in since.
 void rfg_mover_do_frame_pre_sim()
 {
+    openrfg_log_movers_near_player(); // OpenRFG
     csspinlock_scope lock(RFG_dynamic_link_pool.thread_access);
     rfg_dynamic_link* rdl = RFG_dynamic_link_pool.get_first(1);
     while (rdl != nullptr)
