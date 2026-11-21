@@ -50,7 +50,14 @@ static rl_shader_const_ref Camera_velocity_shader_const; // 0x01514B70
 static keen::OcclusionQuery s_bracketQuery; // 0x01B76BFC
 
 // The query queue: one entry per queried entity (rl_scene_entity::m_gpu_vis_index is its index).
+#ifdef OPENRFG_X64
+// OpenRFG x64: 2048 entries and 2560 queries (rl_render_lib.cpp) are too few at the 15x15 view distances. An entry
+// that gets no new query keeps its last result, so an object once read as occluded stays hidden until the camera
+// is inside its query box (seen as far buildings that only appear when you are next to them).
+static object_pool<vis_queue_entry, 8192, 1> Vis_queue; // 0x01C461D0
+#else
 static object_pool<vis_queue_entry, 2048, 1> Vis_queue; // 0x01C461D0
+#endif
 // Debug: the entry polled by the debug view (only ever cleared).
 static vis_queue_entry* Entry_debug = nullptr; // 0x01B7BCC0
 static bool Found_debug_entry = false; // 0x01B7BCA5
@@ -101,6 +108,14 @@ vector RL_gpu_vis_bbox_offset(0.1f, 0.1f, 0.1f); // 0x01514B58
 // uninitialized, and the mesh data objects are never freed.
 void rl_gpu_vis_system_init(keen::GraphicsSystem* pGraphicsSystem)
 {
+#ifdef OPENRFG_X64
+    // OpenRFG test switch: --no-gpu-occlusion turns the GPU occlusion queries off (the CPU occluders still apply).
+    if (strstr(GetCommandLineA(), "--no-gpu-occlusion") != nullptr)
+    {
+        RL_gpu_vis_enabled = false;
+        keen::debug::nativePrintArgs("[openrfg] --no-gpu-occlusion: GPU occlusion queries are off\n");
+    }
+#endif
     keen::MemoryAllocator* allocator_p = Init_params.m_pBufferAllocator;
     const unsigned short indices[36] = {0, 1, 2, 2, 1, 3, 1, 5, 3, 3, 5, 7, 2, 4, 0, 6, 4, 2, 6, 5, 4, 7, 5, 6, 0, 4, 5, 0, 5, 1, 7, 6, 2, 3, 7, 2};
     Box_positions = (BoxVertex*)allocator_p->allocate(8 * sizeof(BoxVertex), 16, 0, nullptr);
@@ -292,6 +307,10 @@ void rl_gpu_vis_render_mesh_query(rl_renderer& renderer, vis_queue_entry* entry_
             entry_p->m_query_handle[entry_p->m_query_index] = handle;
             entry_p->m_query_index++;
             Census.queries_issued++;
+        }
+        else
+        {
+            Census.queries_skipped++;
         }
     }
 }

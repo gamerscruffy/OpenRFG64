@@ -54,6 +54,7 @@ struct rl_gpu_vis_census
     int queries_issued = 0;
     int camera_inside = 0;
     int resets = 0;
+    int queries_skipped = 0; // OpenRFG: a query was due but the query pool was empty
 };
 
 void rl_gpu_vis_take_census(rl_gpu_vis_census& census);

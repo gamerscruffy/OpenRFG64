@@ -38,6 +38,7 @@
 #include <chrono>
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #ifdef OPENRFG_X64
 // OpenRFG: a RENDERDIAG log line every 3 s (main visibility pass): how many entities each visibility list got per
@@ -54,6 +55,7 @@ extern int Openrfg_road_instances_not_flagged;
 void openrfg_matlib_usage(int& buckets_used, int& entries_used, int& capacity, int& add_failures, int& register_failures); // rl_material_library.cpp
 void openrfg_log(const char* text); // crash_early.cpp
 
+extern bool RL_gpu_vis_enabled; // rl_gpu_visibility.cpp
 static void rdiag_report(const base_array<pool_list<rl_scene_entity*>*>& lists)
 {
     Rdiag_passes++;
@@ -65,6 +67,7 @@ static void rdiag_report(const base_array<pool_list<rl_scene_entity*>*>& lists)
     }
     last = now;
     char caps[128];
+    caps[0] = '\0';
     int pos = 0;
     for (int i = 0; i < lists.size() && i < 8; i++)
     {
@@ -77,7 +80,9 @@ static void rdiag_report(const base_array<pool_list<rl_scene_entity*>*>& lists)
     int register_failures = 0;
     openrfg_matlib_usage(buckets, entries, capacity, add_failures, register_failures);
     const int n = Rdiag_passes;
-    char text[768];
+    rl_gpu_vis_census census;
+    rl_gpu_vis_take_census(census);
+    char text[1024];
     snprintf(text, sizeof(text),
              "RENDERDIAG %d passes | per pass added %d/%d/%d/%d/%d/%d/%d, dropped %d/%d/%d/%d/%d/%d/%d (lists height/inst/light/lowlod/landmark/skirt/road, caps %s), "
              "lod-offed %d | roads drawn %d instances %d blocks, no material %d blocks, not flagged %d | matlib buckets %d entries %d of %d, add fails %d, register fails %d",
@@ -86,6 +91,11 @@ static void rdiag_report(const base_array<pool_list<rl_scene_entity*>*>& lists)
              Rdiag_list_dropped[3] / n, Rdiag_list_dropped[4] / n, Rdiag_list_dropped[5] / n, Rdiag_list_dropped[6] / n, caps, Rdiag_lod_offed / n,
              Openrfg_road_instances_drawn / n, Openrfg_road_blocks_drawn / n, Openrfg_road_blocks_no_material / n, Openrfg_road_instances_not_flagged / n,
              buckets, entries, capacity, add_failures, register_failures);
+    const size_t len = strlen(text);
+    snprintf(text + len, sizeof(text) - len,
+             " | gpu occlusion %s: entries %d, queries in flight %d, per pass visible %d not ready %d occluded %d, issued %d, skipped (no query) %d, camera inside %d, resets %d",
+             RL_gpu_vis_enabled ? "on" : "off", census.entries, census.queries_in_flight, census.visible / n, census.not_ready / n, census.occluded / n,
+             census.queries_issued / n, census.queries_skipped / n, census.camera_inside / n, census.resets);
     openrfg_log(text);
     for (int i = 0; i < 8; i++)
     {

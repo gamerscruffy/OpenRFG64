@@ -667,7 +667,12 @@ void rl_render_lib::initialize(const rl_init_params& params)
     m_lodChanged = false;
     m_sizesChanged = false;
     // Magic number: 2560 occlusion queries.
+#ifdef OPENRFG_X64
+    // OpenRFG x64: two queries in flight for each of the 8192 GPU visibility entries (rl_gpu_visibility.cpp).
+    m_occlusionQueries.create(params.m_pKeenGraphicsSystem, Init_params.m_pDefaultAllocator, 0x4000, params.m_occlusionQueryGPUMemory);
+#else
     m_occlusionQueries.create(params.m_pKeenGraphicsSystem, Init_params.m_pDefaultAllocator, 0xA00, params.m_occlusionQueryGPUMemory);
+#endif
     m_inputBindingMutex.create("inputBindingMutex");
 }
 
