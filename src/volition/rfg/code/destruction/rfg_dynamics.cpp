@@ -226,7 +226,7 @@ static __declspec(thread) char Rfg_dynamics_message[1024]; // TLS +0x38 (debug m
 
 // Defined in rfg_mover.cpp (:172), which comes later in rfg_destruction_unity.cpp; the PDB gives it file static linkage,
 // so the original declared it extern here and defined it static there (MSVC extension C4211).
-extern object_pool<rfg_dynamic_link, 2400, 2> RFG_dynamic_link_pool;
+extern object_pool<rfg_dynamic_link, OPENRFG_ZONE_POOL(2400), 2> RFG_dynamic_link_pool;
 
 // ---- rfg_collision_event (header inlines)
 // 0x00711640 (:190)

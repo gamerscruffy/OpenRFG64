@@ -139,7 +139,11 @@ void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.
 
 static const int RFG_MOVER_POOL_SIZE = OPENRFG_ZONE_POOL(4000); // rfg_moverpool
 static const unsigned int RFG_MOVER_POOL_USAGE = 0x1685E0; // memory footprint registered with the instantiator
-static const unsigned int RFG_MOVER_STATE_BUFFER_SIZE = 0x74000; // Rfg_mover_state_buffer
+// OpenRFG: scaled with the zones (x25 on x64: Terrain Distance up to 15x15). Every level mover that is not streamed in
+// keeps its saved world anchors and dynamic links here (and its destruction state and decals once damaged). A 15x15
+// load filled the original 0x74000 bytes, the movers loaded after that lost their anchors, and those buildings stood
+// on nothing until their first stress test or shardify broke them apart.
+static const unsigned int RFG_MOVER_STATE_BUFFER_SIZE = 0x74000 * (OPENRFG_MAX_ZONES / 9); // Rfg_mover_state_buffer
 static const unsigned int RFG_MOVER_STATE_PAGE_SIZE = 0x10;
 static const float RFG_MOVER_DEFAULT_GAME_DESTROYED_PCT = 0.3f; // when the gameplay properties say -1
 static const float RFG_MOVER_DEFAULT_FULLY_DESTROYED_PCT = 0.5f; // when the gameplay properties say -1
@@ -169,7 +173,10 @@ static bool Rfg_mover_damage_applied; // 0x01E38321
 static unsigned char Rfg_mover_state_buffer[RFG_MOVER_STATE_BUFFER_SIZE]; // 0x01E84230
 static rfg_mover* Pre_stream_mover_list; // 0x01EF82D4
 static game_render_task Pre_stream_render_task_mover; // 0x01F13354
-object_pool<rfg_dynamic_link, 2400, 2> RFG_dynamic_link_pool; // 0x01F1C900 (0x01069C00), category 1 live, 0 pending
+// OpenRFG: x25 on x64 (60000, below the 16-bit piece index 0xFFFF that means no link). A link waits in the pool while
+// one of its movers is streamed out, for as long as both exist, so the links of every loaded zone share it; at 15x15
+// the original 2400 fills and new links fail, leaving bridge decks and building parts without their support.
+object_pool<rfg_dynamic_link, OPENRFG_ZONE_POOL(2400), 2> RFG_dynamic_link_pool; // 0x01F1C900 (0x01069C00), category 1 live, 0 pending
 static page_mempool Rfg_mover_state_pool; // 0x020C1B60 (0x01069C20)
 static object_pool<explosion_event, 20, 1> Explosion_event_pool; // 0x01F14100 (0x01069C40)
 static object_pool<damaged_subpiece_event, 256, 1> Damaged_sp_event_pool; // 0x01F13400 (0x01069C60)
@@ -1696,6 +1703,17 @@ bool rfg_mover::serialize(obj_prop_block& pblock, bool load)
                 alloc_data_buf(rfg_mover_temporary_data::DYNAMIC_LINK, buf, links_size);
                 mover_flags |= 0x8000000;
             }
+#ifdef OPENRFG_X64
+            // OpenRFG: the saved anchors or links could not be kept (Rfg_mover_state_pool full). The mover would still
+            // count its anchors as found at stream-in and stand on nothing, so it searches for them again instead, as
+            // a mover with a changed destruction checksum does (object_mover::stream).
+            if ((anchors_size > 0 && get_data_buf(rfg_mover_temporary_data::WORLD_ANCHOR) == nullptr) || (links_size > 0 && get_data_buf(rfg_mover_temporary_data::DYNAMIC_LINK) == nullptr))
+            {
+                openrfg_fail_log("mover-state", "no room in the mover state pool for the saved anchors (%d bytes) and links (%d bytes) of the mover at <%.1f, %.1f, %.1f>: its anchors are searched again at stream-in",
+                    anchors_size, links_size, pos.x, pos.y, pos.z);
+                destruction_checksum = 0xFFFFFFFF;
+            }
+#endif
         }
         else
         {
@@ -2099,6 +2117,14 @@ bool rfg_mover::compress_state(rfg_destroyable_shape* shape, unsigned int chunk_
         }
         alloc_data_buf(rfg_mover_temporary_data::SHAPE_STATE, nullptr, size + 2);
         unsigned short* buf = (unsigned short*)get_data_buf(rfg_mover_temporary_data::SHAPE_STATE);
+#ifdef OPENRFG_X64
+        if (buf == nullptr)
+        {
+            // OpenRFG: the mover comes back whole at its next stream-in.
+            openrfg_fail_log("mover-state", "no room in the mover state pool for the destruction state (%d bytes) of the mover at <%.1f, %.1f, %.1f> (%d of %d pieces)",
+                size + 2, pos.x, pos.y, pos.z, num_existing, num_objects);
+        }
+#endif
         if (buf != nullptr)
         {
             buf[0] = mode;
@@ -2161,6 +2187,16 @@ bool rfg_mover::compress_state(rfg_destroyable_shape* shape, unsigned int chunk_
     {
         alloc_data_buf(rfg_mover_temporary_data::DYNAMIC_LINK, (unsigned char*)links, num_links * sizeof(rfg_dynamic_link));
     }
+#ifdef OPENRFG_X64
+    // OpenRFG: the anchors or links could not be kept (Rfg_mover_state_pool full): search for them again at the next
+    // stream-in rather than stand on nothing (see serialize).
+    if ((0 < num_anchors && get_data_buf(rfg_mover_temporary_data::WORLD_ANCHOR) == nullptr) || (0 < num_links && get_data_buf(rfg_mover_temporary_data::DYNAMIC_LINK) == nullptr))
+    {
+        openrfg_fail_log("mover-state", "no room in the mover state pool for the %d anchors and %d links of the mover at <%.1f, %.1f, %.1f>: its anchors are searched again at stream-in",
+            num_anchors, num_links, pos.x, pos.y, pos.z);
+        destruction_checksum = 0xFFFFFFFF;
+    }
+#endif
     return true;
 }
 
