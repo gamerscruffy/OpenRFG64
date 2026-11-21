@@ -68,6 +68,21 @@
 #include <math.h>
 #include <stdlib.h>
 
+// OpenRFG: terrain release code and a failed create leave non-nullable slots at offset 0, which to_pointer() turns into
+// the slot's own address instead of nullptr. The decals then called add_decal through a zeroed "instance" (15x15 crash
+// in object_zone_decal_apply_collection). x64 treats offset 0 as empty.
+template<typename T>
+static T* decal_slot(const et_ptr_offset<T,0>& slot)
+{
+#ifdef OPENRFG_X64
+    if (slot.get_offset() == 0)
+    {
+        return nullptr;
+    }
+#endif
+    return slot.to_pointer();
+}
+
 // ---- file-local types (rfg.pdb)
 // size 0x40
 struct blood_decal_info
@@ -403,7 +418,7 @@ void object_zone_decal_collect(object* op, decal_collection_data* buffer, unsign
         terrain_subzone_data::patch* patches = subzone->patches.to_pointer();
         for (int p = 0; p < subzone->patch_count; p++)
         {
-            if (patches[p].instance_p.to_pointer() == nullptr || !decal_touches_patch(patches[p], decal_params, decal_radius))
+            if (decal_slot(patches[p].instance_p) == nullptr || !decal_touches_patch(patches[p], decal_params, decal_radius))
             {
                 continue;
             }
@@ -424,7 +439,7 @@ void object_zone_decal_collect(object* op, decal_collection_data* buffer, unsign
                 et_ptr_offset<rl_mesh_instance, 0>* meshes = stitch.stitched_meshes_p.to_pointer();
                 for (int m = 0; m < stitch.num_stitched_meshes; m++)
                 {
-                    rl_mesh_instance* mesh = meshes[m].to_pointer();
+                    rl_mesh_instance* mesh = decal_slot(meshes[m]);
                     if (mesh == nullptr || !decal_touches_entity(mesh, decal_params, decal_radius))
                     {
                         continue;
@@ -471,7 +486,7 @@ void object_zone_decal_collect(object* op, decal_collection_data* buffer, unsign
             et_ptr_offset<rl_renderable_instance, 0>* instances = roads[r].m_mesh_instances_p.to_pointer();
             for (int m = 0; m < roads[r].m_num_mesh_instances; m++)
             {
-                rl_renderable_instance* instance = instances[m].to_pointer();
+                rl_renderable_instance* instance = decal_slot(instances[m]);
                 if (instance == nullptr || !decal_touches_entity(instance, decal_params, decal_radius))
                 {
                     continue;
@@ -517,7 +532,7 @@ unsigned int object_zone_decal_apply_collection(object* op, decal_collection_dat
         case TERRAIN_TYPE_PATCH:
         {
             terrain_subzone_data::patch* patch = (terrain_subzone_data::patch*)buffer[i].terrain_ptr;
-            rl_height_mesh_instance* instance = patch->instance_p.to_pointer();
+            rl_height_mesh_instance* instance = decal_slot(patch->instance_p);
             if (instance != nullptr && decal_touches_patch(*patch, decal_params, decal_radius))
             {
                 handle = instance->add_decal(&decal_params, handle);
@@ -707,7 +722,7 @@ unsigned int object_decal_apply(object* op, const rl_decal_parameters& decal_par
             terrain_subzone_data::patch* patches = subzone->patches.to_pointer();
             for (int p = 0; p < subzone->patch_count; p++)
             {
-                rl_height_mesh_instance* instance = patches[p].instance_p.to_pointer();
+                rl_height_mesh_instance* instance = decal_slot(patches[p].instance_p);
                 if (instance != nullptr && decal_touches_patch(patches[p], decal_params, decal_radius))
                 {
                     decal_handle = instance->add_decal(&decal_params, decal_handle);
@@ -720,7 +735,7 @@ unsigned int object_decal_apply(object* op, const rl_decal_parameters& decal_par
                 et_ptr_offset<rl_mesh_instance, 0>* meshes = stitch.stitched_meshes_p.to_pointer();
                 for (int m = 0; m < stitch.num_stitched_meshes; m++)
                 {
-                    rl_mesh_instance* mesh = meshes[m].to_pointer();
+                    rl_mesh_instance* mesh = decal_slot(meshes[m]);
                     if (mesh != nullptr && decal_touches_entity(mesh, decal_params, decal_radius))
                     {
                         decal_handle = mesh->add_decal(&decal_params, decal_handle);
@@ -747,7 +762,7 @@ unsigned int object_decal_apply(object* op, const rl_decal_parameters& decal_par
                 et_ptr_offset<rl_renderable_instance, 0>* instances = roads[r].m_mesh_instances_p.to_pointer();
                 for (int m = 0; m < roads[r].m_num_mesh_instances; m++)
                 {
-                    rl_renderable_instance* instance = instances[m].to_pointer();
+                    rl_renderable_instance* instance = decal_slot(instances[m]);
                     if (instance != nullptr && decal_touches_entity(instance, decal_params, decal_radius))
                     {
                         decal_handle = instance->add_decal(&decal_params, decal_handle);

@@ -37,7 +37,9 @@
 
 // <rl_mesh_instance::factory_init> 0x00511B70 (:36)
 // <rl_mesh_instance::create> 0x0054BD80 (:36)
-RL_FACTORY_CLASS_CORE(rl_mesh_instance, 0xD1AB011C, 256)
+// OpenRFG: scaled with the zone pools; roads, terrain stitch meshes, general movers and items all come from it and
+// 256 ran out at 15x15 (roads and buildings went missing, their slots left empty).
+RL_FACTORY_CLASS_CORE(rl_mesh_instance, 0xD1AB011C, OPENRFG_ZONE_POOL(256))
 
 // Debug switches that skip the batched / deferred-batched mesh instances (off in retail).
 bool g_hideBatchMeshes = false; // 0x01B7BCD2
