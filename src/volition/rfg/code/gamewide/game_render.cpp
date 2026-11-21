@@ -1043,8 +1043,11 @@ void game_render_check_for_vsync_change()
 //   - The bloom exposure blend writes Hdr_state back, so with a factor other than 1 it converges on the override
 //     exposure over the frames instead of being applied once.
 //   - Without a zone at the camera position the render offset is left as it was.
+#include <stdio.h>
+void openrfg_log(const char*); // crash_early.cpp
 extern float g_shadowMapMaxDist; // rl_scene_renderer.cpp
 extern float g_terrainShadowsMaxDist; // rl_scene_shadows.cpp
+extern float Shadow_map_range_pcts[][2]; // rl_shadow_system.cpp: [near, mid, far, full, terrain][start, end] shares of g_shadowMapMaxDist
 void game_render_setup_frame(rl_renderer& renderer)
 {
     renderer.set_world_transform(IDENTITY_MATRIX43);
@@ -1078,6 +1081,35 @@ void game_render_setup_frame(rl_renderer& renderer)
         const float shadow_scale = (float)rl_lod_get_shadow_distance_percent(lod) * 0.01f;
         g_shadowMapMaxDist = 100.0f * shadow_scale;
         g_terrainShadowsMaxDist = 240.0f * shadow_scale;
+        {
+            // The near and mid cascades grow only by the cube and square root of the scale (12.5 m and 41.5 m at 100
+            // percent), the far one takes the rest, so each cascade is about as many times wider than the one before
+            // it as in the original. A farther distance then costs the sharpness of the far shadows mostly, not of
+            // the ones next to the player. At 100 percent this is the original split exactly.
+            const float near_end = 12.5f * powf(shadow_scale, 1.0f / 3.0f);
+            const float mid_end = 41.5f * powf(shadow_scale, 2.0f / 3.0f);
+            const float max_dist = g_shadowMapMaxDist;
+            Shadow_map_range_pcts[0][0] = 0.0f;
+            Shadow_map_range_pcts[0][1] = near_end / max_dist;
+            Shadow_map_range_pcts[1][0] = near_end / max_dist;
+            Shadow_map_range_pcts[1][1] = mid_end / max_dist;
+            Shadow_map_range_pcts[2][0] = mid_end / max_dist;
+            Shadow_map_range_pcts[2][1] = 1.0f;
+        }
+#ifdef OPENRFG_X64
+        // Diagnostics: the shadow settings in effect, logged when they change.
+        static int s_logged_pct = -1;
+        static int s_logged_lod = -1;
+        const int shadow_pct = rl_lod_get_shadow_distance_percent(lod);
+        if (s_logged_pct != shadow_pct || s_logged_lod != (int)lod.m_shadow_lod)
+        {
+            s_logged_pct = shadow_pct;
+            s_logged_lod = (int)lod.m_shadow_lod;
+            char msg[160];
+            snprintf(msg, sizeof(msg), "SHADOWCFG lod=%d distance_pct=%d raw_byte=%d max_dist=%.1f terrain_dist=%.1f", s_logged_lod, shadow_pct, (int)lod.m_shadow_distance, g_shadowMapMaxDist, g_terrainShadowsMaxDist);
+            openrfg_log(msg);
+        }
+#endif
     }
     renderer.set_scissor_region(Scissor_region);
     set_entity_transform(camera_p, Rfg_camera.render_pos, Rfg_camera.render_orient);

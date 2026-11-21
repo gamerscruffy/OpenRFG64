@@ -101,7 +101,7 @@ static wchar_t kDynamic_lights_caption[] = L"DYNAMIC LIGHTS";
 static const int DOPTIONS_ADVANCED_ROW_DYNAMIC_LIGHTS = 9;
 // OpenRFG: the rows after it, each a list of its levels (labels added to the localization table at runtime,
 // display_add_openrfg_level_labels):
-//   World Detail Distance: how far buildings stream at full detail, 5x5 to 15x15 building cells
+//   Building Distance (was World Detail Distance; the key and INI name keep the old one): how far buildings stream at full detail, 5x5 to 15x15 building cells
 //   (rl_lod_get_world_detail_level, 64-bit only).
 //   LOD Detail: how far they are drawn at full detail, in metres (rl_lod_detail_distance).
 //   Draw Distance: the camera's far clip, where the low detail terrain ends, in metres (rl_draw_distance).
@@ -125,7 +125,7 @@ static const char* cDisplay_settings_world_detail[RL_WORLD_DETAIL_LEVELS] = {"OP
 static const char* cDisplay_settings_lod_detail[RL_LOD_DETAIL_LEVELS] = {"OPENRFG_LOD_320", "OPENRFG_LOD_400", "OPENRFG_LOD_490", "OPENRFG_LOD_660", "OPENRFG_LOD_830", "OPENRFG_LOD_1000", "OPENRFG_LOD_1170"};
 static const char* cDisplay_settings_draw_distance[RL_DRAW_DISTANCE_LEVELS] = {"OPENRFG_DRAW_475", "OPENRFG_DRAW_1000", "OPENRFG_DRAW_1500", "OPENRFG_DRAW_2000", "OPENRFG_DRAW_2500", "OPENRFG_DRAW_3000", "OPENRFG_DRAW_4000"};
 static const char* kWorld_detail_caption_key = "OPENRFG_WORLD_DETAIL_DISTANCE";
-static wchar_t kWorld_detail_caption[] = L"WORLD DETAIL DISTANCE";
+static wchar_t kWorld_detail_caption[] = L"BUILDING DISTANCE";
 static const int DOPTIONS_ADVANCED_ROW_WORLD_DETAIL = 10;
 static const char* kLod_detail_caption_key = "OPENRFG_LOD_DETAIL";
 static wchar_t kLod_detail_caption[] = L"LOD DETAIL";
@@ -231,7 +231,7 @@ static bool lods_equal(const rl_level_of_detail& lhs, const rl_level_of_detail& 
 // OpenRFG: World Detail Distance, LOD Detail and Draw Distance, which the presets (lods_equal) leave out.
 static bool display_openrfg_distances_equal(const rl_level_of_detail& lhs, const rl_level_of_detail& rhs)
 {
-    return rl_lod_get_world_detail_level(lhs) == rl_lod_get_world_detail_level(rhs) && rl_lod_get_lod_detail_level(lhs) == rl_lod_get_lod_detail_level(rhs) && rl_lod_get_draw_distance_level(lhs) == rl_lod_get_draw_distance_level(rhs) && rl_lod_get_terrain_distance_level(lhs) == rl_lod_get_terrain_distance_level(rhs);
+    return rl_lod_get_world_detail_level(lhs) == rl_lod_get_world_detail_level(rhs) && rl_lod_get_lod_detail_level(lhs) == rl_lod_get_lod_detail_level(rhs) && rl_lod_get_draw_distance_level(lhs) == rl_lod_get_draw_distance_level(rhs) && rl_lod_get_terrain_distance_level(lhs) == rl_lod_get_terrain_distance_level(rhs) && rl_lod_get_shadow_distance_percent(lhs) == rl_lod_get_shadow_distance_percent(rhs); // OpenRFG: Shadow Distance too, or changing only it counts as no change and Accept drops it
 }
 
 // OpenRFG: puts the caption of an OpenRFG row into the localization table (the game's data has none), once.

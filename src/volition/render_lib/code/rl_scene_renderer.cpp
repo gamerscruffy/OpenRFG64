@@ -1421,6 +1421,19 @@ void rl_scene_renderer::create_render_textures(keen::GraphicsCommandWriter* pCom
     const rl_shadow_lod shadow_lod = (m_level_of_detail.m_shadow_lod < 0) ? RL_SHADOW_LOD_OFF : (m_level_of_detail.m_shadow_lod >= RL_NUM_SHADOW_LODS ? (rl_shadow_lod)(RL_NUM_SHADOW_LODS - 1) : m_level_of_detail.m_shadow_lod);
     m_shadow_map_width = shadow_map_resolutions[shadow_lod];
     m_shadow_map_height = shadow_map_resolutions[shadow_lod];
+#ifdef OPENRFG_X64
+    {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "SHADOWCFG map created: lod=%d size=%dx%d", (int)shadow_lod, m_shadow_map_width, m_shadow_map_height);
+        extern void openrfg_log(const char*);
+        openrfg_log(msg);
+    }
+    // The stable cascade fit snaps its window to this many texels (rl_shadow_system.cpp).
+    {
+        extern int g_shadowMapTexels;
+        g_shadowMapTexels = m_shadow_map_width > 0 ? m_shadow_map_width : 2048;
+    }
+#endif
     if (shadow_lod != RL_SHADOW_LOD_OFF)
     {
         m_shadow_map_target.init(m_shadow_map_width, m_shadow_map_height, RL_FORMAT_SHADOW_MAP, 0, "shadowMap", 2);

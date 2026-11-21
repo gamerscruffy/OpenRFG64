@@ -27,6 +27,7 @@
 #include "keen/base/trace.hpp"
 
 #include <math.h>
+#include <stdio.h>
 
 float calculate_horizontal_fov_perspective(float vertical_fov, bool use_pixel_aspect_ratio); // 0x004DFB20 (rl_camera.cpp)
 
@@ -82,6 +83,30 @@ static bool RL_test_use_oblique_projection = false; // 0x01B7BD2F
 static bool do_compute_sphere = false; // 0x01CD28CC
 // The distance of the uniform shadow map's light view from the casters' center (the depth range is twice it).
 static float override_bounds = 500.0f; // 0x0151674C
+
+// OpenRFG: stable cascade fit. The original fits each cascade's light-space box tightly around the 8 corners of the
+// camera frustum slice, so the covered area (and with it the sharpness) changes with the view direction, the field of
+// view and the sun's direction (which moves with the time of day), even with the camera standing still. With the stable
+// fit the cascade covers a sphere around the slice (the radius does not depend on the direction), rounded up to a
+// coarse ladder (so a small field of view change does not change it every frame), and the window is snapped to whole
+// shadow map texels (so the shadows do not shimmer when the camera moves). The map size is set by the scene renderer.
+int g_shadowMapTexels = 2048;
+static bool g_shadowMapStableFit = true;
+// Set by build_shadow_params_base for the frustum slice cascades (0 radius = the original box fit).
+static float g_shadowFitRadius = 0.0f;
+static vector g_shadowFitCenter(0.0f, 0.0f, 0.0f);
+
+// The radius rounded up to a multiple of a power of two step (at least 1 m) that is under 1/8 of the radius, so it
+// overshoots by less than 12.5 percent.
+static float stable_fit_radius(float radius)
+{
+    float step = 1.0f;
+    while (step * 16.0f < radius)
+    {
+        step *= 2.0f;
+    }
+    return ceilf(radius / step) * step;
+}
 
 // The blending share clamped to [0, 1].
 static float clamped_blending_pct()
@@ -164,9 +189,16 @@ void rl_shadow_system::shutdown()
 void rl_shadow_system::build_uniform_shadowmap_matrix(matrix44& uniform_matrix, float& desired_zbias, float& desired_slope_zbias, const vector& light_dir, const rl_point_set& casting_volume)
 {
     const bbox& bounds = casting_volume.bounds();
-    const vector center((bounds.max.x + bounds.min.x) * 0.5f, (bounds.max.y + bounds.min.y) * 0.5f, (bounds.min.z + bounds.max.z) * 0.5f);
+    const bool stable_fit = g_shadowMapStableFit && g_shadowFitRadius > 0.0f;
+    const vector center = stable_fit ? g_shadowFitCenter : vector((bounds.max.x + bounds.min.x) * 0.5f, (bounds.max.y + bounds.min.y) * 0.5f, (bounds.min.z + bounds.max.z) * 0.5f);
+    // OpenRFG: a large cascade sphere needs a deeper light view than the original 500 m (the depth range is twice it).
+    float light_distance = override_bounds;
+    if (stable_fit && g_shadowFitRadius * 1.2f > light_distance)
+    {
+        light_distance = g_shadowFitRadius * 1.2f;
+    }
     // The original also measures the bounds' diagonal (vec_dist) and does not use it.
-    const vector eye(light_dir.x * override_bounds + center.x, light_dir.y * override_bounds + center.y, light_dir.z * override_bounds + center.z);
+    const vector eye(light_dir.x * light_distance + center.x, light_dir.y * light_distance + center.y, light_dir.z * light_distance + center.z);
     if (RL_test_use_oblique_projection)
     {
         keen::debug::nativePrintArgs("rl_shadow_system::build_uniform_shadowmap_matrix: the oblique projection test is not ported\n");
@@ -206,9 +238,22 @@ void rl_shadow_system::build_uniform_shadowmap_matrix(matrix44& uniform_matrix, 
         const float inv_w = 1.0f / v.w;
         bbox_expand(light_min, light_max, vector(inv_w * v.x, inv_w * v.y, inv_w * v.z));
     }
-    // Depth 0..2 * override_bounds.
+    if (stable_fit)
+    {
+        // OpenRFG: a window of the sphere's diameter, on the grid of whole texels anchored at the world origin (whose
+        // light space position is the view's translation).
+        const float radius = g_shadowFitRadius;
+        const float texel = (2.0f * radius) / (float)(g_shadowMapTexels > 0 ? g_shadowMapTexels : 2048);
+        const float origin_x = view.element(3, 0);
+        const float origin_y = view.element(3, 1);
+        light_min.x = origin_x + floorf((-radius - origin_x) / texel) * texel;
+        light_min.y = origin_y + floorf((-radius - origin_y) / texel) * texel;
+        light_max.x = light_min.x + 2.0f * radius;
+        light_max.y = light_min.y + 2.0f * radius;
+    }
+    // Depth 0..2 * the light distance (override_bounds, 500 m, in the original).
     const float near_z = 0.0f;
-    const float far_z = override_bounds * 2.0f;
+    const float far_z = light_distance * 2.0f;
     const float scale_z = 1.0f / (far_z - near_z);
     const float scale_x = 2.0f / (light_max.x - light_min.x);
     const float scale_y = 2.0f / (light_max.y - light_min.y);
@@ -357,12 +402,54 @@ bool rl_shadow_system::build_shadow_params_base(rl_renderer& renderer, rl_shadow
     const vector& render_offset = renderer.get_render_offset();
     renderer.set_eye_position(vector(camera_pos.x - render_offset.x, camera_pos.y - render_offset.y, camera_pos.z - render_offset.z));
     matrix44 shadow_matrix;
+    float fit_radius_for_bias = 0.0f;
     switch (type)
     {
     case SMT_UNIFORM:
         if (!g_shadowMapUniformFixedSize)
         {
+            // OpenRFG: the frustum slice cascades get the stable sphere fit (the caster box variant keeps the box).
+            g_shadowFitRadius = 0.0f;
+            if (caster_aabb == nullptr && casting_volume.size() > 0)
+            {
+                vector sum(0.0f, 0.0f, 0.0f);
+                for (const vector* p = casting_volume.begin(); p != casting_volume.end(); p++)
+                {
+                    sum = vector(sum.x + p->x, sum.y + p->y, sum.z + p->z);
+                }
+                const float inv = 1.0f / (float)casting_volume.size();
+                g_shadowFitCenter = vector(sum.x * inv, sum.y * inv, sum.z * inv);
+                float max_sq = 0.0f;
+                for (const vector* p = casting_volume.begin(); p != casting_volume.end(); p++)
+                {
+                    const float dx = p->x - g_shadowFitCenter.x;
+                    const float dy = p->y - g_shadowFitCenter.y;
+                    const float dz = p->z - g_shadowFitCenter.z;
+                    const float sq = dx * dx + dy * dy + dz * dz;
+                    if (sq > max_sq)
+                    {
+                        max_sq = sq;
+                    }
+                }
+                g_shadowFitRadius = stable_fit_radius(sqrtf(max_sq));
+            }
             build_uniform_shadowmap_matrix(shadow_matrix, zbias, slope_zbias, light_dir, casting_volume);
+#ifdef OPENRFG_X64
+            {
+                // Diagnostics: the cascade fit of each pass, about every 3 s (one call per pass per frame).
+                static int s_calls[8] = {};
+                const int slot = (int)pass < 8 ? (int)pass : 7;
+                if (s_calls[slot]++ % 180 == 0)
+                {
+                    char msg[240];
+                    snprintf(msg, sizeof(msg), "SHADOWFIT pass=%d range=[%.1f,%.1f] radius=%.2f texel_cm=%.2f fov=%.2f light=(%.3f,%.3f,%.3f)", (int)pass, near_dist, far_dist, g_shadowFitRadius, g_shadowFitRadius * 200.0f / (float)(g_shadowMapTexels > 0 ? g_shadowMapTexels : 2048), camera_p->m_fov, light_dir.x, light_dir.y, light_dir.z);
+                    extern void openrfg_log(const char*);
+                    openrfg_log(msg);
+                }
+            }
+#endif
+            fit_radius_for_bias = g_shadowFitRadius;
+            g_shadowFitRadius = 0.0f;
         }
         else
         {
@@ -397,7 +484,20 @@ bool rl_shadow_system::build_shadow_params_base(rl_renderer& renderer, rl_shadow
     render_params.use_clb_shadows = 0;
     render_params.shadow_aa_enabled = m_shadow_map_16_sample ? 1 : 0;
     // The world bias: the lookup moves toward the light by -m_world_zbias (a translation before the projection).
-    const float world_zbias = -Shadow_pass_parameters[pass].m_world_zbias;
+    float world_zbias = -Shadow_pass_parameters[pass].m_world_zbias;
+    // OpenRFG: the bias was tuned for 2048 texels at the original distances (texels of about 1.5, 4.7, 10 and 25 cm in
+    // the four passes). Texels larger than that (a farther Shadow Distance) need a proportionally larger bias, or the
+    // surfaces shadow themselves; smaller ones keep the original (more only moves the shadows off their casters).
+    if (fit_radius_for_bias > 0.0f && (int)pass < 4)
+    {
+        static const float orig_texel_m[4] = { 0.0146f, 0.0469f, 0.102f, 0.25f };
+        const float texel_m = (2.0f * fit_radius_for_bias) / (float)(g_shadowMapTexels > 0 ? g_shadowMapTexels : 2048);
+        const float ratio = texel_m / orig_texel_m[(int)pass];
+        if (ratio > 1.0f)
+        {
+            world_zbias *= ratio;
+        }
+    }
     matrix44 bias;
     bias.set(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, world_zbias * light_dir.x, world_zbias * light_dir.y, world_zbias * light_dir.z, 1.0f);
     render_params.shadow_percent = g_shadowPercent;

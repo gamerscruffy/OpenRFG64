@@ -27,6 +27,7 @@
 #include "keen/graphics/graphicscommandwriter.hpp"
 
 #include <math.h>
+#include <stdio.h>
 
 extern event_trigger* Morph_process_finished_trigger; // 0x01B7BCE8 (rl_deformable_mesh_instance.cpp)
 
@@ -292,7 +293,23 @@ void rl_scene_renderer::clb_render(rl_renderer& renderer, rl_camera& camera, rl_
     rl_rect saved_vp;
     renderer.get_viewport(saved_vp);
     const rl_primitive_state saved_state = renderer.get_macro_state();
+#ifdef OPENRFG_X64
+    // Diagnostics: a file named no_cloud_shadows.txt in the game's working directory turns the scrolling cloud shadows
+    // off (checked once at start), to tell them apart from the sun's cascaded shadows.
+    static int s_no_cloud_shadows = -1;
+    if (s_no_cloud_shadows < 0)
+    {
+        FILE* marker = fopen("no_cloud_shadows.txt", "rb");
+        s_no_cloud_shadows = marker != nullptr ? 1 : 0;
+        if (marker != nullptr)
+        {
+            fclose(marker);
+        }
+    }
+    const bool cloud_shadows = g_cloudShadowEnabled && s_no_cloud_shadows == 0 && rl_shadow_system::m_pCloudTexture != nullptr;
+#else
     const bool cloud_shadows = g_cloudShadowEnabled && rl_shadow_system::m_pCloudTexture != nullptr;
+#endif
     rl_shadow_render_parameters cloud_params;
     rl_shadow_render_parameters* cloud_params_p = nullptr;
     if (cloud_shadows)
