@@ -554,6 +554,19 @@ void vehicle_build_turrets(vehicle* vp)
         vp->m_num_turret_mounts++;
         // two turrets on one seat are linked in a chain
         turret* first = vehicle_get_seat_turret(vp, mount_info->seat);
+#ifdef OPENRFG_X64
+        // OpenRFG: an earlier mount whose turret was not created leaves m_turret_mounts out of step with
+        // m_num_turret_mounts, and the seat lookup or the chain can then give null; the original reads through it.
+        if (first != NULL && first != new_turret) {
+            turret* last = first;
+            while (last != NULL && last->get_linked_turret() != 0xFFFFFFFF) {
+                last = World.object_from_handle<turret>(last->get_linked_turret());
+            }
+            if (last != NULL) {
+                last->set_linked_turret(new_turret->get_handle());
+            }
+        }
+#else
         if (first != new_turret) {
             turret* last = first;
             while (last->get_linked_turret() != 0xFFFFFFFF) {
@@ -561,6 +574,7 @@ void vehicle_build_turrets(vehicle* vp)
             }
             last->set_linked_turret(new_turret->get_handle());
         }
+#endif
         const char* base_name = mount_info->attached_turret_info->components[1].vehicle_component_name;
         const char* barrel_name = mount_info->attached_turret_info->components[2].vehicle_component_name;
         for (unsigned int c = 0; c < num_turret_components; c++) {

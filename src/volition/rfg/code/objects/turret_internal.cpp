@@ -55,7 +55,9 @@
 #include <stdio.h>
 
 // Magic numbers.
-static const int MAX_TURRETS = 66; // the turret pool's size, so a physics object is always free
+// OpenRFG: OPENRFG_ZONE_POOL like the turret pool (turret.cpp) it has to match; left at 66 on x64, the 67th turret of a
+// 15x15 load got no physics, its vehicle's turret mounts went out of step and vehicle_build_turrets read through null.
+static const int MAX_TURRETS = OPENRFG_ZONE_POOL(66); // the turret pool's size, so a physics object is always free
 static const float HORSEPOWER_TO_WATTS = 745.7f;
 static const float OFF_LIMIT_ANGLE = 1e+14f; // hinge limits of a turret that turns all the way around
 static const float MIN_VEHICLE_COMPONENT_MASS = 50.0f;
