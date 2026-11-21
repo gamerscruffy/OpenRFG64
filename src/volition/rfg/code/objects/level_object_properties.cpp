@@ -15,7 +15,17 @@
 #include "volition/rfg/code/multi/multi_core/include/multi.h"
 #include "volition/rfg/code/objects/movers/object_mover.h"
 
+#ifdef OPENRFG_X64
+// OpenRFG: one instance per mover, sized for the original 5x5 zones. At 15x15 Terrain / World Detail Distance about
+// nine times as many buildings load, and object_mover::serialize drops every mover past the limit (missing buildings).
+static const unsigned int MAX_LEVEL_OBJECT_INSTANCES = 7072 * 9;
+#else
 static const unsigned int MAX_LEVEL_OBJECT_INSTANCES = 7072; // 0x1BA0, one per mover/chunk in the stream layout
+#endif
+
+#ifdef OPENRFG_X64
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+#endif
 
 object_pool<script_point_effect_inst, 320, 1> Script_point_effect_inst_pool; // 0x033B1FD0
 
@@ -123,6 +133,9 @@ level_object_inst_properties* lopm_create_instance(const level_object_base_prope
 {
     if (Num_level_object_property_instances >= MAX_LEVEL_OBJECT_INSTANCES)
     {
+#ifdef OPENRFG_X64
+        openrfg_fail_log("lopm-instances-full", "all %u level object property instances in use, a mover is skipped", MAX_LEVEL_OBJECT_INSTANCES);
+#endif
         return nullptr;
     }
     const unsigned int index = Level_obj_inst_props_free_list[Num_level_object_property_instances];

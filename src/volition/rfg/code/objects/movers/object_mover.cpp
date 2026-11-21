@@ -59,6 +59,10 @@
 #include "volition/rfg/code/objects/object_prop_names_shared.h"
 #include "volition/rfg/code/pathfinding/nav_cell_detour.h"
 #include "volition/rfg/code/rfg.h"
+
+#ifdef OPENRFG_X64
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+#endif
 #include "volition/rfg/code/scripting/action_script/global_event_data.h"
 #include "volition/rfg/code/scripting/action_script/global_event_manager.h"
 #include "volition/rfg/code/scripting/public_address.h"
@@ -136,7 +140,11 @@ lf_node<unsigned int> Mover_destroyed_event_nodes[128]; // 0x03029B60
 // ---- file-static globals
 static float RFG_object_mover_energy_scale = 1.0f; // 0x01694530
 static float Bullet_movable_scalar = 0.3f; // 0x01694534, bullet impulse per point of damage
+#ifdef OPENRFG_X64
+static farray<unsigned int, 7072 * 9> Find_anchors_delayed; // OpenRFG: 15x15 loads ~9x the movers (see MAX_LEVEL_OBJECT_INSTANCES)
+#else
 static farray<unsigned int, 7072> Find_anchors_delayed; // 0x01696058, movers still looking for their anchors
+#endif
 // farray<object*,16384> Object_update_render_list (0x0169D028) is used here too; placed in object.cpp.
 // object_pool<rfg_mover,4000,1> rfg_moverpool (0x01F59580) is used here too; placed in rfg_mover.cpp.
 // int Ladder_slide_land_cue (0x030269C0) is used here too; placed in human.cpp.
@@ -659,6 +667,9 @@ bool object_mover::serialize(obj_prop_block& pblock, bool load)
     const level_object_base_properties* base_props = lopm_get_properties(pblock.get_str_ref_optional(OM_PROP_BASE_PROPS));
     if (base_props == nullptr)
     {
+#ifdef OPENRFG_X64
+        openrfg_fail_log("mover-base-props", "no base properties '%s'", pblock.get_str_ref_optional(OM_PROP_BASE_PROPS) != nullptr ? pblock.get_str_ref_optional(OM_PROP_BASE_PROPS) : "(default)");
+#endif
         return false;
     }
     if (checking_reset > 0)
@@ -682,6 +693,9 @@ bool object_mover::serialize(obj_prop_block& pblock, bool load)
     const unsigned int container = stream2_container_find(container_name);
     if (container == 0)
     {
+#ifdef OPENRFG_X64
+        openrfg_fail_log("mover-no-container", "chunk container '%s' not found", container_name);
+#endif
         return false;
     }
     chunk_obj_uid = 0xFFFFFFFF;
