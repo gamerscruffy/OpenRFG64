@@ -29,8 +29,16 @@ struct index_list
 // size 0x4
 struct index_link
 {
+#ifdef OPENRFG_X64
+    // OpenRFG: 32-bit links on x64. 16-bit ones wrap past 65536 objects, and world::object_handle_hash is sized by the
+    // sum of every object class pool, which the 15x15 view distance takes far past that: its free list then handed out
+    // entries already in use, a bucket chain looped back on itself and loading hung in dynamic_hash_table::find.
+    unsigned int prev; // 0x00
+    unsigned int next; // 0x04
+#else
     unsigned int prev : 16; // 0x00:0
     unsigned int next : 16; // 0x00:16
+#endif
 };
 
 // size 0x20
