@@ -139,6 +139,32 @@ static void havok_bpo_validate_updates()
     }
 }
 
+#ifdef OPENRFG_X64
+// OpenRFG: whether an object really owns its node in the sweep. An object that is not in it (its m_id 0 after a
+// batch removal, or a stale index) would move or remove the sweep's world node, whose handle is null, and every pair
+// with it then has a null object (the 15x15 freecam crash in process_deleted_pairs). Such objects are left out of
+// the sweep calls; the first 32 are reported (as "failed", so they reach openrfg_crash.txt).
+static bool bpo_in_sweep(const hkp3AxisSweep* sweep, const havok_bpo* objp)
+{
+    const unsigned int id = objp->m_id;
+    return id > 0 && id < (unsigned int)sweep->m_nodes.getSize() && sweep->m_nodes[id].m_handle == objp;
+}
+
+static int Bpo_bad_reports;
+
+static void bpo_report_bad(const char* what, const havok_bpo* objp, const hkp3AxisSweep* sweep)
+{
+    if (Bpo_bad_reports >= 32)
+    {
+        return;
+    }
+    Bpo_bad_reports++;
+    keen::debug::nativePrintArgs("havok_bpo %s failed: object %p not in its sweep (id=%u nodes=%d state=%d flags=0x%02X bpo=%d user=%p)\n",
+        what, objp, (unsigned int)objp->m_id, sweep->m_nodes.getSize(), (int)objp->state, (unsigned int)objp->flags,
+        (int)objp->bpo_index, objp->user_data);
+}
+#endif
+
 // ---- islands and objects
 // 0x0080EC10 (:71)
 havok_bpi* island_alloc(int bpo_index)
@@ -295,6 +321,59 @@ void rfg_object_broadphase::level_shutdown()
 // Applies the queued deletes, updates and creates to the sweep and processes the pairs they add and remove.
 void rfg_object_broadphase::do_frame()
 {
+#ifdef OPENRFG_X64
+    // Objects not in the sweep go last in the delete and update queues and are left out of the sweep calls (they are
+    // still freed / set idle below).
+    int num_deletes = delete_list.size();
+    for (int i = 0; i < num_deletes; )
+    {
+        if (bpo_in_sweep(island_broad_phase, delete_list[i]))
+        {
+            i++;
+            continue;
+        }
+        bpo_report_bad("delete", delete_list[i], island_broad_phase);
+        havok_bpo* bad = delete_list[i];
+        delete_list[i] = delete_list[num_deletes - 1];
+        delete_list[num_deletes - 1] = bad;
+        num_deletes--;
+    }
+    int num_updates = update_list.size();
+    for (int i = 0; i < num_updates; )
+    {
+        if (bpo_in_sweep(island_broad_phase, update_list[i]))
+        {
+            i++;
+            continue;
+        }
+        bpo_report_bad("update", update_list[i], island_broad_phase);
+        havok_bpo* bad = update_list[i];
+        update_list[i] = update_list[num_updates - 1];
+        update_list[num_updates - 1] = bad;
+        const hkAabb bad_aabb = update_aabb_list[i];
+        update_aabb_list[i] = update_aabb_list[num_updates - 1];
+        update_aabb_list[num_updates - 1] = bad_aabb;
+        num_updates--;
+    }
+    Objects_deleted += num_deletes;
+    if (num_deletes < 8)
+    {
+        for (int i = 0; i < num_deletes; i++)
+        {
+            island_broad_phase->removeObject(delete_list[i], Del_pairs);
+        }
+    }
+    else
+    {
+        base_array_view<hkpBroadPhaseHandle*, havok_bpo*> handles(delete_list);
+        handles.m_size = num_deletes;
+        island_broad_phase->removeObjectBatch(handles, Del_pairs);
+    }
+    Object_delete_pairs += Del_pairs.getSize();
+
+    Objects_updated += num_updates;
+    island_broad_phase->updateAabbs((hkpBroadPhaseHandle**)update_list.elements(), update_aabb_list.elements(), num_updates, New_pairs, Del_pairs);
+#else
     const int num_deletes = delete_list.size();
     Objects_deleted += num_deletes;
     if (num_deletes < 8)
@@ -313,6 +392,7 @@ void rfg_object_broadphase::do_frame()
 
     Objects_updated += update_list.size();
     island_broad_phase->updateAabbs((hkpBroadPhaseHandle**)update_list.elements(), update_aabb_list.elements(), update_list.size(), New_pairs, Del_pairs);
+#endif
     hkpTypedBroadPhaseDispatcher::removeDuplicates(New_pairs, Del_pairs);
     process_new_pairs(New_pairs, 1);
     Object_update_pairs += New_pairs.getSize();
@@ -409,7 +489,13 @@ havok_bpo* rfg_object_broadphase::bpo_create(const vector& bmin, const vector& b
     hkAabb aabb;
     game_to_havok_aabb(aabb, bmin, bmax);
     objp->state = havok_bpo::BPO_CREATE;
+#ifdef OPENRFG_X64
+    // OpenRFG: also flush when the create queue is full (15x15 streams in more creates per frame than the original
+    // sized it for); a failed add left the object queued at index -1.
+    if (update_list.full() || create_list.full())
+#else
     if (update_list.full()) // the update queue, as in the original
+#endif
     {
         do_frame();
     }
@@ -769,6 +855,14 @@ void rfg_object_broadphase::process_deleted_pairs(hkArray<hkpBroadPhaseHandlePai
     {
         havok_bpo* obj_a = (havok_bpo*)del_pairs[i].m_a;
         havok_bpo* obj_b = (havok_bpo*)del_pairs[i].m_b;
+#ifdef OPENRFG_X64
+        // OpenRFG: as in process_new_pairs (the original reads through a null object here).
+        if (obj_a == nullptr || obj_b == nullptr)
+        {
+            keen::debug::nativePrintArgs("Int3 critical function at %s(%d)\n", __FILE__, __LINE__);
+            continue;
+        }
+#endif
         havok_bpo* region = pair_region(obj_a, obj_b);
         if (region == nullptr)
         {
