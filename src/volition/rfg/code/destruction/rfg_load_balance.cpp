@@ -227,7 +227,13 @@ static void rfgl_maybe_delete_objects()
     {
         return;
     }
+#ifdef OPENRFG_X64
+    // OpenRFG: the peak sits 500 under the destroyable instance maximum (1600 of 2100); x64 scales that maximum for
+    // 15x15, and a fixed 1600 would keep deleting the movers (building pieces) of the loaded zones.
+    int movers = rl_destroyable_model_instance::get_objects_used() - (rl_destroyable_model_instance::get_objects_max() - (2100 - Desired_destroyable_peak));
+#else
     int movers = rl_destroyable_model_instance::get_objects_used() - Desired_destroyable_peak; // inlined
+#endif
     if (movers < count)
     {
         movers = count;

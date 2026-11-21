@@ -307,11 +307,23 @@ void game_render_system_init(rl_init_params& rl_params, keen::GraphicsCommandWri
     }
     Render_system_init = true;
     // Magic numbers: the pool maxima of the game.
+#ifdef OPENRFG_X64
+    // OpenRFG: these override the sizes in each class's RL_FACTORY_CLASS line, so the 15x15 scaling has to happen here
+    // (the logged "rl factory ... exhausted" maxima were these unscaled values). Zone-dependent pools x25 (225 zones
+    // instead of 9; pool_list, no 16-bit links); meshes, material maps and mesh instances x50, since a full load needs
+    // every slot of x25; particles and the visible list x8.
+    rl_scene::set_renderable_instances_max(10000 * 25);
+    rl_set_wait_for_unlock_cb(game_render_wait_and_unlock_scene);
+    rl_scene_renderer::set_visible_renderable_instances_max(12000 * 8);
+    rl_destroyable_model_instance::set_objects_max(0x834 * 25);
+    rl_destroyable_model_instance_shared_base::set_objects_max(0x898 * 25);
+#else
     rl_scene::set_renderable_instances_max(10000);
     rl_set_wait_for_unlock_cb(game_render_wait_and_unlock_scene);
     rl_scene_renderer::set_visible_renderable_instances_max(12000);
     rl_destroyable_model_instance::set_objects_max(0x834);
     rl_destroyable_model_instance_shared_base::set_objects_max(0x898);
+#endif
     // The particle system pools: parametric 0xE00 and tails 0x400 are vfx's defaults, iterative 900 is not (512).
     vfx_particle_system_manager::set_particles_parametric_max(0xE00);
     rl_particle_renderer::set_particle_parametric_pool_size(0xE00);
@@ -319,6 +331,17 @@ void game_render_system_init(rl_init_params& rl_params, keen::GraphicsCommandWri
     rl_particle_renderer::set_particle_iterative_pool_size(900);
     vfx_particle_system_manager::set_particle_tails_max(0x400);
     rl_particle_renderer::set_particle_tail_pool_size(0x400);
+#ifdef OPENRFG_X64
+    rl_quadtree_sector::set_objects_max(0x12EE * 25);
+    rl_skin_instance::set_objects_max(500);
+    rl_material_map::set_objects_max(OPENRFG_RL_POOL(0xC00));
+    rl_mesh_instance::set_objects_max(OPENRFG_RL_POOL(4000));
+    rl_compound_mesh_instance::set_objects_max(2);
+    rl_renderable_particles::set_objects_max(0x800 * 8);
+    rl_fog_volume::set_objects_max(1);
+    rl_skin_bone_manager_set_pool_sizes(0x80, 0x4A0);
+    rl_mesh::set_objects_max(OPENRFG_RL_POOL(0x800));
+#else
     rl_quadtree_sector::set_objects_max(0x12EE);
     rl_skin_instance::set_objects_max(500);
     rl_material_map::set_objects_max(0xC00);
@@ -328,6 +351,7 @@ void game_render_system_init(rl_init_params& rl_params, keen::GraphicsCommandWri
     rl_fog_volume::set_objects_max(1);
     rl_skin_bone_manager_set_pool_sizes(0x80, 0x4A0);
     rl_mesh::set_objects_max(0x800);
+#endif
     // The kd tree maximum is the sum of the classes that own one: the deformable and skirt mesh instances (their
     // defaults, 1000 each), the skin instances, the shared bases and the destroyable instances.
     rl_fp_kdtree::set_objects_max(rl_deformable_mesh_instance::get_objects_max() + rl_skirt_mesh_instance::get_objects_max() + rl_skin_instance::get_objects_max() + rl_destroyable_model_instance_shared_base::get_objects_max() + rl_destroyable_model_instance::get_objects_max());
