@@ -17,10 +17,13 @@
 // The class factory (:10): class id 0x68F93FD7, 1600 instances.
 // <rl_renderable_particles_instance::factory_init> 0x00515990 (:10)
 // <rl_renderable_particles_instance::create> 0x0052CF10 (:10)
-RL_FACTORY_CLASS_CORE(rl_renderable_particles_instance, 0x68F93FD7, 1600)
+// OpenRFG: x25 on x64 with the vfx effects (vfx_effect_manager::max_effects): one per emitter of an effect.
+RL_FACTORY_CLASS_CORE(rl_renderable_particles_instance, 0x68F93FD7, OPENRFG_ZONE_POOL(1600))
 
 // The parametric constant blocks of all parametric instances (one each).
-object_pool<rl_renderable_particles_instance::parametric_constant_data, 1400, 1> rl_renderable_particles_instance::ms_parametric_constants_data_pool; // 0x01BBBE80
+// OpenRFG: x25 on x64 with the instances; effects_play refuses every visual effect once fewer than 20 are free, so the
+// placed effects of 15x15 zones would otherwise stop explosions and impacts from showing.
+object_pool<rl_renderable_particles_instance::parametric_constant_data, OPENRFG_ZONE_POOL(1400), 1> rl_renderable_particles_instance::ms_parametric_constants_data_pool; // 0x01BBBE80
 
 // 0x004D9600
 rl_renderable_particles_instance::parametric_constant_data::parametric_constant_data()

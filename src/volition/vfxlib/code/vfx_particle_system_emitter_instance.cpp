@@ -34,7 +34,8 @@ vector vfx_particle_system_emitter_instance::ms_random_vector; // 0x03A23C94
 // <vfx_particle_system_emitter_instance::factory_init> 0x00CAFD80 (:17)
 // <vfx_particle_system_emitter_instance::release> 0x00CAFE80 (:17)
 // <vfx_particle_system_emitter_instance::create> 0x00CB5E30 (:17)
-RL_FACTORY_CLASS_IMPLEMENTATION(vfx_particle_system_emitter_instance, 0x5EE95F7B, 1600)
+// OpenRFG: x25 on x64 with the vfx effects (vfx_effect_manager::max_effects).
+RL_FACTORY_CLASS_IMPLEMENTATION(vfx_particle_system_emitter_instance, 0x5EE95F7B, OPENRFG_ZONE_POOL(1600))
 
 // Magic numbers: rotation start angles span [-2 pi, 2 pi]; an angle of exactly 0 that must turn negative becomes 2 pi.
 static const float VFX_TWO_PI = 6.2831855f;

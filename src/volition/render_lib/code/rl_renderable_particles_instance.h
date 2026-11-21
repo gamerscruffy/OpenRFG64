@@ -260,7 +260,7 @@ private:
     int m_frame_number; // 0xC8
     rl_renderable_particles* m_renderable_particles_p; // 0xCC
     static const int PARAMETRIC_CONSTANT_DATA_ENTRIES_MAX; // 0x012BED34
-    static object_pool<parametric_constant_data,1400,1> ms_parametric_constants_data_pool; // 0x01BBBE80
+    static object_pool<parametric_constant_data,OPENRFG_ZONE_POOL(1400),1> ms_parametric_constants_data_pool; // 0x01BBBE80
     float m_opacity; // 0xD0
     int m_num_tails; // 0xD4
     rl_particle_base::tail_data* m_tails; // 0xD8

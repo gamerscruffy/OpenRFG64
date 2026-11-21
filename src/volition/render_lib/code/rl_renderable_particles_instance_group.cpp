@@ -15,7 +15,8 @@
 // The class factory (:11): class id 0x74F67CC2, 512 groups.
 // <rl_renderable_particles_instance_group::factory_init> 0x00515C50 (:11)
 // <rl_renderable_particles_instance_group::create> 0x0054CE40 (:11)
-RL_FACTORY_CLASS_CORE(rl_renderable_particles_instance_group, 0x74F67CC2, 512)
+// OpenRFG: x25 on x64, one per vfx effect (vfx_effect_manager::max_effects).
+RL_FACTORY_CLASS_CORE(rl_renderable_particles_instance_group, 0x74F67CC2, OPENRFG_ZONE_POOL(512))
 
 // 0x00543A50 (:15): the effect material tint starts white.
 rl_renderable_particles_instance_group::rl_renderable_particles_instance_group()
