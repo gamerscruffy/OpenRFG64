@@ -86,6 +86,14 @@ public:
 
 };
 
+#ifdef OPENRFG_X64
+#define RL_TERRAIN_MAX_INSTANCES 4096
+#define RL_TERRAIN_MAX_CHUNKS 8192
+#else
+#define RL_TERRAIN_MAX_INSTANCES 1024
+#define RL_TERRAIN_MAX_CHUNKS 2048
+#endif
+
 // size 0x3D308
 class rl_terrain_renderer : public rl_iterrain_renderer
 {
@@ -166,16 +174,18 @@ protected:
     pool_list<rl_scene_entity*> m_visible_skirt_instances; // 0x54
     pool_list<rl_scene_entity*> m_visible_alpha_skirt_instances; // 0x6C
     pool_list<rl_scene_entity*> m_visible_road_instances; // 0x84
-    farray<rl_renderable_instance*,1024> m_high_lod_list; // 0x9C
-    farray<rl_renderable_instance*,1024> m_blend_lod_list; // 0x10AC
-    farray<rl_renderable_instance*,1024> m_combine_lod_list; // 0x20BC
-    farray<RenderChunkHeader,2048> m_chunkHeader; // 0x30CC
-    farray<RenderChunk,2048> m_chunksLod0; // 0x1F0DC
-    farray<RenderChunk,2048> m_chunksLod1; // 0x270EC
-    farray<RenderChunk,2048> m_chunksLod2; // 0x2F0FC
-    farray<RenderChunk*,2048> m_highLodChunks; // 0x3710C
-    farray<RenderChunk*,2048> m_blendLodChunks; // 0x3911C
-    farray<RenderChunk*,2048> m_combineLodChunks; // 0x3B12C
+    // OpenRFG: RL_TERRAIN_MAX_INSTANCES / RL_TERRAIN_MAX_CHUNKS are 1024 / 2048 in the original; Terrain Distance up to
+    // 15x15 on 64-bit draws far more patches (86 terrain cells already filled the 2048 LOD 2 chunks).
+    farray<rl_renderable_instance*,RL_TERRAIN_MAX_INSTANCES> m_high_lod_list; // 0x9C
+    farray<rl_renderable_instance*,RL_TERRAIN_MAX_INSTANCES> m_blend_lod_list; // 0x10AC
+    farray<rl_renderable_instance*,RL_TERRAIN_MAX_INSTANCES> m_combine_lod_list; // 0x20BC
+    farray<RenderChunkHeader,RL_TERRAIN_MAX_CHUNKS> m_chunkHeader; // 0x30CC
+    farray<RenderChunk,RL_TERRAIN_MAX_CHUNKS> m_chunksLod0; // 0x1F0DC
+    farray<RenderChunk,RL_TERRAIN_MAX_CHUNKS> m_chunksLod1; // 0x270EC
+    farray<RenderChunk,RL_TERRAIN_MAX_CHUNKS> m_chunksLod2; // 0x2F0FC
+    farray<RenderChunk*,RL_TERRAIN_MAX_CHUNKS> m_highLodChunks; // 0x3710C
+    farray<RenderChunk*,RL_TERRAIN_MAX_CHUNKS> m_blendLodChunks; // 0x3911C
+    farray<RenderChunk*,RL_TERRAIN_MAX_CHUNKS> m_combineLodChunks; // 0x3B12C
     farray<rl_scene_entity*,OPENRFG_MAX_ZONES * 9 + 19> m_low_lod_scene_list; // 0x3D13C
     unsigned int m_depth_only_material_handle; // 0x3D2DC
     rl_material* m_depth_only_material; // 0x3D2E0

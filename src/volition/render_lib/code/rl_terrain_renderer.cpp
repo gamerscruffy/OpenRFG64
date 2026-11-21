@@ -370,11 +370,11 @@ extern float RL_reserved_landmark_depth_range; // 0x0150A618, rl_scene_renderer.
 extern bool Rl_terrain_skirt_rendering_enable; // 0x014FA54D, rl_skirt_mesh_instance.cpp
 
 // Magic numbers: the visible list sizes.
-const int rl_terrain_renderer::VISIBLE_RENDERABLE_INSTANCES_MAX_DEFAULT = 1024; // 0x012BECE8
+const int rl_terrain_renderer::VISIBLE_RENDERABLE_INSTANCES_MAX_DEFAULT = RL_TERRAIN_MAX_INSTANCES; // 0x012BECE8
 const int rl_terrain_renderer::VISIBLE_LOW_LOD_INSTANCES_MAX_DEFAULT = 100; // 0x012BECEC
 const int rl_terrain_renderer::VISIBLE_LANDMARK_LOD_INSTANCES_MAX_DEFAULT = 100; // 0x012BECF0
 rl_terrain_renderer* rl_terrain_renderer::ms_current_instance_p = nullptr; // 0x01B7BD44
-int rl_terrain_renderer::ms_visible_renderable_instances_max = 1024; // 0x0150A60C
+int rl_terrain_renderer::ms_visible_renderable_instances_max = RL_TERRAIN_MAX_INSTANCES; // 0x0150A60C (1024)
 int rl_terrain_renderer::ms_visible_low_lod_instances_max = OPENRFG_MAX_ZONES * 9 + 19; // 0x0150A610 (100: 9 zones of 9 low LOD patches; OpenRFG: sized for OPENRFG_MAX_ZONES)
 int rl_terrain_renderer::ms_visible_landmark_lod_instances_max = 100; // 0x0150A614
 
@@ -516,9 +516,10 @@ bool rl_terrain_renderer::init()
     m_visible_low_lod_instances.init_dynamic(ms_visible_low_lod_instances_max);
     m_visible_landmark_lod_instances.init_dynamic(ms_visible_landmark_lod_instances_max);
     // Magic numbers: the skirt, alpha skirt and road list sizes.
-    m_visible_skirt_instances.init_dynamic(0x1000);
-    m_visible_alpha_skirt_instances.init_dynamic(0x800);
-    m_visible_road_instances.init_dynamic(0x1000);
+    // OpenRFG: scaled with RL_TERRAIN_MAX_INSTANCES (x4 on 64-bit).
+    m_visible_skirt_instances.init_dynamic(0x1000 * (RL_TERRAIN_MAX_INSTANCES / 1024));
+    m_visible_alpha_skirt_instances.init_dynamic(0x800 * (RL_TERRAIN_MAX_INSTANCES / 1024));
+    m_visible_road_instances.init_dynamic(0x1000 * (RL_TERRAIN_MAX_INSTANCES / 1024));
     m_initialized = true;
     return true;
 }
@@ -598,9 +599,19 @@ void rl_terrain_renderer::prerender(const rl_camera* camera_p, rl_renderer& rend
     m_chunksLod0.resize(0);
     m_chunksLod1.resize(0);
     m_chunksLod2.resize(0);
+#ifdef OPENRFG_X64
+    // OpenRFG: at RL_TERRAIN_MAX_CHUNKS these and ranks below are ~160 KB, kept off the stack (render thread only).
+    static farray<unsigned int,RL_TERRAIN_MAX_CHUNKS> keys_lod0;
+    static farray<unsigned int,RL_TERRAIN_MAX_CHUNKS> keys_lod1;
+    static farray<unsigned int,RL_TERRAIN_MAX_CHUNKS> keys_lod2;
+    keys_lod0.resize(0);
+    keys_lod1.resize(0);
+    keys_lod2.resize(0);
+#else
     farray<unsigned int,2048> keys_lod0;
     farray<unsigned int,2048> keys_lod1;
     farray<unsigned int,2048> keys_lod2;
+#endif
     for (int i = 0; i < m_visible_renderable_instances.size(); i++)
     {
         rl_height_mesh_instance* instance_p = (rl_height_mesh_instance*)m_visible_renderable_instances[i];
@@ -642,7 +653,11 @@ void rl_terrain_renderer::prerender(const rl_camera* camera_p, rl_renderer& rend
     m_blendLodChunks.resize(0);
     m_combineLodChunks.resize(0);
     // Magic number: room for the ranks of 2048 keys and their ping-pong buffer.
+#ifdef OPENRFG_X64
+    static unsigned int ranks[RL_TERRAIN_MAX_CHUNKS * 2 + 1];
+#else
     unsigned int ranks[4097];
+#endif
     base_array<RenderChunk>* const chunk_lists[3] = { &m_chunksLod0, &m_chunksLod1, &m_chunksLod2 };
     base_array<unsigned int>* const key_lists[3] = { &keys_lod0, &keys_lod1, &keys_lod2 };
     base_array<RenderChunk*>* const sorted_lists[3] = { &m_highLodChunks, &m_blendLodChunks, &m_combineLodChunks };
@@ -1070,8 +1085,24 @@ void heightMeshInstanceSetInstance(keen::GraphicsCommandWriter* pCommandWriter, 
 // 0-30 the material pointer / 2. Material slots 0-2 are the LOD materials (LOD 0 slot 0, else slot 1).
 void heightMeshInstanceFillChunks(unsigned int, rl_height_mesh_instance* pInstance, rl_renderer& renderer, base_array<rl_terrain_renderer::RenderChunkHeader>& chunkHeaders, base_array<rl_terrain_renderer::RenderChunk>& chunks, base_array<unsigned int>& keys)
 {
-    rl_terrain_renderer::RenderChunkHeader* pHeader = chunkHeaders.add_in_place();
     const vector& render_offset = renderer.get_render_offset();
+#ifdef OPENRFG_X64
+    // OpenRFG: a patch that does not fit is skipped (the original writes through null below). Rate-limited trace.
+    {
+        const rl_mesh* fit_mesh_p = (const rl_mesh*)pInstance->get_renderable();
+        const int fit_blocks = fit_mesh_p->get_mesh_data()->sub_meshes[pInstance->get_sub_mesh_index()].num_render_blocks;
+        if (chunkHeaders.size() >= chunkHeaders.capacity() || chunks.size() + fit_blocks > chunks.capacity() || keys.size() + fit_blocks > keys.capacity())
+        {
+            static unsigned int s_overflow_count = 0;
+            if ((s_overflow_count++ & 1023) == 0)
+            {
+                GAME_TRACE("render", "terrain chunks full, patch skipped (%u so far): chunks %d + %d of %d, headers %d", s_overflow_count, chunks.size(), fit_blocks, chunks.capacity(), chunkHeaders.size());
+            }
+            return;
+        }
+    }
+#endif
+    rl_terrain_renderer::RenderChunkHeader* pHeader = chunkHeaders.add_in_place();
     const vector& target = pInstance->get_target_position();
     pHeader->translation = make_float4(vector(target.x - render_offset.x, target.y - render_offset.y, target.z - render_offset.z), 0.0f);
     pHeader->zoneOffset = make_float4(rl_terrain_subzone_offset(pInstance->get_position()), 0.0f);
@@ -1218,7 +1249,7 @@ void rl_terrain_renderer::render_pass(keen::GraphicsCommandWriter* pCommandWrite
         }
         return;
     }
-    farray<RenderChunk*,2048>& chunks = lod_level == 0 ? m_highLodChunks : (lod_level == 1 ? m_blendLodChunks : m_combineLodChunks);
+    farray<RenderChunk*,RL_TERRAIN_MAX_CHUNKS>& chunks = lod_level == 0 ? m_highLodChunks : (lod_level == 1 ? m_blendLodChunks : m_combineLodChunks);
     const rl_material* current_material_p = nullptr;
     for (int i = 0; i < chunks.size(); i++)
     {
