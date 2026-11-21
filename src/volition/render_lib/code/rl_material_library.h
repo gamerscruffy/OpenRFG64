@@ -45,7 +45,16 @@ public:
 unsigned int hash_mat_key_wrapper(mat_key_wrapper key, unsigned int size); // 0x004C2C60 (:151)
 
 // Magic number: 5120 materials at most.
-extern data_hash_table<mat_key_wrapper, matlib_bucket*, &hash_mat_key_wrapper, 5120, unsigned short> Matlib_entry_hash; // 0x01C371C8
+#ifdef OPENRFG_X64
+#define MATLIB_MAX_ENTRIES 16384 // OpenRFG x64: raised for the 15x15 view distances (rl_material_library.cpp)
+#define MATLIB_MAX_BUCKETS 8192
+#define MATLIB_HASH_SIZE 16384
+#else
+#define MATLIB_MAX_ENTRIES 2560
+#define MATLIB_MAX_BUCKETS 2560
+#define MATLIB_HASH_SIZE 5120
+#endif
+extern data_hash_table<mat_key_wrapper, matlib_bucket*, &hash_mat_key_wrapper, MATLIB_HASH_SIZE, unsigned short> Matlib_entry_hash; // 0x01C371C8
 
 matlib_bucket* alloc_bucket(); // 0x00511390 (:247)
 void free_bucket(matlib_bucket* bucket_p); // 0x00527B80 (:263)

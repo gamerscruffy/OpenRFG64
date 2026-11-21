@@ -19,10 +19,13 @@ static thread_local int Matlib_render_material_pass = 0; // TLS 0x20
 static thread_local unsigned int Matlib_next_handle_guard = 0; // TLS 0x28
 
 // Magic numbers: 2560 buckets and material entries, 16 deferred overrides.
-static object_pool<matlib_entry, 2560, 1> Matlib_entry_server; // 0x01C2C500
-static object_pool<matlib_bucket, 2560, 1> Matlib_bucket_pool; // 0x01CA4A20
+// OpenRFG x64: at the 15x15 view distances the 2560 material entries run out (seen: entries 2560 of 2560 with add and
+// register failures climbing), and objects and road blocks that streamed in afterwards have no material and are not
+// drawn. The bucket index must fit the 16 handle bits and the hash index type (0xFFFF = invalid).
+static object_pool<matlib_entry, MATLIB_MAX_ENTRIES, 1> Matlib_entry_server; // 0x01C2C500
+static object_pool<matlib_bucket, MATLIB_MAX_BUCKETS, 1> Matlib_bucket_pool; // 0x01CA4A20
 static object_pool<rl_deferred_material_handle_override, 16, 1> Deferred_handle_override_pool; // 0x01C31F40
-data_hash_table<mat_key_wrapper, matlib_bucket*, &hash_mat_key_wrapper, 5120, unsigned short> Matlib_entry_hash(false); // 0x01C371C8
+data_hash_table<mat_key_wrapper, matlib_bucket*, &hash_mat_key_wrapper, MATLIB_HASH_SIZE, unsigned short> Matlib_entry_hash(false); // 0x01C371C8
 
 extern bool rl_is_locked();
 
