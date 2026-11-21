@@ -23,12 +23,16 @@
 // Capped at 65000: object_pool links its entries with 16-bit indices (index_link).
 #define OPENRFG_ZONE_POOL(n) ((n) * 25 > 65000 ? 65000 : (n) * 25)
 #define OPENRFG_ZONE_LIST(n) ((n) * 3)
+// render_lib factory pools (pool_list, no 16-bit links): x50, twice the zone ratio, since a full 15x15 load already
+// needed every slot of x25 and the terrain and roads of the outer zones went missing.
+#define OPENRFG_RL_POOL(n) ((n) * 50)
 #define OPENRFG_ZONE_HASH_INDEX unsigned short
 #define OPENRFG_OBJECT_INDEX unsigned int
 #else
 #define OPENRFG_MAX_ZONES 9
 #define OPENRFG_ZONE_POOL(n) (n)
 #define OPENRFG_ZONE_LIST(n) (n)
+#define OPENRFG_RL_POOL(n) (n)
 #define OPENRFG_ZONE_HASH_INDEX unsigned char
 #define OPENRFG_OBJECT_INDEX unsigned short
 #endif

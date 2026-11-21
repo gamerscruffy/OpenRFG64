@@ -7,6 +7,8 @@
 
 #include <stdlib.h>
 
+#include "keen/base/trace.hpp"
+
 linked_list_p<rl_class_factory_info>* rl_class_factory_info::ms_class_factories = nullptr; // 0x01B7BCFC
 int rl_class_factory_info::ms_num_exhausted_factories = 0; // 0x01B7BD00
 linked_list_p<rl_class_dynamic_info>* rl_class_dynamic_info::ms_dynamic_classes = nullptr; // 0x01B7BD0C
@@ -59,6 +61,12 @@ bool rl_class_factory_info::get_display_exhausted_factories_warning()
 void rl_class_factory_info::increment_num_exhausted_factories()
 {
     ms_num_exhausted_factories++;
+}
+
+// OpenRFG: see rl_factory_rtti.h.
+void rl_class_factory_info::log_create_failed(const char* class_name, int objects_max)
+{
+    keen::debug::nativePrintArgs("rl factory %s exhausted: create failed (max %d)\n", class_name, objects_max);
 }
 
 // 0x004B68A0 (.h:547)

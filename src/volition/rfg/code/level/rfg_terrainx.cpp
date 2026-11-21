@@ -335,7 +335,15 @@ bool terrain_load_subzone(const char* filename, unsigned int srid, unsigned char
         align_offset(gpu_offset, 16);
         mesh_info.name[0] = '\0';
         road.m_mesh_data_p.from_pointer(rl_mesh_data_load_validated(cpu_data, gpu_data, offset, gpu_offset, &mesh_info));
-        road.m_mesh_p.from_pointer(rl_mesh::create());
+        rl_mesh* road_mesh = rl_mesh::create();
+#ifdef OPENRFG_X64
+        // OpenRFG: an exhausted rl_mesh pool used to crash here (init through null); fail the load as other errors do.
+        if (road_mesh == nullptr)
+        {
+            return false;
+        }
+#endif
+        road.m_mesh_p.from_pointer(road_mesh);
         road.m_mesh_p.to_pointer()->init(road.m_mesh_data_p.to_pointer(), mesh_info, false);
         road.m_mesh_instances_p.from_pointer((et_ptr_offset<rl_renderable_instance,0>*)(cpu_data + offset));
         offset += road.m_num_mesh_instances * 4;
@@ -353,7 +361,14 @@ bool terrain_load_subzone(const char* filename, unsigned int srid, unsigned char
             road.m_material_handle = rl_material_library_register(road.m_material_p.to_pointer());
         }
         map_data->materials[0] = road.m_material_handle;
-        road.m_material_map_p.from_pointer(rl_material_map::create());
+        rl_material_map* road_map = rl_material_map::create();
+#ifdef OPENRFG_X64
+        if (road_map == nullptr)
+        {
+            return false;
+        }
+#endif
+        road.m_material_map_p.from_pointer(road_map);
         road.m_material_map_p.to_pointer()->set_map_data(map_data);
     }
     subzone->m_header_version = (int)version;

@@ -30,6 +30,8 @@ public:
     static void increment_num_exhausted_factories(); // 0x004B6890 (.h:546)
     static void decrement_num_exhausted_factories(); // 0x004B68A0 (.h:547)
     static int get_num_exhausted_factories();
+    // OpenRFG: logs (once per class) that create() found the pool empty; render pools otherwise run out silently.
+    static void log_create_failed(const char* class_name, int objects_max);
 
     rl_class_factory_info* prev; // 0x00
     rl_class_factory_info* next; // 0x04
@@ -116,6 +118,12 @@ public:
     { \
         if (ms_object_pool.size() < 1) \
         { \
+            static bool s_logged = false; \
+            if (!s_logged) \
+            { \
+                s_logged = true; \
+                rl_class_factory_info::log_create_failed(ms_class_factory_info.m_class_name, ms_class_factory_info.m_objects_max); \
+            } \
             return nullptr; \
         } \
         CLASS* data_p = ms_object_pool.remove_back(); \
