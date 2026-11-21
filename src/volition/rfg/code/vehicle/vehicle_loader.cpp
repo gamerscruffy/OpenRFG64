@@ -31,9 +31,63 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 // ---- file-static globals
 static str_data_hash_table<vehicle_subinfo*,32,64,unsigned char> Vehicle_filename_hash; // 0x03770230
+
+#ifdef OPENRFG_X64
+// Which file each loaded subinfo block belongs to. At large World Detail Distance a new .ccar_pc can be loaded into
+// the slot memory of one whose unload has not run yet; the hash then still maps the old name to that block, and the
+// old unload frees the new vehicle's collision models (crash: null shape in vehicle_stream_create_body). A load that
+// finds its block registered to another name drops that stale name first.
+struct vehicle_subinfo_owner
+{
+    const vehicle_subinfo* subinfo;
+    char filename[64];
+};
+static vehicle_subinfo_owner Vehicle_subinfo_owners[64];
+
+static void vehicle_subinfo_owner_claim(const char* filename, const vehicle_subinfo* subinfo, unsigned int srid)
+{
+    vehicle_subinfo_owner* free_entry = NULL;
+    for (int i = 0; i < 64; i++) {
+        vehicle_subinfo_owner& e = Vehicle_subinfo_owners[i];
+        if (e.subinfo == NULL) {
+            if (free_entry == NULL) {
+                free_entry = &e;
+            }
+            continue;
+        }
+        if (e.subinfo == subinfo || v_stricmp(e.filename, filename) == 0) {
+            if (v_stricmp(e.filename, filename) != 0) {
+                GAME_TRACE("vehicle", "subinfo %p reused by %s (srid=%u) before %s unloaded: dropping the stale name",
+                           subinfo, filename, srid, e.filename);
+                Vehicle_filename_hash.remove(e.filename);
+            }
+            e.subinfo = NULL;
+            if (free_entry == NULL) {
+                free_entry = &e;
+            }
+        }
+    }
+    if (free_entry != NULL) {
+        free_entry->subinfo = subinfo;
+        strncpy(free_entry->filename, filename, sizeof(free_entry->filename) - 1);
+        free_entry->filename[sizeof(free_entry->filename) - 1] = '\0';
+    }
+}
+
+static void vehicle_subinfo_owner_release(const char* filename)
+{
+    for (int i = 0; i < 64; i++) {
+        vehicle_subinfo_owner& e = Vehicle_subinfo_owners[i];
+        if (e.subinfo != NULL && v_stricmp(e.filename, filename) == 0) {
+            e.subinfo = NULL;
+        }
+    }
+}
+#endif
 
 extern float hkConvexShapeDefaultRadius; // hkpconvexshape.cpp
 
@@ -360,6 +414,11 @@ bool vehicle_subinfo_load(const char* filename, unsigned int srid, unsigned char
         return false;
     }
     vehicle_load_constraints(subinfo);
+#ifdef OPENRFG_X64
+    vehicle_subinfo_owner_claim(filename, subinfo, srid);
+    GAME_TRACE("vehicle", "container loaded: %s subinfo=%p srid=%u cm=%u", filename, subinfo, srid,
+               subinfo->m_cm_dynamics_info.m_cm_index);
+#endif
     Vehicle_filename_hash.insert_key_data(filename, subinfo);
     return true;
 }
@@ -369,6 +428,18 @@ void vehicle_subinfo_unload(const char* filename, unsigned int srid)
 {
     GAME_TRACE("vehicle", "container unload: %s", filename);
     vehicle_subinfo* subinfo = NULL;
+#ifdef OPENRFG_X64
+    vehicle_subinfo_owner_release(filename);
+    if (Vehicle_filename_hash.get(filename, subinfo) && subinfo != NULL) {
+        GAME_TRACE("vehicle", "container unload: %s subinfo=%p srid=%u cm=%u", filename, subinfo, srid,
+                   subinfo->m_cm_dynamics_info.m_cm_index);
+    }
+    else {
+        GAME_TRACE("vehicle", "container unload: %s srid=%u not registered (stale or failed load), nothing freed",
+                   filename, srid);
+    }
+    subinfo = NULL;
+#endif
     if (Vehicle_filename_hash.get(filename, subinfo) && subinfo != NULL) {
         ((rl_mesh*)subinfo->m_vehicle_mesh)->release();
         subinfo->m_vehicle_mesh = (rl_mesh*)NULL;

@@ -92,6 +92,7 @@
 #include "volition/rfg/code/vehicle/vehicle_deformation.h"
 #include "volition/rfg/code/vehicle/vehicle_interaction.h"
 #include "volition/rfg/code/vehicle/vehicle_render.h"
+#include "volition/rfg/code/gamewide/game_trace.h"
 #include "volition/rfg/code/vehicle/vehicle_system.h"
 #include "volition/rfg/code/vehicle_ai/vehicle_ai.h"
 #include "volition/vlib/code/math/spline.h"
@@ -1600,6 +1601,16 @@ static void vehicle_stream_create_body(vehicle* vp, vehicle::resource_dependent_
     v_rdd->m_saved_collision_filter = create_info.collision_type;
 
     const hkpShape* shape = havok_cm_manager_get(v_rdd->sub_info->m_cm_dynamics_info.m_cm_index);
+#ifdef OPENRFG_X64
+    // A missing collision model (its container unloaded under it at large World Detail Distance) would crash in
+    // getType; use the default 1 m box instead, without the MOPP that belongs to the real shape.
+    const bool cm_missing = shape == nullptr;
+    if (cm_missing) {
+        GAME_TRACE("vehicle", "no collision model for %s (cm=%u): using the default box", vp->info != nullptr ? vp->info->name : "?",
+                   v_rdd->sub_info->m_cm_dynamics_info.m_cm_index);
+        shape = havok_cm_manager_get(0);
+    }
+#endif
     hkArray<unsigned int,hkContainerHeapAllocator> filters;
     if (shape->getType() == hkcdShapeType::LIST) {
         unsigned int chassis_filter = create_info.collision_type;
@@ -1619,6 +1630,11 @@ static void vehicle_stream_create_body(vehicle* vp, vehicle::resource_dependent_
     }
     create_info.shape = havok_filter_shape_collection_create(shape, filters);
     const hkpMoppCode* mopp = v_rdd->sub_info->m_cm_dynamics_info.m_mopp_code;
+#ifdef OPENRFG_X64
+    if (cm_missing) {
+        mopp = NULL;
+    }
+#endif
     if (mopp != NULL) {
         hkpMoppBvTreeShape* tree = new hkpMoppBvTreeShape((hkpShapeCollection*)create_info.shape, mopp);
         create_info.shape->removeReference();
