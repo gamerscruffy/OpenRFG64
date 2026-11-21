@@ -281,6 +281,8 @@ void world::collect_sorted_list(base_array<object*>& list, havok_bpi* island)
 bool world::monitor_grid()
 {
     // The streaming region: the level radius around the stream position (the whole territory in multiplayer).
+    // OpenRFG: the World Detail Distance option is applied before the level radius is read below.
+    grid->apply_world_detail_option();
     stream_layer& level = grid->layers[LAYER_LEVEL];
     vector region_min;
     vector region_max;

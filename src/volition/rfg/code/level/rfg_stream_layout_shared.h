@@ -143,6 +143,7 @@ private:
     bool add_fmesh(const char* filename, layout_layer layer, const vector& bmin, const vector& bmax, vlib_platform plat); // 0x0092A6B0 (:2551)
 public:
     void do_frame(const vector& stream_pos, bool single_zone_mode); // 0x00930FB0 (:3790)
+    void apply_world_detail_option(); // OpenRFG (not in the binary)
     void do_fragmentation_handling(); // 0x00922180 (:3910)
     void set_stream_radius(layout_layer layer, float radius); // 0x0091AEB0 (:3995)
     float get_stream_radius(layout_layer layer); // 0x0091AFB0 (:4007)

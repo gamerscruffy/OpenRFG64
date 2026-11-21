@@ -774,32 +774,37 @@ void stream_grid::clear()
     compact_wait_ts.invalidate();
 }
 
+// OpenRFG (not in the binary): the World Detail Distance option. A change takes effect here, unless the fragmentation
+// handling has the radii shrunk (it restores them to the option's radius when it is done). world::monitor_grid calls it
+// before it reads the level radius: its subzone deinstantiation must see a smaller radius before do_frame releases the
+// cells, or their height mesh instances stay in the scene after the cells' meshes are freed.
+void stream_grid::apply_world_detail_option()
+{
+    const int level = rl_lod_get_world_detail_level(rl_render_lib::get_instance()->get_level_of_detail());
+    if (level != s_world_detail_level)
+    {
+        s_world_detail_level = level;
+        if (!compact_ts.valid())
+        {
+            set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(level));
+        }
+        char text[200];
+        snprintf(text, sizeof(text), "STREAM world detail distance %d: level radius %.1f, level memory %u / %u KB used", level, stream_world_detail_level_radius(level), Level_memmgr.space_used() / 1024, Level_memmgr.space_max() / 1024);
+        openrfg_log(text);
+    }
+    static unsigned int s_frames = 0;
+    if (level > 0 && s_frames++ % 600 == 0)
+    {
+        char text[200];
+        snprintf(text, sizeof(text), "STREAM level cells %d, terrain cells %d, level memory %u / %u KB used, largest free %u KB", layers[LAYER_LEVEL].active_cells.size(), layers[LAYER_TERRAIN].active_cells.size(), Level_memmgr.space_used() / 1024, Level_memmgr.space_max() / 1024, Level_memmgr.largest_allocation_possible() / 1024);
+        openrfg_log(text);
+    }
+}
+
 // 0x00930FB0 (:3790)
 void stream_grid::do_frame(const vector& stream_pos, bool single_zone_mode)
 {
-    // OpenRFG: the World Detail Distance option. A change takes effect here, unless the fragmentation handling has
-    // the radii shrunk (it restores them to the option's radius when it is done).
-    {
-        const int level = rl_lod_get_world_detail_level(rl_render_lib::get_instance()->get_level_of_detail());
-        if (level != s_world_detail_level)
-        {
-            s_world_detail_level = level;
-            if (!compact_ts.valid())
-            {
-                set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(level));
-            }
-            char text[200];
-            snprintf(text, sizeof(text), "STREAM world detail distance %d: level radius %.1f, level memory %u / %u KB used", level, stream_world_detail_level_radius(level), Level_memmgr.space_used() / 1024, Level_memmgr.space_max() / 1024);
-            openrfg_log(text);
-        }
-        static unsigned int s_frames = 0;
-        if (level > 0 && s_frames++ % 600 == 0)
-        {
-            char text[200];
-            snprintf(text, sizeof(text), "STREAM level cells %d, terrain cells %d, level memory %u / %u KB used, largest free %u KB", layers[LAYER_LEVEL].active_cells.size(), layers[LAYER_TERRAIN].active_cells.size(), Level_memmgr.space_used() / 1024, Level_memmgr.space_max() / 1024, Level_memmgr.largest_allocation_possible() / 1024);
-            openrfg_log(text);
-        }
-    }
+    apply_world_detail_option();
     // The level cell under the stream position masks level cells (stream_mask).
     stream_grid_cell* current = nullptr;
     int current_index;
