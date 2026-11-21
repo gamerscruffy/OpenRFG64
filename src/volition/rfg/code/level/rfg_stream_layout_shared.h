@@ -126,7 +126,12 @@ public:
     vector stream_bmin; // 0x30
     vector stream_bmax; // 0x3C
     farray<stream_grid_cell*,STREAM_MAX_ACTIVE_CELLS> active_cells; // 0x48
+#ifdef OPENRFG_X64
+    // OpenRFG: every active level cell outside the current cell's mask can be masked, up to 15x15 on 64-bit.
+    farray<masked_cell,STREAM_MAX_ACTIVE_CELLS> masked_cells;
+#else
     farray<masked_cell,50> masked_cells; // 0xBC
+#endif
     vector cell_dim; // 0x4B4
 };
 

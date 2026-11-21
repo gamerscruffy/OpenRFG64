@@ -760,7 +760,13 @@ object_path_road* object_road_get_closest_road(const vector& point, bool use_spe
 // 0x00A68E00 (:1280)
 object_path_road* object_road_get_closest_road(const vector& point, bool use_special_roads, vector& closest_point, float& u_value, float search_radius, bool ignore_breaks, const vector* fvec, const object_path_road* predisposed_road, bool collect_gps)
 {
+#ifdef OPENRFG_X64
+    // OpenRFG: 8050 roads make this 64 KB, too much for a worker thread's stack; kept per thread instead.
+    static thread_local farray<object_path_road*, MAX_ROADS> candidates;
+    candidates.remove_all();
+#else
     farray<object_path_road*, MAX_ROADS> candidates;
+#endif
     for (int i = 0; i < World.get_num_objects<object_path_road>(); i++)
     {
         object_path_road* road = World.get_object<object_path_road>(i);
@@ -870,7 +876,13 @@ object_path_road* object_road_get_closest_road_zone(const vector& point, bool us
     {
         return NULL;
     }
+#ifdef OPENRFG_X64
+    // OpenRFG: 8050 roads make this 64 KB, too much for a worker thread's stack; kept per thread instead.
+    static thread_local farray<object_path_road*, MAX_ROADS> candidates;
+    candidates.remove_all();
+#else
     farray<object_path_road*, MAX_ROADS> candidates;
+#endif
     for (int i = 0; i < World.get_num_objects<object_path_road>(); i++)
     {
         object_path_road* road = World.get_object<object_path_road>(i);

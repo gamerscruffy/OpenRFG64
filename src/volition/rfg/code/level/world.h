@@ -338,7 +338,12 @@ private:
     world_deserialize_state deserialize_state; // 0x24E0
     virtual_mempool* deserialize_pool; // 0x24E4
 public:
+#ifdef OPENRFG_X64
+    // OpenRFG: save_state_start queues every loaded zone; Terrain Distance 15x15 keeps up to 225 loaded.
+    farray<world_zone*,OPENRFG_MAX_ZONES> deserialize_list;
+#else
     farray<world_zone*,32> deserialize_list; // 0x24E8
+#endif
 private:
     world_state_mode cur_world_state; // 0x2578
     world_state_buf stored_world_state[2]; // 0x257C
