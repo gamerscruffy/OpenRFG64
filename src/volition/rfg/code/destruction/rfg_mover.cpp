@@ -42,6 +42,7 @@
 #include "volition/rfg/code/destruction/rfg_mover.h"
 #ifdef OPENRFG_X64
 void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+void openrfg_log(const char* text); // crash_early.cpp
 #endif
 
 #include "volition/rfg/code/ai/ai_building_logic.h"
@@ -2275,6 +2276,31 @@ bool rfg_mover::decompress_state(rfg_destroyable_shape* shape, unsigned int chun
             shape->set_shape_state(&shape->get_object_buffer()[i], true);
         }
         break;
+    }
+    // OpenRFG (not in the binary): a building that comes back with saved destruction state is logged with how many of
+    // its pieces that state leaves standing, so pieces missing from an undamaged building can be told apart from a
+    // drawing problem (first 400 restores with pieces missing).
+    if (state != nullptr)
+    {
+        static int s_logged = 0;
+        int num_present = 0;
+        for (int i = 0; i < base->num_objects; i++)
+        {
+            if (shape->get_shape_state(i))
+            {
+                num_present++;
+            }
+        }
+        if (num_present < base->num_objects && s_logged < 400)
+        {
+            s_logged++;
+            c_chunk_base* log_chunk = chunk_get_base_by_uid(chunk_uid);
+            char text[320];
+            snprintf(text, sizeof(text), "MOVERSTATE #%d %s at <%.0f, %.0f, %.0f>: saved state mode %u (%d entries, %d bytes) leaves %d of %d pieces, pristine %d, mover flags 0x%08X, damage %.2f",
+                s_logged, log_chunk != nullptr ? log_chunk->name : "?", pos.x, pos.y, pos.z, mode, num_entries, (int)get_data_buf_size(rfg_mover_temporary_data::SHAPE_STATE),
+                num_present, base->num_objects, (int)flags.pristine, mover_flags, damage_pct);
+            openrfg_log(text);
+        }
     }
     if (entries != nullptr)
     {
