@@ -18,7 +18,6 @@
 #include "volition/render_lib/code/rl_renderable_instance.h"
 #include "volition/render_lib/code/rl_renderer.h"
 #include "volition/render_lib/code/rl_shadow_system.h"
-#include "volition/render_lib/code/rl_sphere.h"
 #include "volition/render_lib/code/rl_terrain_renderer.h"
 #include "volition/render_lib/code/rl_visibility_manager.h"
 #include "volition/vlib/code/os/scheduler.h"
@@ -49,52 +48,11 @@ void buildShadowParamsProjectionTexture(rl_shadow_render_parameters* pParams, rl
 // OpenRFG, dynamic light shadows stage 1: the spot light shadow map and its debug view (Ctrl+Shift+K shows the map
 // full screen, and only then is it drawn). Later stages use the map to keep shadowed pixels out of the light pass.
 bool g_spotShadowVisEnabled = false;
-// Diagnostic (Ctrl+Shift+J): draw the map from the light's own pass as is (its owner, e.g. the headlight's vehicle,
-// included) instead of the tagged casters.
+// Diagnostic (Ctrl+Shift+J): draw the map with the light's sphere pass instead of its shadow pass, to tell an empty
+// shadow pass (no casters collected) from a wrong matrix.
 bool g_spotShadowUseLightPass = false;
 static rl_render_texture* Spot_shadow_target_p = nullptr;
 static const int SPOT_SHADOW_MAP_SIZE = 1024;
-// The terrain's flags in render_shadow_pass (0: the pass's own flags). The terrain is never tagged with the shadow bit.
-static unsigned int g_shadowTerrainVisFlags = 0;
-
-// The casters of each visible spot light's shadow map, tagged once per frame after the visibility pass: the engine's
-// spot shadow pass collects only dynamic objects (characters), no buildings, so every object in the light's own pass
-// also gets the light's shadow pass bit. The light's owner (an object whose bounding sphere holds the light: the
-// vehicle around its headlight, the tower under its floodlight) loses the bit instead, or it would block its own light.
-// The light pass bits are untouched, so lighting is unchanged.
-void rl_spot_shadow_tag_casters(pool_list<rl_light*>& lights, pool_list<rl_renderable_instance*>& instances)
-{
-    for (int l = 0; l < lights.size(); l++)
-    {
-        rl_light* light_p = lights[l];
-        if (light_p->get_light_type() != rl_light::LIGHT_TYPE_SPOT_LIGHT)
-        {
-            continue;
-        }
-        const unsigned int render_bit = light_p->get_render_vis_pass_flags();
-        const unsigned int shadow_bit = light_p->get_shadow_vis_pass_flags();
-        if (render_bit == 0xFFFFFFFF || shadow_bit == 0xFFFFFFFF)
-        {
-            continue;
-        }
-        const vector& light_pos = light_p->get_position();
-        for (int i = 0; i < instances.size(); i++)
-        {
-            rl_renderable_instance* inst_p = instances[i];
-            const unsigned int flags = inst_p->get_vis_pass_flags();
-            if ((flags & (render_bit | shadow_bit)) == 0)
-            {
-                continue;
-            }
-            const rl_sphere sphere = inst_p->get_world_sphere();
-            const float dx = sphere.m_position.x - light_pos.x;
-            const float dy = sphere.m_position.y - light_pos.y;
-            const float dz = sphere.m_position.z - light_pos.z;
-            const bool owner = dx * dx + dy * dy + dz * dz < sphere.m_radius * sphere.m_radius;
-            inst_p->set_vis_pass_flags(owner ? (flags & ~shadow_bit) : ((flags & render_bit) != 0 ? (flags | shadow_bit) : flags));
-        }
-    }
-}
 
 // The spot shadow map's texture (null before the first one is drawn).
 const keen::TextureData* rl_spot_shadow_map_texture()
@@ -108,9 +66,8 @@ const keen::TextureData* rl_spot_shadow_map_texture()
 // False: the light has no shadow visibility pass, or is not a spot light.
 bool rl_scene_renderer::render_spot_light_shadow_map(rl_renderer& renderer, rl_camera& camera, rl_light& light, rl_batched_pass& batch_to_use, rl_renderable_instance** transparent_casters, unsigned int num_transparent_casters)
 {
-    const unsigned int vis_flags = g_spotShadowUseLightPass ? light.get_render_vis_pass_flags() : light.get_shadow_vis_pass_flags();
-    const unsigned int terrain_flags = light.get_render_vis_pass_flags();
-    if (light.get_light_type() != rl_light::LIGHT_TYPE_SPOT_LIGHT || vis_flags == 0xFFFFFFFF || terrain_flags == 0xFFFFFFFF)
+    const unsigned int vis_flags = light.get_shadow_vis_pass_flags();
+    if (light.get_light_type() != rl_light::LIGHT_TYPE_SPOT_LIGHT || vis_flags == 0xFFFFFFFF)
     {
         return false;
     }
@@ -160,9 +117,8 @@ bool rl_scene_renderer::render_spot_light_shadow_map(rl_renderer& renderer, rl_c
     creation_params.shadow_map_matrix = view * projection;
     creation_params.shadow_zbias = 0.0f;
     creation_params.shadow_slope_zbias = 0.0f;
-    g_shadowTerrainVisFlags = terrain_flags;
-    render_shadow_pass(renderer, camera, light, Spot_shadow_target_p->m_render_target, SPOT_SHADOW_MAP_SIZE, SPOT_SHADOW_MAP_SIZE, creation_params, batch_to_use, vis_flags, transparent_casters, num_transparent_casters, true);
-    g_shadowTerrainVisFlags = 0;
+    const unsigned int draw_flags = g_spotShadowUseLightPass ? light.get_render_vis_pass_flags() : vis_flags;
+    render_shadow_pass(renderer, camera, light, Spot_shadow_target_p->m_render_target, SPOT_SHADOW_MAP_SIZE, SPOT_SHADOW_MAP_SIZE, creation_params, batch_to_use, draw_flags, transparent_casters, num_transparent_casters, true);
     return true;
 }
 
@@ -217,7 +173,7 @@ void rl_scene_renderer::render_shadow_pass(rl_renderer& renderer, rl_camera& cam
     renderer.set_world_transform(IDENTITY_MATRIX43);
     if (m_terrain_renderer_p != nullptr)
     {
-        m_terrain_renderer_p->render_depth(renderer, camera, &light, g_shadowTerrainVisFlags != 0 ? g_shadowTerrainVisFlags : vis_flags, true);
+        m_terrain_renderer_p->render_depth(renderer, camera, &light, vis_flags, true);
     }
     batch_to_use.render(renderer, camera, vis_flags, true);
     if (num_transparent_casters != 0)
