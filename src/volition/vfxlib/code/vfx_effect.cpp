@@ -581,28 +581,91 @@ struct vfx_synthetic_light_profile
     float height; // above the effect's position
     float flicker; // 0..1 how much it flickers
     bool fades; // a one-shot (explosion): dims over the effect's duration
-    bool follows_corona; // blinks with the effect's first corona (radius and intensity)
+    bool follows_corona; // blinks with the effect's first corona (radius, color alpha and intensity keys)
+    bool hue_from_particles; // no corona color: use the first emitter's start color
 };
 
 static const vfx_synthetic_light_profile Vfx_synthetic_light_profiles[] = {
-    {"explosion", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true, false},
-    {"expl", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true, false},
-    {"blast", 1.0f, 0.55f, 0.2f, 5.0f, 25.0f, 1.0f, 0.2f, true, false},
-    {"fireball", 1.0f, 0.5f, 0.15f, 5.0f, 25.0f, 1.0f, 0.3f, true, false},
-    {"muzzle", 1.0f, 0.78f, 0.4f, 3.5f, 9.0f, 0.0f, 0.25f, true, false}, // weapon fire: a quick warm flash
-    {"fire", 1.0f, 0.45f, 0.12f, 1.5f, 7.0f, 0.6f, 0.45f, false, false},
-    {"flame", 1.0f, 0.45f, 0.12f, 1.5f, 7.0f, 0.6f, 0.45f, false, false},
-    {"burn", 1.0f, 0.45f, 0.12f, 1.4f, 6.0f, 0.6f, 0.45f, false, false},
-    {"molotov", 1.0f, 0.45f, 0.12f, 1.8f, 8.0f, 0.6f, 0.45f, false, false},
-    {"welding", 0.6f, 0.75f, 1.0f, 2.5f, 7.0f, 0.5f, 0.7f, false, false},
-    {"flare_blue", 0.3f, 0.5f, 1.0f, 2.0f, 9.0f, 0.8f, 0.1f, false, false},
-    {"flare", 1.0f, 0.25f, 0.15f, 2.0f, 9.0f, 0.8f, 0.1f, false, false},
-    {"barracade_light", 1.0f, 0.6f, 0.2f, 0.5f, 4.0f, 0.4f, 0.0f, false, true}, // construction light: small, dim, blinks with its corona
+    // The color is only the fallback: an effect's own corona (or emitter) color is used when it has one.
+    {"explosion", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true, false, true},
+    {"expl", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true, false, true},
+    {"blast", 1.0f, 0.55f, 0.2f, 5.0f, 25.0f, 1.0f, 0.2f, true, false, true},
+    {"fireball", 1.0f, 0.5f, 0.15f, 5.0f, 25.0f, 1.0f, 0.3f, true, false, true},
+    {"muzzle", 1.0f, 0.78f, 0.4f, 3.5f, 9.0f, 0.0f, 0.25f, true, false, true}, // weapon fire: a quick flash
+    {"fire", 1.0f, 0.45f, 0.12f, 1.5f, 7.0f, 0.6f, 0.45f, false, false, false},
+    {"flame", 1.0f, 0.45f, 0.12f, 1.5f, 7.0f, 0.6f, 0.45f, false, false, false},
+    {"burn", 1.0f, 0.45f, 0.12f, 1.4f, 6.0f, 0.6f, 0.45f, false, false, false},
+    {"molotov", 1.0f, 0.45f, 0.12f, 1.8f, 8.0f, 0.6f, 0.45f, false, false, false},
+    {"welding", 0.6f, 0.75f, 1.0f, 2.5f, 7.0f, 0.5f, 0.7f, false, false, false},
+    {"flare_blue", 0.3f, 0.5f, 1.0f, 2.0f, 9.0f, 0.8f, 0.1f, false, false, false},
+    {"flare", 1.0f, 0.25f, 0.15f, 2.0f, 9.0f, 0.8f, 0.1f, false, false, false},
+    {"barracade_light", 1.0f, 0.6f, 0.2f, 0.5f, 4.0f, 0.4f, 0.0f, false, true, false}, // construction light: small, dim, blinks with its corona
+    // Glow-sprite lamps (street lights, beacons...): a light where the glow is, in the glow's color.
+    {"street", 1.0f, 0.85f, 0.55f, 1.2f, 12.0f, 0.0f, 0.0f, false, true, false},
+    {"lamp", 1.0f, 0.85f, 0.55f, 1.2f, 12.0f, 0.0f, 0.0f, false, true, false},
+    {"light_", 1.0f, 0.85f, 0.55f, 1.0f, 10.0f, 0.0f, 0.0f, false, true, false},
 };
+
+// 0..1: the key track's value now, relative to its highest key (a blink's on/off), 1 without a track.
+static float vfx_key_blink(int num_keys, vfx_float_key* keys, float time_value)
+{
+    if (num_keys <= 1 || keys == nullptr)
+    {
+        return 1.0f;
+    }
+    float highest = 0.0f;
+    for (int i = 0; i < num_keys; i++)
+    {
+        highest = keys[i].value > highest ? keys[i].value : highest;
+    }
+    if (highest <= 0.0001f)
+    {
+        return 1.0f;
+    }
+    float value = vfx_interpolate_float_varkey(num_keys, keys, time_value) / highest;
+    return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+}
+
+// The color the effect's glow or particles have now, scaled so its brightest channel is 1 (the hue only; the profile
+// sets the strength). False: the effect gives none.
+static bool vfx_effect_hue(vfx_effect_template::vfx_data* data_p, bool use_particles, float progress, float& red, float& green, float& blue)
+{
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+    bool found = false;
+    if (data_p->num_coronas > 0 && data_p->coronas.to_pointer()[0].num_color_start_keys > 0)
+    {
+        vfx_effect_template::corona& corona_r = data_p->coronas.to_pointer()[0];
+        const vector4 color = vfx_interpolate_vector4(progress, corona_r.num_color_start_keys, corona_r.color_start_keys.to_pointer());
+        r = color.x;
+        g = color.y;
+        b = color.z;
+        found = true;
+    }
+    else if (use_particles && data_p->num_emitters > 0)
+    {
+        const rl_color_float& color = data_p->emitters.to_pointer()[0].color_start;
+        r = color.red;
+        g = color.green;
+        b = color.blue;
+        found = true;
+    }
+    float highest = r > g ? r : g;
+    highest = highest > b ? highest : b;
+    if (!found || highest < 0.05f)
+    {
+        return false;
+    }
+    red = r / highest;
+    green = g / highest;
+    blue = b / highest;
+    return true;
+}
 
 static const vfx_synthetic_light_profile* vfx_synthetic_light_profile_find(const char* name)
 {
-    if (name == nullptr || strstr(name, "weap") != nullptr || strstr(name, "bullet") != nullptr || strstr(name, "impact") != nullptr || strstr(name, "veh_") != nullptr)
+    if (name == nullptr || strstr(name, "weap") != nullptr || strstr(name, "smoke") != nullptr || strstr(name, "bullet") != nullptr || strstr(name, "impact") != nullptr || strstr(name, "veh_") != nullptr)
     {
         return nullptr;
     }
@@ -865,7 +928,7 @@ void vfx_effect::update_render(float delta_time, bool is_visible, rl_renderer* p
             s_seen[s_num_seen++] = m_effect_template_p;
             const char* name = dbg_data_p->effect_name.to_pointer();
             char text[256];
-            snprintf(text, sizeof(text), "DYNLIGHTS fx name=%s lights=%d", name != nullptr ? name : "?", dbg_data_p->num_lights);
+            snprintf(text, sizeof(text), "DYNLIGHTS fx name=%s lights=%d coronas=%d emitters=%d", name != nullptr ? name : "?", dbg_data_p->num_lights, dbg_data_p->num_coronas, dbg_data_p->num_emitters);
             openrfg_log(text);
         }
     }
@@ -1264,14 +1327,32 @@ void vfx_effect::update_dynamic_lights()
             fade = fade < 0.0f ? 0.0f : fade;
             strength *= fade * fade;
         }
-        if (profile_p->follows_corona && m_renderable_particles_instance_group_p != nullptr && m_renderable_particles_instance_group_p->m_coronas.first() != nullptr)
+        const float progress = m_effect_template_p->m_vfx_data_p->duration > 0.0f ? m_elapsed_time / m_effect_template_p->m_vfx_data_p->duration : 0.0f;
+        if (profile_p->follows_corona && m_effect_template_p->m_vfx_data_p->num_coronas > 0)
         {
-            const rl_corona_instance* corona_p = m_renderable_particles_instance_group_p->m_coronas.first();
-            const bool on = corona_p->m_radius_start > 0.0001f || corona_p->m_radius_end > 0.0001f;
-            float scale = corona_p->m_intensity_scale;
-            scale = scale < 0.0f ? 0.0f : (scale > 1.0f ? 1.0f : scale);
-            strength *= on ? scale : 0.0f;
+            // Blinks with the first corona, read from its keys (not from what it draws, which is zero when coronas are off).
+            vfx_effect_template::corona& corona_r = m_effect_template_p->m_vfx_data_p->coronas.to_pointer()[0];
+            strength *= vfx_key_blink(corona_r.num_radius_start_keys, corona_r.radius_start_keys.to_pointer(), m_elapsed_time);
+            strength *= vfx_key_blink(corona_r.num_intensity_scale_keys, corona_r.intensity_scale_keys.to_pointer(), m_elapsed_time);
+            if (corona_r.num_color_start_keys > 1)
+            {
+                float highest_alpha = 0.0f;
+                vfx_vector4_key* keys = corona_r.color_start_keys.to_pointer();
+                for (int i = 0; i < corona_r.num_color_start_keys; i++)
+                {
+                    highest_alpha = keys[i].value.w > highest_alpha ? keys[i].value.w : highest_alpha;
+                }
+                if (highest_alpha > 0.0001f)
+                {
+                    const float alpha = vfx_interpolate_vector4(progress, corona_r.num_color_start_keys, keys).w / highest_alpha;
+                    strength *= alpha < 0.0f ? 0.0f : (alpha > 1.0f ? 1.0f : alpha);
+                }
+            }
         }
+        float hue_r = profile_p->red;
+        float hue_g = profile_p->green;
+        float hue_b = profile_p->blue;
+        vfx_effect_hue(m_effect_template_p->m_vfx_data_p, profile_p->hue_from_particles, progress, hue_r, hue_g, hue_b);
         const float intensity = profile_p->intensity * strength;
         if (intensity < VFX_EFFECT_LIGHT_MIN_INTENSITY)
         {
@@ -1286,7 +1367,7 @@ void vfx_effect::update_dynamic_lights()
         light_p->set_local_bounding_sphere(rl_sphere(ZERO_VECTOR, radius));
         light_p->set_clip_min(vector(-radius, -radius, -radius));
         light_p->set_clip_max(vector(radius, radius, radius));
-        light_p->set_color(rl_color_float(profile_p->red * intensity, profile_p->green * intensity, profile_p->blue * intensity, 1.0f));
+        light_p->set_color(rl_color_float(hue_r * intensity, hue_g * intensity, hue_b * intensity, 1.0f));
         light_p->set_attenuation_start(1.0f);
         light_p->set_attenuation_end(radius);
         light_p->update_partition_system();
