@@ -4123,7 +4123,7 @@ void rfg_dyn_do_frame_pre()
             {
                 reported++;
                 keen::debug::nativePrintArgs("rfg_dyn_do_frame_pre failed: mover %p (list %d of %d, handle 0x%08X, type %d, stub %d) has rdd loaded byte 0x%02X\n",
-                    rm, i, num_movers, rm->handle, (int)rm->obj_type, (int)rm->obj_flags.stub, (unsigned int)loaded_byte);
+                    rm, i, num_movers, rm->get_handle(), (int)rm->get_obj_type(), (int)rm->obj_flags.stub, (unsigned int)loaded_byte);
             }
             continue;
         }
