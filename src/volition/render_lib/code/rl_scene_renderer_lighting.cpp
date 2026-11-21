@@ -7,14 +7,75 @@
 
 #include "volition/render_lib/code/rl_batched_pass.h"
 #include "volition/render_lib/code/rl_camera.h"
+#include "volition/render_lib/code/rl_dynamic_lights.h"
 #include "volition/render_lib/code/rl_light.h"
 #include "volition/render_lib/code/rl_material_library.h"
 #include "volition/render_lib/code/rl_renderer.h"
 #include "volition/render_lib/code/rl_shadow_system.h"
 #include "volition/render_lib/code/rl_terrain_renderer.h"
 
+#include <math.h>
+
 // The position the lights are sorted by distance to (the camera).
 static vector Reference_pos; // 0x01C20A54
+
+extern bool RL_enable_secondary_lights; // 0x014FA46F (rl_scene_renderer.cpp)
+extern float g_secondaryLightColorScale; // OpenRFG (rl_renderer.cpp)
+
+// ---- OpenRFG: the Dynamic Lights option (rl_dynamic_lights.h)
+
+int Rl_dynamic_lights_level = 2;
+int Rl_dynamic_lights_max = 8;
+float Rl_dynamic_lights_distance = 80.0f;
+
+// Per level: the lights drawn at most and how far (meters past a light's range). Every light is one more pass over the
+// geometry it reaches, so the count is what costs; a spot light takes two of the 31 visibility passes.
+struct Dynamic_lights_preset
+{
+    int max_lights;
+    float distance;
+};
+
+static const Dynamic_lights_preset Dynamic_lights_presets[5] = {
+    {0, 0.0f}, // off
+    {4, 45.0f}, // low
+    {8, 80.0f}, // medium
+    {14, 130.0f}, // high
+    {24, 200.0f}, // very high
+};
+
+void rl_dynamic_lights_apply_level(int level)
+{
+    if (level < 0 || level > 4)
+    {
+        level = 2;
+    }
+    Rl_dynamic_lights_level = level;
+    Rl_dynamic_lights_max = Dynamic_lights_presets[level].max_lights;
+    Rl_dynamic_lights_distance = Dynamic_lights_presets[level].distance;
+    RL_enable_secondary_lights = level > 0;
+}
+
+// The last quarter of the distance fades out.
+float rl_dynamic_lights_fade(const rl_light& light, const vector& camera_pos)
+{
+    if (light.get_light_type() == rl_light::LIGHT_TYPE_DIRECTIONAL || Rl_dynamic_lights_distance <= 0.0f)
+    {
+        return 1.0f;
+    }
+    const vector& pos = light.get_position();
+    const float dx = pos.x - camera_pos.x;
+    const float dy = pos.y - camera_pos.y;
+    const float dz = pos.z - camera_pos.z;
+    float edge = sqrtf(dx * dx + dy * dy + dz * dz) - light.get_attenuation_end();
+    if (edge < 0.0f)
+    {
+        edge = 0.0f;
+    }
+    const float fade_range = Rl_dynamic_lights_distance * 0.25f;
+    const float fade = (Rl_dynamic_lights_distance - edge) / fade_range;
+    return fade < 0.0f ? 0.0f : (fade > 1.0f ? 1.0f : fade);
+}
 
 // 0x004C7770 (:9)
 bool sort_lights_by_distance(rl_light* const& l1, rl_light* const& l2)
@@ -45,6 +106,13 @@ void rl_scene_renderer::render_lighting_passes(rl_renderer& renderer, rl_camera&
         {
             continue;
         }
+        // OpenRFG: the Dynamic Lights distance fade (the visibility manager already dropped the lights past it).
+        const float fade = rl_dynamic_lights_fade(*light, Reference_pos);
+        if (fade <= 0.0f)
+        {
+            continue;
+        }
+        g_secondaryLightColorScale = fade;
         rl_shadow_render_parameters shadow_params;
         const rl_dev_render_target& shadow_rt = m_shadow_map_target.get_dev_render_target();
         if (shadow_rt.pData != nullptr)
@@ -84,6 +152,7 @@ void rl_scene_renderer::render_lighting_passes(rl_renderer& renderer, rl_camera&
         camera.render_refresh(renderer);
         renderer.set_macro_state(saved_state, false);
     }
+    g_secondaryLightColorScale = 1.0f; // OpenRFG
 }
 
 // 0x00545C00 (:56)

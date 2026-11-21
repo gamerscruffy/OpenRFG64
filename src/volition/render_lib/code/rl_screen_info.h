@@ -105,7 +105,10 @@ struct rl_level_of_detail
     // OpenRFG: SSAO quality 1 low (the original), 2 medium, 3 high, 4 very high; off is m_ssao_enabled false. Taken
     // from the first padding byte (layout unchanged). Read it through rl_lod_get_ssao_level.
     unsigned char m_ssao_quality; // 0x1C
-    unsigned char padding[119]; // 0x1D
+    // OpenRFG: the Dynamic Lights level plus one (0 = never set, counts as medium), the second padding byte. Read it
+    // through rl_lod_get_dynamic_lights_level.
+    unsigned char m_dynamic_lights; // 0x1D
+    unsigned char padding[118]; // 0x1E
 };
 
 // OpenRFG: the SSAO level of the options menu: 0 off, 1 low (the original game's SSAO), 2 medium, 3 high, 4 very
@@ -127,6 +130,23 @@ inline void rl_lod_set_ssao_level(rl_level_of_detail& lod, int level)
     {
         lod.m_ssao_quality = (unsigned char)(level > 4 ? 4 : level);
     }
+}
+
+// OpenRFG: the Dynamic Lights level of the options menu: 0 off, 1 low, 2 medium, 3 high, 4 very high (rl_dynamic_lights.h).
+// An unset or out of range byte counts as medium.
+inline int rl_lod_get_dynamic_lights_level(const rl_level_of_detail& lod)
+{
+    const int stored = lod.m_dynamic_lights;
+    return (stored < 1 || stored > 5) ? 2 : stored - 1;
+}
+
+inline void rl_lod_set_dynamic_lights_level(rl_level_of_detail& lod, int level)
+{
+    if (level < 0 || level > 4)
+    {
+        level = 2;
+    }
+    lod.m_dynamic_lights = (unsigned char)(level + 1);
 }
 
 // ---- inline members (no .cpp home)
@@ -248,6 +268,7 @@ inline rl_level_of_detail::rl_level_of_detail()
     m_distortion_enabled = true;
     m_ssao_enabled = true;
     m_ssao_quality = 2; // OpenRFG
+    m_dynamic_lights = 3; // OpenRFG: medium
     m_sun_shafts_enabled = true;
     m_new_data.m_texture_reduction = 0;
     m_new_data.m_anisotropic_filtering = RL_AF_LOD_OFF;

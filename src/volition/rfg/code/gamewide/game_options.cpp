@@ -177,6 +177,8 @@ void game_options_ini_file_read_writer<0>::parse_display_settings(keen::FilePath
     lod.m_ssao_enabled = keen::readIniFileBool(path, "graphics", "ssao_enabled", lod.m_ssao_enabled);
     // OpenRFG: the SSAO quality (1 low = original .. 4 very high); rl_lod_get_ssao_level clamps bad values.
     lod.m_ssao_quality = (unsigned char)keen::readIniFileInt(path, "graphics", "ssao_quality", rl_lod_get_ssao_level(lod) > 0 ? rl_lod_get_ssao_level(lod) : 2);
+    // OpenRFG: the Dynamic Lights level (0 off .. 4 very high, rl_dynamic_lights.h).
+    rl_lod_set_dynamic_lights_level(lod, keen::readIniFileInt(path, "graphics", "dynamic_lights", rl_lod_get_dynamic_lights_level(lod)));
     lod.m_sun_shafts_enabled = keen::readIniFileBool(path, "graphics", "sun_shafts_enabled", lod.m_sun_shafts_enabled);
     lod.m_new_data.m_texture_reduction = (unsigned char)keen::readIniFileInt(path, "graphics", "texture_resolution", lod.m_new_data.m_texture_reduction);
     lod.m_new_data.m_anisotropic_filtering = (rl_anisotropic_filtering_lod)keen::readIniFileInt(path, "graphics", "anisotropic_filtering", lod.m_new_data.m_anisotropic_filtering);
@@ -924,6 +926,7 @@ void game_options_ini_file_read_writer<1>::parse_display_settings(keen::FilePath
         const int ssao_quality = lod.m_ssao_quality;
         keen::writeIniFileInt(path, "graphics", "ssao_quality", (ssao_quality < 1 || ssao_quality > 4) ? 1 : ssao_quality);
     }
+    keen::writeIniFileInt(path, "graphics", "dynamic_lights", rl_lod_get_dynamic_lights_level(lod)); // OpenRFG
     keen::writeIniFileBool(path, "graphics", "sun_shafts_enabled", lod.m_sun_shafts_enabled);
     keen::writeIniFileInt(path, "graphics", "texture_resolution", lod.m_new_data.m_texture_reduction);
     keen::writeIniFileInt(path, "graphics", "anisotropic_filtering", lod.m_new_data.m_anisotropic_filtering);

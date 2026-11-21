@@ -64,6 +64,8 @@ static bool g_ambientSpecularEnable = true; // 0x014FA3BF
 static float g_indirectLightScale = 0.019f; // 0x014FA3C0
 static float g_indirectLightAmount = 0.5f; // 0x014FA3C4
 static float g_mainLightColorScale = 0.8f; // 0x014FA3C8
+// OpenRFG: the color scale of the secondary light being drawn (the Dynamic Lights distance fade, rl_dynamic_lights.h).
+float g_secondaryLightColorScale = 1.0f;
 static float g_ambientColorScale = 0.65f; // 0x014FA3CC
 static float g_backAmbientColorScale = 0.29f; // 0x014FA3D0
 static float g_ambientSpecularScale = 0.57f; // 0x014FA3D4
@@ -1489,7 +1491,7 @@ void rl_renderer::set_light(const rl_light& light, bool isMainLight)
     light.fillLightingVertexShaderData(vertex_constants_p, m_state_p->get_render_offset());
     m_pCommandWriter->endDynamicVertexConstants();
     keen::LightingFragmentShaderConstants* fragment_constants_p = (keen::LightingFragmentShaderConstants*)m_pCommandWriter->beginDynamicFragmentConstants(m_pLightingFragmentConstants, Lighting_constants_slot);
-    light.fillLightingFragmentShaderData(fragment_constants_p, isMainLight ? g_mainLightColorScale : 1.0f);
+    light.fillLightingFragmentShaderData(fragment_constants_p, isMainLight ? g_mainLightColorScale : g_secondaryLightColorScale);
     m_pCommandWriter->endDynamicFragmentConstants();
 }
 

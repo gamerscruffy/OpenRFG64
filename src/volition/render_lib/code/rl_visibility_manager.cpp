@@ -16,6 +16,7 @@
 #include "volition/render_lib/code/rl_visibility_manager.h"
 
 #include "volition/render_lib/code/rl_camera.h"
+#include "volition/render_lib/code/rl_dynamic_lights.h"
 #include "volition/render_lib/code/rl_factory_rtti.h"
 #include "volition/render_lib/code/rl_gpu_visibility.h"
 #include "volition/render_lib/code/rl_light.h"
@@ -64,6 +65,26 @@ bool g_visibilityDebugRenderList6 = false; // 0x01B7BD4B
 extern bool RL_gpu_vis_enabled; // 0x014FA137 (rl_gpu_visibility.cpp)
 extern bool RL_gpu_vis_terrain_enabled; // 0x01B7BD4F (rl_gpu_visibility.cpp)
 extern bool RL_enable_secondary_lights; // 0x014FA46F (rl_scene_renderer.cpp)
+
+// OpenRFG: the camera position the visible lights are sorted by (the Dynamic Lights budget).
+static vector Dynamic_lights_camera_pos;
+
+static bool dynamic_lights_nearer(rl_light* const& l1, rl_light* const& l2)
+{
+    // Directional lights first: they are never dropped.
+    const bool d1 = l1->get_light_type() == rl_light::LIGHT_TYPE_DIRECTIONAL;
+    const bool d2 = l2->get_light_type() == rl_light::LIGHT_TYPE_DIRECTIONAL;
+    if (d1 != d2)
+    {
+        return d1;
+    }
+    const vector& p1 = l1->get_position();
+    const vector& p2 = l2->get_position();
+    const vector& c = Dynamic_lights_camera_pos;
+    const float s1 = (p1.x - c.x) * (p1.x - c.x) + (p1.y - c.y) * (p1.y - c.y) + (p1.z - c.z) * (p1.z - c.z);
+    const float s2 = (p2.x - c.x) * (p2.x - c.x) + (p2.y - c.y) * (p2.y - c.y) + (p2.z - c.z) * (p2.z - c.z);
+    return s1 < s2;
+}
 
 float calculate_horizontal_fov_perspective(float vertical_fov, bool use_pixel_aspect_ratio); // 0x004DFB20 (rl_camera.cpp)
 
@@ -892,6 +913,16 @@ void rl_visibility_manager::determine_visible_lights(rl_renderer& renderer, rl_c
         {
             rl_light* light = (rl_light*)entry->m_entity_p;
             unsigned int visible = 0;
+            // OpenRFG: lights past the Dynamic Lights distance are not drawn (or tested).
+            if (rl_dynamic_lights_fade(*light, camera.get_position()) <= 0.0f)
+            {
+                entry = entry->next;
+                if (entry == head)
+                {
+                    break;
+                }
+                continue;
+            }
             if (category_enabled(m_render_category_filter, light) && m_visibility_lists[light->get_visibility_list_index()] != nullptr)
             {
                 unsigned int to_test = sector.pass_visibility_flags & ~sector.pass_fully_visible_flags;
@@ -928,6 +959,22 @@ void rl_visibility_manager::determine_visible_lights(rl_renderer& renderer, rl_c
                 break;
             }
         }
+    }
+    // OpenRFG: the Dynamic Lights budget, the nearest lights only (each one is a pass over the geometry it reaches).
+    int num_directional = 0;
+    for (int i = 0; i < m_visible_light_list->size(); i++)
+    {
+        if ((*m_visible_light_list)[i]->get_light_type() == rl_light::LIGHT_TYPE_DIRECTIONAL)
+        {
+            num_directional++;
+        }
+    }
+    const int keep = num_directional + Rl_dynamic_lights_max;
+    if (m_visible_light_list->size() > keep)
+    {
+        Dynamic_lights_camera_pos = camera.get_position();
+        m_visible_light_list->sort(dynamic_lights_nearer);
+        m_visible_light_list->resize(keep);
     }
 }
 

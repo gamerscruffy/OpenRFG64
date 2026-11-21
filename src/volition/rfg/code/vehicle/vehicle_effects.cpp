@@ -7,6 +7,9 @@
 
 #include "volition/render_lib/code/rl_decal.h"
 #include "volition/render_lib/code/rl_decal_parameters.h"
+#include "volition/render_lib/code/rl_dynamic_lights.h"
+#include "volition/render_lib/code/rl_light.h"
+#include "volition/render_lib/code/rl_sphere.h"
 #include "volition/render_lib/code/rl_utility.h"
 #include "volition/rfg/code/camera/camera_shake.h"
 #include "volition/rfg/code/camera/rfg_camera.h"
@@ -581,6 +584,198 @@ void vehicle_camera_shake_play_onfire(vehicle* vp)
 }
 
 // 0x00B66DC0 (:1216)
+// ---- OpenRFG: headlight spot lights (the Dynamic Lights option, rl_dynamic_lights.h)
+// The headlight effects are coronas only; with Dynamic Lights on, a vehicle whose headlights are lit also gets one spot
+// light (at the middle of its headlights, along their direction) so the road and walls in front of it are lit. A few
+// lights are shared by the nearest vehicles; the light renderer's budget then picks among all the scene's lights.
+
+struct vehicle_headlight_spot
+{
+    unsigned int vehicle_handle;
+    rl_light* light_p;
+};
+
+static const int VEHICLE_HEADLIGHT_SPOTS_MAX = 12;
+static vehicle_headlight_spot Vehicle_headlight_spots[VEHICLE_HEADLIGHT_SPOTS_MAX];
+// Per Dynamic Lights level: how many vehicles get a headlight spot.
+static const int Vehicle_headlight_spots_per_level[5] = {0, 2, 4, 8, 12};
+// Magic numbers: a warm white, 32 m reach, a 17 degree hot spot inside a 32 degree cone (half angles, radians).
+static float Vehicle_headlight_spot_range = 32.0f;
+static float Vehicle_headlight_spot_intensity = 1.6f;
+static const float VEHICLE_HEADLIGHT_SPOT_HOTSPOT = 0.30f;
+static const float VEHICLE_HEADLIGHT_SPOT_FALLOFF = 0.56f;
+static tweak_table_item Tweak_table_item_Vehicle_headlight_spot_range("Vehicle_headlight_spot_range", &Vehicle_headlight_spot_range);
+static tweak_table_item Tweak_table_item_Vehicle_headlight_spot_intensity("Vehicle_headlight_spot_intensity", &Vehicle_headlight_spot_intensity);
+
+static void vehicle_headlight_spot_free(int i)
+{
+    vehicle_headlight_spot& spot = Vehicle_headlight_spots[i];
+    if (spot.light_p != NULL) {
+        spot.light_p->set_is_visible(false);
+        spot.light_p->release();
+    }
+    spot.light_p = NULL;
+    spot.vehicle_handle = 0xFFFFFFFF;
+}
+
+static float vehicle_headlight_spot_dist_sq(const vector& pos)
+{
+    const float dx = pos.x - Rfg_camera.real_pos.x;
+    const float dy = pos.y - Rfg_camera.real_pos.y;
+    const float dz = pos.z - Rfg_camera.real_pos.z;
+    return dx * dx + dy * dy + dz * dz;
+}
+
+// The vehicle's spot, a free one, or (when all are taken) the farthest one if this vehicle is nearer; -1 for none.
+static int vehicle_headlight_spot_claim(unsigned int handle, const vector& pos, int max_spots)
+{
+    int free_index = -1;
+    int farthest_index = -1;
+    float farthest_dist_sq = vehicle_headlight_spot_dist_sq(pos);
+    int used = 0;
+    for (int i = 0; i < VEHICLE_HEADLIGHT_SPOTS_MAX; i++) {
+        vehicle_headlight_spot& spot = Vehicle_headlight_spots[i];
+        if (spot.light_p == NULL) {
+            if (free_index == -1) {
+                free_index = i;
+            }
+            continue;
+        }
+        if (spot.vehicle_handle == handle) {
+            return i;
+        }
+        used++;
+        const float dist_sq = vehicle_headlight_spot_dist_sq(spot.light_p->get_position());
+        if (farthest_dist_sq < dist_sq) {
+            farthest_dist_sq = dist_sq;
+            farthest_index = i;
+        }
+    }
+    if (used < max_spots && free_index != -1) {
+        if (!rl_light::can_create()) {
+            return -1;
+        }
+        rl_light* light_p = rl_light::create();
+        if (light_p == NULL) {
+            return -1;
+        }
+        light_p->set_light_type(rl_light::LIGHT_TYPE_SPOT_LIGHT);
+        light_p->set_is_visible(false);
+        Vehicle_headlight_spots[free_index].light_p = light_p;
+        Vehicle_headlight_spots[free_index].vehicle_handle = handle;
+        return free_index;
+    }
+    if (farthest_index != -1) {
+        Vehicle_headlight_spots[farthest_index].vehicle_handle = handle;
+        return farthest_index;
+    }
+    return -1;
+}
+
+// Frees the spots of vehicles that are gone, and those past the level's count.
+static void vehicle_headlight_spots_sweep(int max_spots)
+{
+    int used = 0;
+    for (int i = 0; i < VEHICLE_HEADLIGHT_SPOTS_MAX; i++) {
+        vehicle_headlight_spot& spot = Vehicle_headlight_spots[i];
+        if (spot.light_p == NULL) {
+            continue;
+        }
+        if (used >= max_spots || World.object_from_handle<vehicle>(spot.vehicle_handle) == NULL) {
+            vehicle_headlight_spot_free(i);
+            continue;
+        }
+        used++;
+    }
+}
+
+static void vehicle_headlight_spot_release_for(unsigned int handle)
+{
+    for (int i = 0; i < VEHICLE_HEADLIGHT_SPOTS_MAX; i++) {
+        if (Vehicle_headlight_spots[i].light_p != NULL && Vehicle_headlight_spots[i].vehicle_handle == handle) {
+            vehicle_headlight_spot_free(i);
+        }
+    }
+}
+
+// The vehicle's headlight spot: lit while its headlights are (engine running, headlights on, not broken or detached).
+static void vehicle_headlight_spot_update(vehicle* vp, bool lit)
+{
+    const int level = Rl_dynamic_lights_level;
+    const int max_spots = Vehicle_headlight_spots_per_level[(level < 0 || level > 4) ? 0 : level];
+    vehicle_headlight_spots_sweep(max_spots);
+    if (!lit || max_spots <= 0) {
+        vehicle_headlight_spot_release_for(vp->get_handle());
+        return;
+    }
+    vehicle::resource_dependent_data* data = vp->rdd.get_data();
+    vector pos_sum(0.0f, 0.0f, 0.0f);
+    vector dir_sum(0.0f, 0.0f, 0.0f);
+    int count = 0;
+    for (unsigned int i = 0; i < data->m_num_vehicle_lights; i++) {
+        const vehicle_light& light = data->m_vehicle_lights[i];
+        if (light.type != VLT_HEAD_LIGHT || light.tag_index == -1 || light.flags.is_broken || light.flags.broken) {
+            continue;
+        }
+        const int component = vp->get_component_index_from_tag_index(light.tag_index);
+        if (component != -1 && (data->m_components[component].get_flags() & VCF_DETACHED) != 0) {
+            continue;
+        }
+        vector pos;
+        matrix orient;
+        vp->get_tag_world_coords(light.tag_index, pos, &orient, NULL, NULL);
+        pos_sum.x += pos.x;
+        pos_sum.y += pos.y;
+        pos_sum.z += pos.z;
+        dir_sum.x += orient.fvec.x;
+        dir_sum.y += orient.fvec.y;
+        dir_sum.z += orient.fvec.z;
+        count++;
+    }
+    if (count == 0 || dir_sum.x * dir_sum.x + dir_sum.y * dir_sum.y + dir_sum.z * dir_sum.z < 1e-6f) {
+        vehicle_headlight_spot_release_for(vp->get_handle());
+        return;
+    }
+    const float inv = 1.0f / (float)count;
+    vector pos(pos_sum.x * inv, pos_sum.y * inv, pos_sum.z * inv);
+    vector dir = dir_sum;
+    dir.normalize();
+    // A little ahead of the lamps, so the vehicle's own front is not lit from inside.
+    pos.x += dir.x * 0.3f;
+    pos.y += dir.y * 0.3f;
+    pos.z += dir.z * 0.3f;
+    const int index = vehicle_headlight_spot_claim(vp->get_handle(), pos, max_spots);
+    if (index == -1) {
+        return;
+    }
+    rl_light* light_p = Vehicle_headlight_spots[index].light_p;
+    const float range = Vehicle_headlight_spot_range;
+    matrix rotation;
+    rotation.make_quick(dir);
+    light_p->set_light_type(rl_light::LIGHT_TYPE_SPOT_LIGHT);
+    light_p->set_position(pos);
+    light_p->set_rotation(rotation);
+    light_p->set_local_bounding_sphere(rl_sphere(ZERO_VECTOR, range));
+    light_p->set_clip_min(vector(-range, -range, -range));
+    light_p->set_clip_max(vector(range, range, range));
+    const float intensity = Vehicle_headlight_spot_intensity;
+    light_p->set_color(rl_color_float(1.0f * intensity, 0.93f * intensity, 0.78f * intensity, 1.0f));
+    light_p->set_attenuation_start(2.0f);
+    light_p->set_attenuation_end(range);
+    light_p->set_hotspot_size(VEHICLE_HEADLIGHT_SPOT_HOTSPOT);
+    light_p->set_hotspot_falloff_size(VEHICLE_HEADLIGHT_SPOT_FALLOFF);
+    light_p->set_is_visible(true);
+    light_p->update_partition_system();
+}
+
+// Every headlight spot back to render_lib (the level's scene goes away).
+static void vehicle_headlight_spots_release_all()
+{
+    for (int i = 0; i < VEHICLE_HEADLIGHT_SPOTS_MAX; i++) {
+        vehicle_headlight_spot_free(i);
+    }
+}
+
 bool vehicle_effects_headlights_should_be_on()
 {
     const int hour = game_clock_get()->m_hour;
@@ -600,6 +795,8 @@ void vehicle_effects_process_lights(vehicle* vp)
             vp->m_flags.m_headlights_on = vp->m_flags.m_headlights_on == 0;
         }
     }
+    // OpenRFG: the headlight spot light (the Dynamic Lights option).
+    vehicle_headlight_spot_update(vp, vp->obj_flags._dont_use_me != 0 && vp->m_flags.m_engine_running != 0 && vp->m_flags.m_headlights_on != 0);
     if (vp->emergency_light_timer.elapsed()) {
         vp->m_flags.m_emergency_lights_on = vp->m_flags.m_emergency_lights_on == 0;
         vp->emergency_light_timer.set(vehicle_effects_get_emergency_blink_time_ms()); // inlined in rfg.exe
@@ -735,6 +932,7 @@ void vehicle_effects_process_lights(vehicle* vp)
 // 0x00B7E000 (:1196)
 void vehicle_effects_kill_lights(vehicle* vp)
 {
+    vehicle_headlight_spot_release_for(vp->get_handle()); // OpenRFG
     if (!vp->rdd.is_loaded()) {
         return;
     }
@@ -768,4 +966,5 @@ void vehicle_effects_level_init_pre()
 // 0x00B66E10 (:1257)
 void vehicle_effects_level_shutdown()
 {
+    vehicle_headlight_spots_release_all(); // OpenRFG
 }

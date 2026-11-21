@@ -20,6 +20,7 @@
 #include "library/modules/runtime/graphics/sources/d3d11/graphicscommandbuffer_d3d11.hpp"
 #include "volition/render_lib/code/rl_deformable_mesh_instance.h"
 #include "volition/render_lib/code/rl_dyn_texture.h"
+#include "volition/render_lib/code/rl_dynamic_lights.h"
 #include "volition/render_lib/code/rl_factory_rtti.h"
 #include "volition/render_lib/code/rl_gpu_visibility.h"
 #include "volition/render_lib/code/rl_hdr_compositor.h"
@@ -661,6 +662,8 @@ void rl_scene_renderer::render_scene_part2(rl_renderer& deferredRenderer, rl_cam
         }
         s_ssao_vis_key_was_down = down;
     }
+    // OpenRFG: the Dynamic Lights budget of the options menu (the next frame's visible lights use it).
+    rl_dynamic_lights_apply_level(rl_lod_get_dynamic_lights_level(m_level_of_detail));
     if (m_level_of_detail.m_ssao_enabled)
     {
         rl_ssao_apply_quality(rl_lod_get_ssao_level(m_level_of_detail)); // OpenRFG: the options menu's quality level

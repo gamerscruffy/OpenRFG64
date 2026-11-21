@@ -33,6 +33,7 @@ bool display_options_load_from_cache(rfg_game_options* game_options, rl_screen_i
 
 #else // OPENRFG_UI
 
+#include "keen/base/crc32.hpp"
 #include "keen/base/string.hpp"
 #include "keen/base/trace.hpp"
 #include "volition/audio_lib/code/audiolib_api.h"
@@ -88,6 +89,12 @@ static const char* cDisplay_settings_LMH[3] = {"MENU_LOW", "MENU_MED", "MENU_HIG
 static const char* cDisplay_settings_LMHV[4] = {"MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH"}; // 0x016641A0
 // OpenRFG: the ambient occlusion row is a quality list instead of on/off (rl_lod_get_ssao_level).
 static const char* cDisplay_settings_ssao[5] = {"MENU_OFF", "MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH"};
+// OpenRFG: the Dynamic Lights row (rl_dynamic_lights.h), the last row of the Advanced page. Its caption is not in the
+// game's localization data and is added at runtime.
+static const char* cDisplay_settings_dynamic_lights[5] = {"MENU_OFF", "MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH"};
+static const char* kDynamic_lights_caption_key = "OPENRFG_DYNAMIC_LIGHTS";
+static wchar_t kDynamic_lights_caption[] = L"Dynamic Lights";
+static const int DOPTIONS_ADVANCED_ROW_DYNAMIC_LIGHTS = 9;
 static const char* cAnti_alias_lod_names[7] = {"MENU_OFF", "MENU_AA_LOD_MODE_2X", "MENU_AA_LOD_MODE_4X", "MENU_AA_LOD_MODE_8X", "MENU_AA_LOD_MODE_16X", "MENU_AA_LOD_MODE_8XQ", "MENU_AA_LOD_MODE_16XQ"}; // 0x016641B0
 static const char* cDisplay_default_lod_setting_names[5] = {"MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH", "MENU_CUSTOM"}; // 0x016641CC
 static const char* cDisplay_window_mode_names[3] = {"MENU_WINDOW_MODE_WINDOWED", "MENU_WINDOW_MODE_BORDERLESS", "MENU_WINDOW_MODE_FULLSCREEN"}; // 0x016641E0
@@ -169,7 +176,7 @@ extern bool Active; // 0x02C03754, ui_document_hud_tool_tips.cpp (the in-game op
 // LTCG: lhs in ECX, rhs in EAX. The menu's detail settings (antialiasing, bloom and distortion are not compared).
 static bool lods_equal(const rl_level_of_detail& lhs, const rl_level_of_detail& rhs)
 {
-    return lhs.m_depth_of_field_enabled == rhs.m_depth_of_field_enabled && lhs.m_motion_blur_enabled == rhs.m_motion_blur_enabled && lhs.m_particle_lod == rhs.m_particle_lod && lhs.m_shadow_lod == rhs.m_shadow_lod && lhs.m_soft_shadows == rhs.m_soft_shadows && rl_lod_get_ssao_level(lhs) == rl_lod_get_ssao_level(rhs) && lhs.m_sun_shafts_enabled == rhs.m_sun_shafts_enabled && lhs.m_new_data.m_texture_reduction == rhs.m_new_data.m_texture_reduction && lhs.m_new_data.m_anisotropic_filtering == rhs.m_new_data.m_anisotropic_filtering;
+    return lhs.m_depth_of_field_enabled == rhs.m_depth_of_field_enabled && lhs.m_motion_blur_enabled == rhs.m_motion_blur_enabled && lhs.m_particle_lod == rhs.m_particle_lod && lhs.m_shadow_lod == rhs.m_shadow_lod && lhs.m_soft_shadows == rhs.m_soft_shadows && rl_lod_get_ssao_level(lhs) == rl_lod_get_ssao_level(rhs) && rl_lod_get_dynamic_lights_level(lhs) == rl_lod_get_dynamic_lights_level(rhs) && lhs.m_sun_shafts_enabled == rhs.m_sun_shafts_enabled && lhs.m_new_data.m_texture_reduction == rhs.m_new_data.m_texture_reduction && lhs.m_new_data.m_anisotropic_filtering == rhs.m_new_data.m_anisotropic_filtering;
 }
 
 // 0x008AF650 (:382)
@@ -215,6 +222,11 @@ static void display_info_initialize_default_detail_settings()
     Default_lods[3].m_depth_of_field_enabled = true;
     Default_lods[3].m_ssao_enabled = true;
     Default_lods[3].m_ssao_quality = 3; // OpenRFG: high
+    // OpenRFG: Dynamic Lights low, medium, high, very high for the four presets.
+    rl_lod_set_dynamic_lights_level(Default_lods[0], 1);
+    rl_lod_set_dynamic_lights_level(Default_lods[1], 2);
+    rl_lod_set_dynamic_lights_level(Default_lods[2], 3);
+    rl_lod_set_dynamic_lights_level(Default_lods[3], 4);
     Default_lods[3].m_sun_shafts_enabled = true;
     Default_lods[3].m_new_data.m_texture_reduction = 0;
     Default_lods[3].m_new_data.m_anisotropic_filtering = RL_AF_LOD_HIGH;
@@ -559,6 +571,10 @@ static void option_change_occurred_doptions(int choice, void* new_value)
             return;
         case 8:
             Pending_lod.m_new_data.m_anisotropic_filtering = (rl_anisotropic_filtering_lod)value;
+            return;
+        case DOPTIONS_ADVANCED_ROW_DYNAMIC_LIGHTS:
+            // OpenRFG: Dynamic Lights off, low, medium, high, very high.
+            rl_lod_set_dynamic_lights_level(Pending_lod, value);
             return;
         default:
             return;
@@ -1234,6 +1250,17 @@ void set_detail_page(detail_option_pages page)
         ui_menu_add_bool_item(Menu_handle_doptions, "MENU_SUNSHAFTS", &Pending_lod.m_sun_shafts_enabled, option_change_occurred_doptions, true);
         ui_menu_add_char_list_item(Menu_handle_doptions, "MENU_TEXTURE_RESOLUTION", cDisplay_settings_LMH, 3, option_change_occurred_doptions, 2 - Pending_lod.m_new_data.m_texture_reduction, true);
         ui_menu_add_char_list_item(Menu_handle_doptions, "MENU_ANISOTROPIC_FILTERING", cDisplay_settings_OLMH, 4, option_change_occurred_doptions, Pending_lod.m_new_data.m_anisotropic_filtering, true);
+        // OpenRFG: row 9, Dynamic Lights. The caption goes into the localization table once.
+        {
+            const unsigned int caption_hash = keen::getCrc32LwrValue(kDynamic_lights_caption_key);
+            wchar_t* existing = nullptr;
+            Localization_hash.get(caption_hash, existing);
+            if (existing == nullptr)
+            {
+                Localization_hash.insert_key_data(caption_hash, kDynamic_lights_caption);
+            }
+        }
+        ui_menu_add_char_list_item(Menu_handle_doptions, kDynamic_lights_caption_key, cDisplay_settings_dynamic_lights, 5, option_change_occurred_doptions, rl_lod_get_dynamic_lights_level(Pending_lod), true);
         // Magic number: row 1, soft shadows.
         ui_menu_enable_menu_item(Menu_handle_doptions, 1, false);
         ui_menu_show_menu_item(Menu_handle_doptions, 1, false);
