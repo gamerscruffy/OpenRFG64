@@ -44,8 +44,15 @@ static bool Rl_is_initialized = false; // 0x01B7BD08
 static bool Rl_is_locked = false; // 0x01B7BD09
 static mempool Factory_mempool; // 0x01C320E0
 static fober_lock_free_queue Deferred_operation_list; // 0x01515198
-// Magic number: at most 512 operations queued while the renderer is locked.
+// Magic number: at most 512 operations queued while the renderer is locked. OpenRFG: 8192 on x64, since a wider
+// World Detail Distance releases many more level cells (every object and terrain patch in them) in one frame; a
+// dropped release leaves a freed mesh in the scene.
+#ifdef OPENRFG_X64
+static object_pool<rl_deferred_operation, 8192, 1> Deferred_op_pool; // 0x01C20C30
+void openrfg_log(const char* text); // crash_early.cpp
+#else
 static object_pool<rl_deferred_operation, 512, 1> Deferred_op_pool; // 0x01C20C30
+#endif
 static void (*Rl_wait_for_unlock_cb)() = nullptr; // 0x01B69A40
 
 // 0x004C5BA0 (:49)
@@ -375,6 +382,9 @@ void rl_add_deferred_op(rl_deferred_operation_type type, void* data)
     // Notes (decompiled behaviour, kept as is): despite the loop, there is a single retry; when it fails too, the
     // operation is dropped.
     keen::debug::nativePrintArgs("[renderer core] rl_add_deferred_op() failed allocating either lf_node or deferred_op, this is probably bad!\n");
+#ifdef OPENRFG_X64
+    openrfg_log("[renderer core] rl_add_deferred_op() failed allocating either lf_node or deferred_op; the operation is dropped");
+#endif
     if (pnode != nullptr)
     {
         free_utility_lockfree_node(pnode);

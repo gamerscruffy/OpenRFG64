@@ -155,16 +155,22 @@ void slist_lock_free_stack::clear()
 // ---- utility node pool
 lf_node_stack<void*> Utility_node_stack; // 0x0163E6D8
 bool Utility_node_stack_initialized = false; // 0x01CE872E
-// Magic number: 512 shared nodes.
-lf_node<void*> Utility_nodes[512]; // 0x01CE2778
+// Magic number: 512 shared nodes. OpenRFG: 8192 on x64 (they carry render_lib's deferred operations, see
+// Deferred_op_pool in rl_renderer_core.cpp).
+#ifdef OPENRFG_X64
+#define UTILITY_NODE_COUNT 8192
+#else
+#define UTILITY_NODE_COUNT 512
+#endif
+lf_node<void*> Utility_nodes[UTILITY_NODE_COUNT]; // 0x01CE2778
 
 // 0x005BD370 (:64)
-// A free node, or nullptr when all 512 are in use.
+// A free node, or nullptr when all of them are in use.
 lf_node<void*>* get_utility_lockfree_node()
 {
     if (!Utility_node_stack_initialized)
     {
-        for (lf_node<void*>* pnode = Utility_nodes; pnode < Utility_nodes + 512; pnode++)
+        for (lf_node<void*>* pnode = Utility_nodes; pnode < Utility_nodes + UTILITY_NODE_COUNT; pnode++)
         {
             Utility_node_stack.push_node(pnode);
         }
