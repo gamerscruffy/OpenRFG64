@@ -671,6 +671,14 @@ void rl_visibility_manager::perform_visibility_pass(rl_renderer& renderer, rl_ca
     }
     else
     {
+#ifdef OPENRFG_X64
+        // OpenRFG: the LOD-off distances (data, made for the game's 320 m high LOD far clip) grow with the LOD Detail
+        // option. Inside the high LOD far clip the terrain drops its low LOD meshes, whose baked-in building
+        // silhouettes stood in for LOD-offed objects; without this, buildings between their LOD-off distance and the
+        // raised far clip were drawn by neither and only appeared up close.
+        // Magic number: 320 m, the game's own high LOD far clip (rfg_camera_system_init, rl_lod_detail_distance).
+        const float lod_off_scale = camera.get_high_lod_far_clip() > 320.0f ? camera.get_high_lod_far_clip() / 320.0f : 1.0f;
+#endif
         m_visible_sectors.resize(0);
         if (root != nullptr)
         {
@@ -689,8 +697,13 @@ void rl_visibility_manager::perform_visibility_pass(rl_renderer& renderer, rl_ca
                 // The LOD-off distance (the distance in front of the near plane).
                 const vector& position = entity->get_position();
                 const vector4& near_plane = m_view_frustum.get_plane_info_array()[rl_view_frustum::NEAR_PLANE].m_plane;
+#ifdef OPENRFG_X64
+                const bool lod_off = Rl_lod_off_enabled && m_lod_off_enabled && 1.0f <= entity->get_lod_off_distance() &&
+                                     entity->get_lod_off_distance() * lod_off_scale < -(position.y * near_plane.y + position.x * near_plane.x + position.z * near_plane.z + near_plane.w);
+#else
                 const bool lod_off = Rl_lod_off_enabled && m_lod_off_enabled && 1.0f <= entity->get_lod_off_distance() &&
                                      entity->get_lod_off_distance() < -(position.y * near_plane.y + position.x * near_plane.x + position.z * near_plane.z + near_plane.w);
+#endif
                 if ((~occluded & visible) == 0 || lod_off)
                 {
                     entity->set_vis_pass_flags(0);
