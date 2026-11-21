@@ -15,6 +15,7 @@
 #include "volition/rfg/code/gamewide/game_render.h"
 
 #include "volition/render_lib/code/rl_camera.h"
+#include "volition/rfg/code/objects/object_light.h"
 #include "volition/render_lib/code/rl_color.h"
 #include "volition/render_lib/code/rl_color_correct_state.h"
 #include "volition/render_lib/code/rl_compound_mesh_instance.h"
@@ -1246,6 +1247,7 @@ void game_render_do_frame(rl_renderer& renderer, bool render_scene, rl_renderer&
 void game_render_begin_frame()
 {
     game_render_test_light_update(); // OpenRFG diagnostics
+    object_light_update_all(); // OpenRFG
     if (Color_correct_gamma != Last_color_correct_gamma)
     {
         Last_color_correct_gamma = Color_correct_gamma;

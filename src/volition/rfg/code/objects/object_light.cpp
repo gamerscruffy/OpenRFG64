@@ -6,6 +6,7 @@
 // clip mesh from the parent mover's chunk. update_render shows the light only in the hours its flags allow.
 
 #include "volition/rfg/code/objects/object_light.h"
+#include <stdio.h>
 
 #include "volition/render_lib/code/rl_color.h"
 #include "volition/render_lib/code/rl_compound_mesh_instance.h"
@@ -45,6 +46,12 @@ static str_data_hash_table<unsigned int, 32, 32, unsigned char> Light_flags_tabl
     nullptr, 0u);
 
 static object_pool<obj_light, OBJ_LIGHT_POOL_SIZE, 1> obj_lightpool; // 0x033C1450
+
+// OpenRFG: the live placed lights. update_render only runs when an object is queued for it, which a light that never
+// moves rarely is, so object_light_update_all checks every light's day/night state each frame.
+void openrfg_log(const char* text); // crash_early.cpp
+static obj_light* Obj_lights_live[OBJ_LIGHT_POOL_SIZE];
+static int Obj_lights_logged = 0;
 static obj_class_instantiator obj_light_instantiator("obj_light", alloc_obj_light, types_obj_light, bpo_index_obj_light, classname_obj_light, obj_light::pool_remaining, 0x1D60, OBJ_LIGHT_POOL_SIZE); // 0x0339FB4C
 
 // ---- class registration
@@ -252,6 +259,22 @@ bool obj_light::serialize(obj_prop_block& pblock, bool load)
     m_light_p->set_hotspot_size(hotspot_size);
     m_light_p->set_hotspot_falloff_size(hotspot_falloff_size);
     game_render_scene_update(m_light_p);
+    for (int i = 0; i < OBJ_LIGHT_POOL_SIZE; i++)
+    {
+        if (Obj_lights_live[i] == nullptr)
+        {
+            Obj_lights_live[i] = this;
+            break;
+        }
+    }
+    update_render(nullptr);
+    if (Obj_lights_logged < 40)
+    {
+        Obj_lights_logged++;
+        char text[256];
+        snprintf(text, sizeof(text), "DYNLIGHTS obj_light placed pos=(%.0f %.0f %.0f) atten=%.1f..%.1f type=%d flags=%08X color=(%.2f %.2f %.2f) visible=%d", pos.x, pos.y, pos.z, atten_start, atten_end, (int)light_type, (unsigned int)flags, clr_orig.x, clr_orig.y, clr_orig.z, (int)m_light_p->get_is_visible());
+        openrfg_log(text);
+    }
     // The streaming box clamped to the safe Havok broadphase.
     for (int axis = 0; axis < 3; axis++)
     {
@@ -350,6 +373,13 @@ bool obj_light::stream(bool load)
 // 0x00A917E0 (:297)
 void obj_light::free_this()
 {
+    for (int i = 0; i < OBJ_LIGHT_POOL_SIZE; i++)
+    {
+        if (Obj_lights_live[i] == this)
+        {
+            Obj_lights_live[i] = nullptr;
+        }
+    }
     object::free_this();
     m_light_p->release();
 }
@@ -387,6 +417,17 @@ void obj_light::update_render(rl_renderer*)
     if (m_light_p->get_is_visible())
     {
         m_light_p->set_is_visible(false);
+    }
+}
+
+void object_light_update_all()
+{
+    for (int i = 0; i < OBJ_LIGHT_POOL_SIZE; i++)
+    {
+        if (Obj_lights_live[i] != nullptr)
+        {
+            Obj_lights_live[i]->update_render(nullptr);
+        }
     }
 }
 

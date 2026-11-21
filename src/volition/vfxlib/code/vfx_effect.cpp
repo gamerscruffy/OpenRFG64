@@ -581,26 +581,28 @@ struct vfx_synthetic_light_profile
     float height; // above the effect's position
     float flicker; // 0..1 how much it flickers
     bool fades; // a one-shot (explosion): dims over the effect's duration
+    bool follows_corona; // blinks with the effect's first corona (radius and intensity)
 };
 
 static const vfx_synthetic_light_profile Vfx_synthetic_light_profiles[] = {
-    {"explosion", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true},
-    {"expl", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true},
-    {"blast", 1.0f, 0.55f, 0.2f, 5.0f, 25.0f, 1.0f, 0.2f, true},
-    {"fireball", 1.0f, 0.5f, 0.15f, 5.0f, 25.0f, 1.0f, 0.3f, true},
-    {"fire", 1.0f, 0.45f, 0.12f, 2.2f, 14.0f, 0.8f, 0.45f, false},
-    {"flame", 1.0f, 0.45f, 0.12f, 2.2f, 14.0f, 0.8f, 0.45f, false},
-    {"burn", 1.0f, 0.45f, 0.12f, 2.0f, 12.0f, 0.8f, 0.45f, false},
-    {"molotov", 1.0f, 0.45f, 0.12f, 2.5f, 14.0f, 0.8f, 0.45f, false},
-    {"welding", 0.6f, 0.75f, 1.0f, 3.0f, 10.0f, 0.5f, 0.7f, false},
-    {"flare_blue", 0.3f, 0.5f, 1.0f, 2.5f, 14.0f, 0.8f, 0.1f, false},
-    {"flare", 1.0f, 0.25f, 0.15f, 2.5f, 14.0f, 0.8f, 0.1f, false},
-    {"barracade_light", 1.0f, 0.8f, 0.5f, 1.6f, 14.0f, 0.5f, 0.05f, false},
+    {"explosion", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true, false},
+    {"expl", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true, false},
+    {"blast", 1.0f, 0.55f, 0.2f, 5.0f, 25.0f, 1.0f, 0.2f, true, false},
+    {"fireball", 1.0f, 0.5f, 0.15f, 5.0f, 25.0f, 1.0f, 0.3f, true, false},
+    {"muzzle", 1.0f, 0.78f, 0.4f, 3.5f, 9.0f, 0.0f, 0.25f, true, false}, // weapon fire: a quick warm flash
+    {"fire", 1.0f, 0.45f, 0.12f, 1.5f, 7.0f, 0.6f, 0.45f, false, false},
+    {"flame", 1.0f, 0.45f, 0.12f, 1.5f, 7.0f, 0.6f, 0.45f, false, false},
+    {"burn", 1.0f, 0.45f, 0.12f, 1.4f, 6.0f, 0.6f, 0.45f, false, false},
+    {"molotov", 1.0f, 0.45f, 0.12f, 1.8f, 8.0f, 0.6f, 0.45f, false, false},
+    {"welding", 0.6f, 0.75f, 1.0f, 2.5f, 7.0f, 0.5f, 0.7f, false, false},
+    {"flare_blue", 0.3f, 0.5f, 1.0f, 2.0f, 9.0f, 0.8f, 0.1f, false, false},
+    {"flare", 1.0f, 0.25f, 0.15f, 2.0f, 9.0f, 0.8f, 0.1f, false, false},
+    {"barracade_light", 1.0f, 0.6f, 0.2f, 0.5f, 4.0f, 0.4f, 0.0f, false, true}, // construction light: small, dim, blinks with its corona
 };
 
 static const vfx_synthetic_light_profile* vfx_synthetic_light_profile_find(const char* name)
 {
-    if (name == nullptr || strstr(name, "muzzle") != nullptr || strstr(name, "weap") != nullptr || strstr(name, "bullet") != nullptr || strstr(name, "impact") != nullptr || strstr(name, "veh_") != nullptr)
+    if (name == nullptr || strstr(name, "weap") != nullptr || strstr(name, "bullet") != nullptr || strstr(name, "impact") != nullptr || strstr(name, "veh_") != nullptr)
     {
         return nullptr;
     }
@@ -1226,6 +1228,17 @@ void vfx_effect::update_render(float delta_time, bool is_visible, rl_renderer* p
 // 0x00CA3E60 (:1121): lights follow their keys under the effect; lights dimmer than 0.001 are hidden.
 void vfx_effect::update_dynamic_lights()
 {
+    if (m_lights.first() == nullptr && m_effect_template_p->m_vfx_data_p->num_lights == 0 && Rl_dynamic_lights_level > 0 && vfx_synthetic_light_profile_find(m_effect_template_p->m_vfx_data_p->effect_name.to_pointer()) != nullptr && rl_light::can_create())
+    {
+        // OpenRFG: made here rather than only at creation, so an effect that lost its light (a restart, a lower setting
+        // raised again) gets it back.
+        rl_light* new_light_p = rl_light::create();
+        if (new_light_p != nullptr)
+        {
+            new_light_p->set_is_visible(false);
+            m_lights.append(new_light_p);
+        }
+    }
     rl_light* light_p = m_lights.first();
     if (light_p == nullptr)
     {
@@ -1250,6 +1263,14 @@ void vfx_effect::update_dynamic_lights()
             float fade = duration > 0.0f ? 1.0f - m_elapsed_time / duration : 0.0f;
             fade = fade < 0.0f ? 0.0f : fade;
             strength *= fade * fade;
+        }
+        if (profile_p->follows_corona && m_renderable_particles_instance_group_p != nullptr && m_renderable_particles_instance_group_p->m_coronas.first() != nullptr)
+        {
+            const rl_corona_instance* corona_p = m_renderable_particles_instance_group_p->m_coronas.first();
+            const bool on = corona_p->m_radius_start > 0.0001f || corona_p->m_radius_end > 0.0001f;
+            float scale = corona_p->m_intensity_scale;
+            scale = scale < 0.0f ? 0.0f : (scale > 1.0f ? 1.0f : scale);
+            strength *= on ? scale : 0.0f;
         }
         const float intensity = profile_p->intensity * strength;
         if (intensity < VFX_EFFECT_LIGHT_MIN_INTENSITY)
