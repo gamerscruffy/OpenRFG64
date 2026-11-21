@@ -419,6 +419,39 @@ void world::free_object(object* objp)
     objp->obj_flags.stub = 1;
     objp->set_name(nullptr);
 
+#ifdef OPENRFG_X64
+    // OpenRFG: removing an object whose indices are stale moves the wrong entries around and leaves the type lists
+    // pointing at other objects (seen at 15x15). Check first; rebuild the lists if they disagree, and if the object is
+    // not in them at all only give it back to its pool.
+    {
+        const int t = objp->obj_type;
+        const int s = objp->sub_type;
+        bool ok = t >= 0 && t < NUM_OBJECT_TYPES && s < NUM_OBJECT_SUB_TYPES
+            && (int)objp->all_index < all_objects.size() && all_objects[objp->all_index] == objp
+            && (int)objp->type_index < type_objects[t].size() && type_objects[t][objp->type_index] == objp->all_index
+            && (s < 0 || ((int)objp->subtype_index < subtype_objects[s].size() && subtype_objects[s][objp->subtype_index] == objp->all_index));
+        if (!ok)
+        {
+            static int reported = 0;
+            if (reported < 16)
+            {
+                reported++;
+                keen::debug::nativePrintArgs("world::free_object failed: object %p (type %d sub %d handle 0x%08X all %u type_index %u) is not where its indices say\n",
+                    objp, t, s, objp->handle, (unsigned int)objp->all_index, (unsigned int)objp->type_index);
+            }
+            sanity_check_object_lists();
+            ok = t >= 0 && t < NUM_OBJECT_TYPES && s < NUM_OBJECT_SUB_TYPES
+                && (int)objp->all_index < all_objects.size() && all_objects[objp->all_index] == objp;
+            if (!ok)
+            {
+                objp->obj_type = -1;
+                objp->sub_type = -1;
+                free_object_stub(objp);
+                return;
+            }
+        }
+    }
+#endif
     const OPENRFG_OBJECT_INDEX all_index = objp->all_index;
     const int type = objp->obj_type;
     const int sub_type = objp->sub_type;

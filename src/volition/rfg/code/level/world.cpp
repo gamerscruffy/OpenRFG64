@@ -1943,6 +1943,131 @@ void world::check_thread_ownership()
 // 0x0091CF60 (:2442)
 void world::sanity_check_object_lists()
 {
+#ifdef OPENRFG_X64
+    // OpenRFG: at 15x15 the per-type lists were seen pointing at the wrong object (the rfg_mover list held an effect),
+    // which crashed rfg_dyn_do_frame_pre and object_mover_do_frame_post_sim. Check that all_objects and the type and
+    // subtype lists agree; if not, log the first mismatch and rebuild the lists from all_objects.
+    static int reported = 0;
+    const int num_all = all_objects.size();
+    const char* problem = nullptr;
+    int bad_list = -1;
+    int bad_slot = -1;
+    object* bad_obj = nullptr;
+    for (int i = 0; i < num_all && problem == nullptr; i++)
+    {
+        object* objp = all_objects[i];
+        if (objp == nullptr || objp->obj_type < 0 || objp->obj_type >= NUM_OBJECT_TYPES)
+        {
+            problem = "all_objects entry is null or has no type";
+        }
+        else if (objp->all_index != (OPENRFG_OBJECT_INDEX)i)
+        {
+            problem = "all_objects entry has a different all_index";
+        }
+        if (problem != nullptr)
+        {
+            bad_slot = i;
+            bad_obj = objp;
+        }
+    }
+    int listed = 0;
+    for (int t = 0; t < NUM_OBJECT_TYPES && problem == nullptr; t++)
+    {
+        listed += type_objects[t].size();
+        for (int k = 0; k < type_objects[t].size(); k++)
+        {
+            const unsigned int idx = type_objects[t][k];
+            object* objp = idx < (unsigned int)num_all ? all_objects[idx] : nullptr;
+            if (objp == nullptr || objp->obj_type != t || objp->type_index != (OPENRFG_OBJECT_INDEX)k)
+            {
+                problem = "type list entry points at the wrong object";
+                bad_list = t;
+                bad_slot = k;
+                bad_obj = objp;
+                break;
+            }
+        }
+    }
+    if (problem == nullptr && listed != num_all)
+    {
+        problem = "type lists do not add up to all_objects";
+    }
+    for (int s = 0; s < NUM_OBJECT_SUB_TYPES && problem == nullptr; s++)
+    {
+        for (int k = 0; k < subtype_objects[s].size(); k++)
+        {
+            const unsigned int idx = subtype_objects[s][k];
+            object* objp = idx < (unsigned int)num_all ? all_objects[idx] : nullptr;
+            if (objp == nullptr || objp->sub_type != s || objp->subtype_index != (OPENRFG_OBJECT_INDEX)k)
+            {
+                problem = "subtype list entry points at the wrong object";
+                bad_list = s;
+                bad_slot = k;
+                bad_obj = objp;
+                break;
+            }
+        }
+    }
+    if (problem == nullptr)
+    {
+        return;
+    }
+    if (reported < 16)
+    {
+        reported++;
+        keen::debug::nativePrintArgs("world object lists failed check: %s (list %d, slot %d of %d objects; object %p type %d sub %d handle 0x%08X all %u type_index %u stub %d). Rebuilding.\n",
+            problem, bad_list, bad_slot, num_all, bad_obj,
+            bad_obj != nullptr ? (int)bad_obj->obj_type : -99, bad_obj != nullptr ? (int)bad_obj->sub_type : -99,
+            bad_obj != nullptr ? bad_obj->handle : 0u, bad_obj != nullptr ? (unsigned int)bad_obj->all_index : 0u,
+            bad_obj != nullptr ? (unsigned int)bad_obj->type_index : 0u, bad_obj != nullptr ? (int)bad_obj->obj_flags.stub : -1);
+    }
+    // Rebuild: keep each typed object of all_objects once (the marker catches duplicates), then refill the lists.
+    for (int i = 0; i < num_all; i++)
+    {
+        if (all_objects[i] != nullptr)
+        {
+            all_objects[i]->all_index = (OPENRFG_OBJECT_INDEX)0xFFFFFFFF;
+        }
+    }
+    int dropped = 0;
+    int n = 0;
+    for (int i = 0; i < num_all; i++)
+    {
+        object* objp = all_objects[i];
+        if (objp == nullptr || objp->obj_type < 0 || objp->obj_type >= NUM_OBJECT_TYPES || objp->sub_type >= NUM_OBJECT_SUB_TYPES
+            || objp->all_index != (OPENRFG_OBJECT_INDEX)0xFFFFFFFF)
+        {
+            dropped++;
+            continue;
+        }
+        objp->all_index = (OPENRFG_OBJECT_INDEX)n;
+        all_objects[n++] = objp;
+    }
+    all_objects.resize(n);
+    for (int t = 0; t < NUM_OBJECT_TYPES; t++)
+    {
+        type_objects[t].resize(0);
+    }
+    for (int s = 0; s < NUM_OBJECT_SUB_TYPES; s++)
+    {
+        subtype_objects[s].resize(0);
+    }
+    for (int i = 0; i < n; i++)
+    {
+        object* objp = all_objects[i];
+        objp->type_index = (OPENRFG_OBJECT_INDEX)type_objects[objp->obj_type].add(objp->all_index);
+        objp->subtype_index = (OPENRFG_OBJECT_INDEX)0xFFFF;
+        if (objp->sub_type >= 0)
+        {
+            objp->subtype_index = (OPENRFG_OBJECT_INDEX)subtype_objects[objp->sub_type].add(objp->all_index);
+        }
+    }
+    if (reported < 16 && dropped > 0)
+    {
+        reported++;
+        keen::debug::nativePrintArgs("world object lists failed check: dropped %d stale or duplicate all_objects entries\n", dropped);
+    }
+#endif
 }
 
 // 0x0091CF70 (:2580)
