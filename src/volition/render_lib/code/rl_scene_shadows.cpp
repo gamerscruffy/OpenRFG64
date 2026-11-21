@@ -111,7 +111,9 @@ bool rl_scene_renderer::render_spot_light_shadow_map(rl_renderer& renderer, rl_c
     creation_params.shadow_map_matrix = view * projection;
     creation_params.shadow_zbias = 0.0f;
     creation_params.shadow_slope_zbias = 0.0f;
+    g_shadowClearValue = 0.0f;
     render_shadow_pass(renderer, camera, light, Spot_shadow_target_p->m_render_target, SPOT_SHADOW_MAP_SIZE, SPOT_SHADOW_MAP_SIZE, creation_params, batch_to_use, vis_flags, transparent_casters, num_transparent_casters, true);
+    g_shadowClearValue = 1.0f;
     return true;
 }
 
@@ -122,6 +124,8 @@ bool rl_scene_renderer::render_spot_light_shadow_map(rl_renderer& renderer, rl_c
 // transforms, viewport, z range and macro state are restored afterwards.
 // Notes (decompiled behaviour, kept as is): the pixel and vertex shader resources are unbound directly on the D3D
 // context (bypassing the command writer's cache), and the base pass flag is left as base_pass.
+// OpenRFG: the shadow map's clear value (1 = far). The spot light debug view clears to 0, so drawn casters show against black.
+static float g_shadowClearValue = 1.0f;
 void rl_scene_renderer::render_shadow_pass(rl_renderer& renderer, rl_camera& camera, rl_light& light, const rl_dev_render_target& depth_target, int width, int height, rl_shadow_creation_parameters& shadow_creation_params, rl_batched_pass& batch_to_use, const unsigned int vis_flags, rl_renderable_instance** transparent_casters, unsigned int num_transparent_casters, const bool base_pass)
 {
     // Magic number: 16, every pixel and vertex shader resource slot.
@@ -151,7 +155,7 @@ void rl_scene_renderer::render_shadow_pass(rl_renderer& renderer, rl_camera& cam
     renderer.m_z_far = 1.0f;
     renderer.set_viewport(renderer.m_viewPort);
     // Magic number: clear flags 3 (color and depth).
-    renderer.clear(rl_color_float(1.0f, 1.0f, 1.0f, 1.0f), 3, 1.0f, 0);
+    renderer.clear(rl_color_float(g_shadowClearValue, g_shadowClearValue, g_shadowClearValue, g_shadowClearValue), 3, 1.0f, 0);
     const rl_primitive_state saved_state = renderer.get_macro_state();
     rl_primitive_state state = saved_state;
     // (bits & 0xFFACA120) | 0x20A100: no blending, full depth, no stencil, culling, no color writes, the shadow bias.
