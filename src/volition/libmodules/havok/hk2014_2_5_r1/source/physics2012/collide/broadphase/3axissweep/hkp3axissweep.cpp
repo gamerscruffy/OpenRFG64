@@ -511,6 +511,22 @@ void hkp3AxisSweep::hkpBpAxis::removeBatch(hkpBpNode* nodes, const hkArrayBase<i
 // minimum, by 2 past the maximum). Packed 16-bit signed compares in the original.
 void hkp3AxisSweep::updateNodesAfterInsert(hkpBpNode* nodes, int numNodes, hkpBpNode& newNode)
 {
+#ifdef OPENRFG_X64
+    // OpenRFG: unsigned compares. The original's signed 16-bit ones only hold while endpoint indices stay below
+    // 0x8000 (about 16k objects per sweep); the 15x15 broadphase layers hold more, and past that the indices were
+    // shifted wrongly, so later pairs carried the world node's null handle and removeBatch wrote out of bounds.
+    const int mins[6] = { newNode.min_y, newNode.min_z, newNode.min_y, newNode.min_z, newNode.min_x, newNode.min_x };
+    const int maxs[6] = { newNode.max_y, newNode.max_z, newNode.max_y, newNode.max_z, newNode.max_x, newNode.max_x };
+    for (hkpBpNode* node = nodes; node < nodes + numNodes; node++)
+    {
+        unsigned short* fields = &node->min_y;
+        for (int i = 0; i < 6; i++)
+        {
+            const int value = fields[i];
+            fields[i] = (unsigned short)(value + (value > maxs[i] - 2) + (value > mins[i] - 1));
+        }
+    }
+#else
     const short mins[6] = { (short)newNode.min_y, (short)newNode.min_z, (short)newNode.min_y, (short)newNode.min_z, (short)newNode.min_x, (short)newNode.min_x };
     const short maxs[6] = { (short)newNode.max_y, (short)newNode.max_z, (short)newNode.max_y, (short)newNode.max_z, (short)newNode.max_x, (short)newNode.max_x };
     for (hkpBpNode* node = nodes; node < nodes + numNodes; node++)
@@ -522,11 +538,26 @@ void hkp3AxisSweep::updateNodesAfterInsert(hkpBpNode* nodes, int numNodes, hkpBp
             fields[i] = (unsigned short)(fields[i] + (value > (short)(maxs[i] - 2)) + (value > (short)(mins[i] - 1)));
         }
     }
+#endif
 }
 
 // 0x00D847C0: after a node's endpoints were removed, the indices above them move down.
 void hkp3AxisSweep::updateNodesAfterDelete(hkpBpNode* nodes, int numNodes, hkpBpNode& oldNode)
 {
+#ifdef OPENRFG_X64
+    // OpenRFG: unsigned compares, as in updateNodesAfterInsert.
+    const int mins[6] = { oldNode.min_y, oldNode.min_z, oldNode.min_y, oldNode.min_z, oldNode.min_x, oldNode.min_x };
+    const int maxs[6] = { oldNode.max_y, oldNode.max_z, oldNode.max_y, oldNode.max_z, oldNode.max_x, oldNode.max_x };
+    for (hkpBpNode* node = nodes; node < nodes + numNodes; node++)
+    {
+        unsigned short* fields = &node->min_y;
+        for (int i = 0; i < 6; i++)
+        {
+            const int value = fields[i];
+            fields[i] = (unsigned short)(value - (value > maxs[i]) - (value > mins[i]));
+        }
+    }
+#else
     const short mins[6] = { (short)oldNode.min_y, (short)oldNode.min_z, (short)oldNode.min_y, (short)oldNode.min_z, (short)oldNode.min_x, (short)oldNode.min_x };
     const short maxs[6] = { (short)oldNode.max_y, (short)oldNode.max_z, (short)oldNode.max_y, (short)oldNode.max_z, (short)oldNode.max_x, (short)oldNode.max_x };
     for (hkpBpNode* node = nodes; node < nodes + numNodes; node++)
@@ -538,6 +569,7 @@ void hkp3AxisSweep::updateNodesAfterDelete(hkpBpNode* nodes, int numNodes, hkpBp
             fields[i] = (unsigned short)(fields[i] - (value > maxs[i]) - (value > mins[i]));
         }
     }
+#endif
 }
 
 // <0> 0x00D8BD50, <1> 0x00D8BE00, <2> 0x00D8BEB0 (inlined in the caller)
