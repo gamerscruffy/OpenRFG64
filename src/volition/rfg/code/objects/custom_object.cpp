@@ -44,7 +44,9 @@
 
 // ---- globals
 
-farray<custom_object_do_frame_callbacks,64> Object_process_pool; // 0x033C63C0
+// OpenRFG: scaled with the zones (x25 on x64). Every streamed-in fire barrel, kill-on-move mover and so on registers here;
+// at 15x15 the original 64 filled and the ones after it lost their per-frame behaviour (VARRAY full).
+farray<custom_object_do_frame_callbacks,OPENRFG_ZONE_POOL(64)> Object_process_pool; // 0x033C63C0
 
 static float Excavator_player_damage = 250.0f; // 0x0169422C
 static tweak_table_item Tweak_table_item_Excavator_player_damage("Excavator_player_damage", &Excavator_player_damage); // 0x034309BC

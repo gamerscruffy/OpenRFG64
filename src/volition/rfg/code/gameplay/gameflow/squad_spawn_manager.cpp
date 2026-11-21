@@ -26,6 +26,9 @@ static const int MAX_NPC_MEMBER_COUNT = 50;
 static const int MIN_NPC_MEMBER_COUNT_TO_CHECK = 49;
 static const int MIN_NPC_MEMBER_GROW_COUNT = 40; // 0x02246AE4
 static const float UNLOAD_RATIO = 0.8333333f;
+// OpenRFG: the squads evaluated per frame, scaled with the zones (x25 on x64). A 15x15 load has more than the original
+// 100, and the ones past it were never evaluated (VARRAY full). 32 bytes each, on the stack.
+static const int SQUAD_EVALUATION_MAX = OPENRFG_ZONE_POOL(100);
 
 static squad_member_manager_data Squad_member_manager; // 0x02266238
 
@@ -58,7 +61,7 @@ void squad_member_manager_data::reset()
 }
 
 // 0x007743E0 (:176): the members the radii keep loaded. A squad already loaded stays until the unload radius.
-static int evaluate_squad_list(farray<squad_evaluation_struct,100>& squad_evaluation_list, float load_radius, float unload_radius)
+static int evaluate_squad_list(farray<squad_evaluation_struct,SQUAD_EVALUATION_MAX>& squad_evaluation_list, float load_radius, float unload_radius)
 {
     int members = 0;
     for (int i = 0; i < squad_evaluation_list.size(); i++)
@@ -75,7 +78,7 @@ static int evaluate_squad_list(farray<squad_evaluation_struct,100>& squad_evalua
 }
 
 // 0x00774470 (:205)
-static void assign_squad_load_status(farray<squad_evaluation_struct,100>& squad_evaluation_list)
+static void assign_squad_load_status(farray<squad_evaluation_struct,SQUAD_EVALUATION_MAX>& squad_evaluation_list)
 {
     for (int i = 0; i < squad_evaluation_list.size(); i++)
     {
@@ -91,7 +94,7 @@ static void assign_squad_load_status(farray<squad_evaluation_struct,100>& squad_
 }
 
 // 0x007744C0 (:218)
-static void reduce_squad_load_radius(farray<squad_evaluation_struct,100>& squad_evaluation_list, float& load_radius_sqrd, float& unload_radius_sqrd)
+static void reduce_squad_load_radius(farray<squad_evaluation_struct,SQUAD_EVALUATION_MAX>& squad_evaluation_list, float& load_radius_sqrd, float& unload_radius_sqrd)
 {
     int farthest = -1;
     for (int i = 0; i < squad_evaluation_list.size(); i++)
@@ -113,7 +116,7 @@ static void reduce_squad_load_radius(farray<squad_evaluation_struct,100>& squad_
 }
 
 // 0x007745A0 (:261)
-static void enlarge_squad_load_radius(farray<squad_evaluation_struct,100>& squad_evaluation_list, float& load_radius_sqrd, float& unload_radius_sqrd)
+static void enlarge_squad_load_radius(farray<squad_evaluation_struct,SQUAD_EVALUATION_MAX>& squad_evaluation_list, float& load_radius_sqrd, float& unload_radius_sqrd)
 {
     int nearest = -1;
     for (int i = 0; i < squad_evaluation_list.size(); i++)
@@ -209,7 +212,7 @@ bool squad_member_manager_data::do_squad_simulation()
     }
     // Magic number: 2 s.
     squad_evaluation.set(2000);
-    farray<squad_evaluation_struct,100> squad_evaluation_list;
+    farray<squad_evaluation_struct,SQUAD_EVALUATION_MAX> squad_evaluation_list;
     for (int i = 0; i < World.get_num_objects<object_squad>(); i++)
     {
         object_squad* squad = World.get_object<object_squad>(i);
