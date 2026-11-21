@@ -1825,6 +1825,7 @@ bool rfg_mover::stream(bool load)
 {
     if (!object_mover::stream(load))
     {
+        openrfg_fail_log("mover-stream", "object_mover::stream(%d) failed at <%.1f, %.1f, %.1f> (handle 0x%08X)", (int)load, pos.x, pos.y, pos.z, get_handle()); // OpenRFG
         return false;
     }
     if (load)
@@ -1833,6 +1834,7 @@ bool rfg_mover::stream(bool load)
         if (chunk == nullptr)
         {
             sprintf(Rfg_mover_message, "*** Base chunk failed to load ***");
+            openrfg_fail_log("mover-stream", "%s (handle 0x%08X)", Rfg_mover_message, get_handle()); // OpenRFG
             rfg_mover_stream_fail_mp_cleanup(this); // inlined
             World.destroy_object(this, false);
             return false;
@@ -1845,6 +1847,7 @@ bool rfg_mover::stream(bool load)
             rfg_base_destroyable_shape* base = chunk_get_destroyable_object(chunk, chunk_obj_uid, this);
             if (base == nullptr)
             {
+                openrfg_fail_log("mover-stream", "chunk %s has no destroyable object %u at <%.1f, %.1f, %.1f> (handle 0x%08X)", chunk->name, chunk_obj_uid, pos.x, pos.y, pos.z, get_handle()); // OpenRFG
                 rfg_mover_stream_fail_mp_cleanup(this);
                 World.destroy_object(this, false);
                 return false;
@@ -1854,6 +1857,7 @@ bool rfg_mover::stream(bool load)
             if (shape == nullptr)
             {
                 sprintf(Rfg_mover_message, "*** Warning: Failed to create destroyable shape: %s <%.1f, %.1f, %.1f> ***\n", chunk->name, pos.x, pos.y, pos.z);
+                openrfg_fail_log("mover-stream", "%s (handle 0x%08X)", Rfg_mover_message, get_handle()); // OpenRFG
                 rfg_mover_stream_fail_mp_cleanup(this);
                 World.destroy_object(this, false);
                 return false;
@@ -1862,6 +1866,7 @@ bool rfg_mover::stream(bool load)
             if (!decompress_state(shape, chunk->destruction_checksum))
             {
                 sprintf(Rfg_mover_message, "*** Warning: Failed to decompress destroyable shape: %s <%.1f, %.1f, %.1f> ***\n", chunk->name, pos.x, pos.y, pos.z);
+                openrfg_fail_log("mover-stream", "%s (handle 0x%08X)", Rfg_mover_message, get_handle()); // OpenRFG
                 rfg_mover_stream_fail_mp_cleanup(this);
                 World.destroy_object(this, false);
                 rfg_shape_delete(shape);
@@ -1875,6 +1880,7 @@ bool rfg_mover::stream(bool load)
         if (shape->get_object_buffer() == nullptr)
         {
             sprintf(Rfg_mover_message, "*** Warning: Destroyable shape is invalid: %s <%.1f, %.1f, %.1f> ***\n", chunk->name, pos.x, pos.y, pos.z);
+            openrfg_fail_log("mover-stream", "%s (handle 0x%08X)", Rfg_mover_message, get_handle()); // OpenRFG
             rfg_mover_stream_fail_mp_cleanup(this);
             World.destroy_object(this, false);
             shape->delete_me();
@@ -1911,6 +1917,7 @@ bool rfg_mover::stream(bool load)
         if (shape->mass <= 0.0f)
         {
             sprintf(Rfg_mover_message, "*** Warning: Invalid rfg_mover - base chunk has 0 mass: %s (%s) ***\n", chunk->filename, chunk_get_object_name(chunk_uid, chunk_obj_uid));
+            openrfg_fail_log("mover-stream", "%s (handle 0x%08X)", Rfg_mover_message, get_handle()); // OpenRFG
             World.destroy_object(this, false);
             rfg_shape_delete(shape);
             return false;

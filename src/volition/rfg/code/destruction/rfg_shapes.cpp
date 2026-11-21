@@ -589,7 +589,12 @@ rfg_destroyable_shape::rfg_destroyable_shape(rfg_base_destroyable_shape* base, u
     }
 
     rfg_destroyable_shape* self = this;
-    Destroyable_uid_hash.insert_key_data(sibling_uid, self);
+    if (!Destroyable_uid_hash.insert_key_data(sibling_uid, self))
+    {
+        // OpenRFG (not in the binary): the table of live shapes is full or the uid is taken; siblings of this shape will not find it.
+        extern void openrfg_fail_log(const char* tag, const char* format, ...);
+        openrfg_fail_log("shape-uid-hash", "Destroyable_uid_hash insert failed for shape uid 0x%08X (%d pieces)", sibling_uid, base->num_objects);
+    }
     sib_next = this;
     sib_prev = this;
     unsigned char* buffer = allocate_buffer();
