@@ -1429,7 +1429,15 @@ static npc* spawn_npc(const npc_spawn_param_list& spawn_param_list, npc_spawn_pa
     {
         objp->obj_flags.no_save = !spawn_param_list.spawn_flags.should_save;
     }
-    // Original bug kept: a failed create_object_internal crashes on the next line's handle.
+#ifdef OPENRFG_X64
+    // OpenRFG: the original reads the handle of a failed create_object_internal (null) and crashes. Callers already
+    // handle a null npc (the spawn just does not happen).
+    if (spawn_params.np == nullptr)
+    {
+        return nullptr;
+    }
+#endif
+    // Original bug kept (x86): a failed create_object_internal crashes on the next line's handle.
     const unsigned int handle = spawn_params.np->get_handle();
     human* hp = handle != 0xFFFFFFFF ? World.object_from_handle<human>(handle) : nullptr;
     // Magic numbers: the byte at human_info +0x17F is a bool; it sets hflags bit 0x0C:1 once.

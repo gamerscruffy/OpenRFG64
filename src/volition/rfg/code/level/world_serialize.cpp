@@ -192,6 +192,7 @@ static void openrfg_log_pool_exhausted(unsigned int bucket, const char* (*classn
 // OpenRFG diagnostic: a zone-file building (rfg_mover) that never became a world object (ZONESKIP), and a building
 // destroyed after it was created (OBJDEL, with the functions that destroyed it).
 void openrfg_log_with_callers(const char* text); // crash_early.cpp
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
 static bool openrfg_is_rfg_mover(const zone_object* zobjp)
 {
     static const unsigned int rfg_mover_hash = str_hash_string("rfg_mover");
@@ -381,6 +382,9 @@ object* world::create_object_internal(unsigned int classname_hash, obj_prop_bloc
         {
             if (!Multiplayer && !wrecking_crew_is_active())
             {
+#ifdef OPENRFG_X64
+                openrfg_fail_log("create-object-no-zone", "class 0x%08X at <%.0f, %.0f, %.0f>: no loaded zone there", classname_hash, pos.x, pos.y, pos.z);
+#endif
                 return nullptr;
             }
             if (all_zones == nullptr)
@@ -393,6 +397,9 @@ object* world::create_object_internal(unsigned int classname_hash, obj_prop_bloc
     object* stub = alloc_object_stub(classname_hash, origin_zone, parent);
     if (stub == nullptr)
     {
+#ifdef OPENRFG_X64
+        openrfg_fail_log("create-object-no-stub", "class 0x%08X at <%.0f, %.0f, %.0f> in zone %s: no stub", classname_hash, pos.x, pos.y, pos.z, origin_zone->name);
+#endif
         return nullptr;
     }
     stub->last_known_bmin = vector(pos.x - 0.5f, pos.y - 0.5f, pos.z - 0.5f);
@@ -401,6 +408,9 @@ object* world::create_object_internal(unsigned int classname_hash, obj_prop_bloc
     {
         return stub;
     }
+#ifdef OPENRFG_X64
+    openrfg_fail_log("create-object-failed", "class 0x%08X type %d at <%.0f, %.0f, %.0f>: serialize failed", classname_hash, (int)stub->get_obj_type(), pos.x, pos.y, pos.z);
+#endif
     free_object_stub(stub);
     return nullptr;
 }
