@@ -31,6 +31,11 @@ extern int Rl_dynamic_lights_dbg_visible; // visible lights before the budget
 extern int Rl_dynamic_lights_dbg_drawn; // light passes drawn
 extern int Rl_dynamic_lights_dbg_headlights; // vehicle headlight spots lit (vehicle_effects.cpp)
 extern int Rl_dynamic_lights_dbg_night; // vehicle_effects_headlights_should_be_on
-void rl_dynamic_lights_debug_report();
+extern int Rl_dynamic_lights_dbg_fx_updates; // effect updates (visible effects) since the last report
+extern int Rl_dynamic_lights_dbg_fx_light_updates; // of those, effects with lights of their own
+extern int Rl_dynamic_lights_dbg_vehicle_updates; // vehicle light updates since the last report
+extern int Rl_dynamic_lights_dbg_vehicle_lit; // of those, with headlights lit (engine running, headlights on)
+// scene_lights: every rl_light of the scene, shown or hidden (rl_scene::get_light_count).
+void rl_dynamic_lights_debug_report(int scene_lights);
 // Called by render_lighting_passes for each light drawn.
 void rl_dynamic_lights_debug_light(const rl_light& light, unsigned int vis_flags);

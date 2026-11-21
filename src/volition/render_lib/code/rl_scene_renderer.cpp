@@ -709,7 +709,7 @@ void rl_scene_renderer::render_scene_part2(rl_renderer& deferredRenderer, rl_cam
     {
         complete_lock_frame_buffer(deferredRenderer);
     }
-    rl_dynamic_lights_debug_report(); // OpenRFG diagnostics (openrfg_crash.txt, DYNLIGHTS lines)
+    rl_dynamic_lights_debug_report(scene.get_light_count()); // OpenRFG diagnostics (openrfg_crash.txt, DYNLIGHTS lines)
     deferredRenderer.set_viewport(original_vp);
 }
 

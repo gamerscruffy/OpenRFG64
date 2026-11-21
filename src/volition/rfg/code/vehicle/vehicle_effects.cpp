@@ -800,6 +800,10 @@ void vehicle_effects_process_lights(vehicle* vp)
         }
     }
     // OpenRFG: the headlight spot light (the Dynamic Lights option).
+    Rl_dynamic_lights_dbg_vehicle_updates++; // OpenRFG diagnostics
+    if (vp->obj_flags._dont_use_me != 0 && vp->m_flags.m_engine_running != 0 && vp->m_flags.m_headlights_on != 0) {
+        Rl_dynamic_lights_dbg_vehicle_lit++;
+    }
     vehicle_headlight_spot_update(vp, vp->obj_flags._dont_use_me != 0 && vp->m_flags.m_engine_running != 0 && vp->m_flags.m_headlights_on != 0);
     if (vp->emergency_light_timer.elapsed()) {
         vp->m_flags.m_emergency_lights_on = vp->m_flags.m_emergency_lights_on == 0;

@@ -65,6 +65,10 @@ int Rl_dynamic_lights_dbg_visible = 0;
 int Rl_dynamic_lights_dbg_drawn = 0;
 int Rl_dynamic_lights_dbg_headlights = 0;
 int Rl_dynamic_lights_dbg_night = 0;
+int Rl_dynamic_lights_dbg_fx_updates = 0;
+int Rl_dynamic_lights_dbg_fx_light_updates = 0;
+int Rl_dynamic_lights_dbg_vehicle_updates = 0;
+int Rl_dynamic_lights_dbg_vehicle_lit = 0;
 static int Dynamic_lights_dbg_frame = 0;
 static char Dynamic_lights_dbg_first[256] = "";
 
@@ -81,17 +85,22 @@ void rl_dynamic_lights_debug_light(const rl_light& light, unsigned int vis_flags
 }
 
 // Once every 120 frames, then the counts start over.
-void rl_dynamic_lights_debug_report()
+void rl_dynamic_lights_debug_report(int scene_lights)
 {
     if (++Dynamic_lights_dbg_frame >= 120)
     {
         Dynamic_lights_dbg_frame = 0;
-        char text[512];
-        snprintf(text, sizeof(text), "DYNLIGHTS level=%d enabled=%d max=%d dist=%.0f found=%d in_range=%d visible=%d drawn=%d headlights=%d night=%d %s",
-                 Rl_dynamic_lights_level, (int)RL_enable_secondary_lights, Rl_dynamic_lights_max, Rl_dynamic_lights_distance, Rl_dynamic_lights_dbg_found,
+        char text[640];
+        snprintf(text, sizeof(text), "DYNLIGHTS level=%d enabled=%d max=%d dist=%.0f scene_lights=%d found=%d in_range=%d visible=%d drawn=%d headlights=%d night=%d | 2s: fx=%d fx_with_lights=%d vehicle=%d vehicle_lit=%d %s",
+                 Rl_dynamic_lights_level, (int)RL_enable_secondary_lights, Rl_dynamic_lights_max, Rl_dynamic_lights_distance, scene_lights, Rl_dynamic_lights_dbg_found,
                  Rl_dynamic_lights_dbg_in_range, Rl_dynamic_lights_dbg_visible, Rl_dynamic_lights_dbg_drawn, Rl_dynamic_lights_dbg_headlights,
-                 Rl_dynamic_lights_dbg_night, Dynamic_lights_dbg_first);
+                 Rl_dynamic_lights_dbg_night, Rl_dynamic_lights_dbg_fx_updates, Rl_dynamic_lights_dbg_fx_light_updates, Rl_dynamic_lights_dbg_vehicle_updates,
+                 Rl_dynamic_lights_dbg_vehicle_lit, Dynamic_lights_dbg_first);
         openrfg_log(text);
+        Rl_dynamic_lights_dbg_fx_updates = 0;
+        Rl_dynamic_lights_dbg_fx_light_updates = 0;
+        Rl_dynamic_lights_dbg_vehicle_updates = 0;
+        Rl_dynamic_lights_dbg_vehicle_lit = 0;
     }
     Rl_dynamic_lights_dbg_found = 0;
     Rl_dynamic_lights_dbg_in_range = 0;

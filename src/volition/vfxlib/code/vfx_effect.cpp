@@ -9,6 +9,11 @@
 
 #include "volition/vfxlib/code/vfx_effect.h"
 
+#include "volition/render_lib/code/rl_dynamic_lights.h"
+#include <stdio.h>
+
+void openrfg_log(const char* text); // crash_early.cpp
+
 #include "volition/render_lib/code/rl_corona_instance.h"
 #include "volition/render_lib/code/rl_material_library.h"
 #include "volition/render_lib/code/rl_material_map.h"
@@ -776,6 +781,34 @@ void vfx_effect::update_render(float delta_time, bool is_visible, rl_renderer* p
         return;
     }
     update_expressions();
+    // OpenRFG diagnostics: effect counts, and each effect seen once by name with its light count (DYNLIGHTS fx lines).
+    {
+        Rl_dynamic_lights_dbg_fx_updates++;
+        vfx_effect_template::vfx_data* dbg_data_p = m_effect_template_p->m_vfx_data_p;
+        if (dbg_data_p->num_lights > 0)
+        {
+            Rl_dynamic_lights_dbg_fx_light_updates++;
+        }
+        static const void* s_seen[512];
+        static int s_num_seen = 0;
+        bool seen = false;
+        for (int i = 0; i < s_num_seen; i++)
+        {
+            if (s_seen[i] == m_effect_template_p)
+            {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen && s_num_seen < 512)
+        {
+            s_seen[s_num_seen++] = m_effect_template_p;
+            const char* name = dbg_data_p->effect_name.to_pointer();
+            char text[256];
+            snprintf(text, sizeof(text), "DYNLIGHTS fx name=%s lights=%d", name != nullptr ? name : "?", dbg_data_p->num_lights);
+            openrfg_log(text);
+        }
+    }
     update_dynamic_lights();
     if (m_render_flags == RENDER_FLAGS_NONE)
     {
