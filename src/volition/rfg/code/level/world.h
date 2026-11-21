@@ -314,6 +314,7 @@ public:
     friend class object_convoy_end_point; // serialize saves the home district's name (get_object_name; inferred)
     friend int chunk_get_general_object_index(const c_chunk_base* chunk, unsigned int uid, object* objp);
     friend rfg_base_destroyable_shape* chunk_get_destroyable_object(const c_chunk_base* chunk, unsigned int uid, object* objp);
+    friend void openrfg_log_all_objects_near(const vector& p); // OpenRFG diagnostic (rfg_mover.cpp): walks all_objects
 
     bool mission_object_creation_mode; // 0x00
     vector level_ambient; // 0x04

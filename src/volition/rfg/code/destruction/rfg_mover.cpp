@@ -3893,6 +3893,75 @@ static void openrfg_log_near_shape(rfg_mover* rm, rfg_destroyable_shape* shape, 
     openrfg_log(text);
 }
 
+// OpenRFG (not in the binary): every ~5 s, NEAROBJ lines for objects of any type whose bounds or position are within
+// 40 m of the player, once per object (first 400 lines), and a NEARALL count by type. Finds a bridge deck or building
+// that is a different object type, or exists but is not streamed in.
+void openrfg_log_all_objects_near(const vector& p)
+{
+    static const object* s_done[400];
+    static int s_count = 0;
+    int counts[8] = {};
+    int total = 0;
+    int not_streamed = 0;
+    for (int i = 0; i < World.all_objects.size(); i++)
+    {
+        object* objp = World.all_objects[i];
+        if (objp == nullptr)
+        {
+            continue;
+        }
+        const float dx = p.x < objp->last_known_bmin.x ? objp->last_known_bmin.x - p.x : (p.x > objp->last_known_bmax.x ? p.x - objp->last_known_bmax.x : 0.0f);
+        const float dy = p.y < objp->last_known_bmin.y ? objp->last_known_bmin.y - p.y : (p.y > objp->last_known_bmax.y ? p.y - objp->last_known_bmax.y : 0.0f);
+        const float dz = p.z < objp->last_known_bmin.z ? objp->last_known_bmin.z - p.z : (p.z > objp->last_known_bmax.z ? p.z - objp->last_known_bmax.z : 0.0f);
+        const float box_dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        const float px = objp->pos.x - p.x;
+        const float py = objp->pos.y - p.y;
+        const float pz = objp->pos.z - p.z;
+        const float pos_dist = sqrtf(px * px + py * py + pz * pz);
+        if (box_dist > 40.0f && pos_dist > 40.0f)
+        {
+            continue;
+        }
+        const int type = (int)objp->get_obj_type();
+        total++;
+        counts[type >= 0 && type < 7 ? type : 7]++;
+        if (!objp->obj_flags.streamed)
+        {
+            not_streamed++;
+        }
+        bool done = s_count >= 400;
+        for (int k = 0; k < s_count && !done; k++)
+        {
+            done = s_done[k] == objp;
+        }
+        if (done)
+        {
+            continue;
+        }
+        s_done[s_count++] = objp;
+        hkpRigidBody* rb = havok_get_pointer_from_rigid_body_handle(objp->havok_handle);
+        const char* name = objp->get_name();
+        const char* chunk_name = "";
+        if (type == OT_MOVER && (int)objp->get_sub_type() == OT_SUB_MOVER_RFG)
+        {
+            c_chunk_base* chunk = chunk_get_base_by_uid(((rfg_mover*)objp)->chunk_uid);
+            chunk_name = chunk != nullptr ? chunk->name : "(chunk not loaded)";
+        }
+        char text[400];
+        snprintf(text, sizeof(text), "NEAROBJ type %d sub %d name '%s' chunk '%s' pos <%.1f, %.1f, %.1f> (%.0f m, box %.0f m) bounds <%.0f, %.0f, %.0f> to <%.0f, %.0f, %.0f> | "
+            "streamed %d streaming %d destroyed %d stub %d srid 0x%X | body %d in world %d",
+            type, (int)objp->get_sub_type(), name != nullptr ? name : "", chunk_name, objp->pos.x, objp->pos.y, objp->pos.z, pos_dist, box_dist,
+            objp->last_known_bmin.x, objp->last_known_bmin.y, objp->last_known_bmin.z, objp->last_known_bmax.x, objp->last_known_bmax.y, objp->last_known_bmax.z,
+            (int)objp->obj_flags.streamed, (int)objp->obj_flags.streaming, (int)objp->obj_flags.destroyed, (int)objp->obj_flags.stub, objp->get_srid(),
+            (int)(rb != nullptr), (int)(rb != nullptr && rb->getWorld() != nullptr));
+        openrfg_log(text);
+    }
+    char text[240];
+    snprintf(text, sizeof(text), "NEARALL player at <%.0f, %.0f, %.0f>: %d objects within 40 m (%d not streamed) | by type 0-6: %d %d %d %d %d %d %d, other %d (of %d objects)",
+        p.x, p.y, p.z, total, not_streamed, counts[0], counts[1], counts[2], counts[3], counts[4], counts[5], counts[6], counts[7], World.all_objects.size());
+    openrfg_log(text);
+}
+
 // OpenRFG (not in the binary): every ~5 s, a NEAR summary of the buildings whose bounds are within 40 m of the player,
 // and a NEARBAD line for each one that is not streamed, has no render instance, no Havok body, or a body outside the
 // Havok world (first 1500 lines). Finds pieces you can see through or fall through.
@@ -3911,6 +3980,7 @@ static void openrfg_log_movers_near_player()
         return;
     }
     const vector p = local->pos;
+    openrfg_log_all_objects_near(p);
     int near_count = 0;
     int bad_count = 0;
     const int num = World.get_num_objects<rfg_mover>();
