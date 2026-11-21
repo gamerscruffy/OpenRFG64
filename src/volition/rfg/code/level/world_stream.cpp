@@ -456,6 +456,51 @@ void world::monitor_entering_zones()
     }
 }
 
+#ifdef OPENRFG_X64
+// OpenRFG: the entering and leaving passes resume each frame at the island where the last one ran out of time. The
+// original restarted at the list head every frame. The streaming region is a square around the stream position but
+// objects stream in only inside the level radius (a circle), so islands in the square's corners stay ENTERING for
+// good. With the wider World Detail Distance there are enough of them to use the whole 5 ms every frame, and the
+// islands behind them, buildings streaming in as the player moves, never got their turn.
+static unsigned short Stream_resume_island[havok_bpi::NUM_ISLAND_STATES] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
+
+// The island to start the pass at; count is the number of islands in the list (each is visited at most once).
+static havok_bpi* stream_first_island(havok_bpi::bpi_state state, int& count)
+{
+    count = 0;
+    const unsigned short head = Island_list[state];
+    if (head == 0xFFFF)
+    {
+        return nullptr;
+    }
+    unsigned short index = head;
+    do
+    {
+        count++;
+        index = Island_buf[index].next;
+    } while (index != head && count < Total_objects);
+    const unsigned short resume = Stream_resume_island[state];
+    if (resume != 0xFFFF && (int)resume < Total_objects && Island_buf[resume].state == state)
+    {
+        return &Island_buf[resume];
+    }
+    return &Island_buf[head];
+}
+
+// The island after this one (wrapping past the list head), null once every island was visited.
+static havok_bpi* stream_next_island(havok_bpi* island, int& remaining)
+{
+    remaining--;
+    return remaining > 0 ? &Island_buf[island->next] : nullptr;
+}
+
+// Remembers where the pass stopped (nothing when it visited every island).
+static void stream_save_island(havok_bpi::bpi_state state, havok_bpi* island)
+{
+    Stream_resume_island[state] = island != nullptr && island->state == state ? (unsigned short)(island - Island_buf) : 0xFFFF;
+}
+#endif
+
 // 0x0093FB40 (:654)
 bool world::process_streaming_objects(bool hard_load)
 {
@@ -467,9 +512,17 @@ bool world::process_streaming_objects(bool hard_load)
 
     // Entering islands: stream in once every object's resource is loaded (5 ms budget).
     int start = timer_get(TIMER_MICROSECONDS);
+#ifdef OPENRFG_X64
+    int remaining = 0;
+    havok_bpi* island = stream_first_island(havok_bpi::ENTERING, remaining);
+    for (; island != nullptr && island->state == havok_bpi::ENTERING && (hard_load || timer_get(TIMER_MICROSECONDS) - start < 5000);)
+    {
+        havok_bpi* next = stream_next_island(island, remaining);
+#else
     for (havok_bpi* island = havok_bpo_get_first_entering(); island != nullptr && (hard_load || timer_get(TIMER_MICROSECONDS) - start < 5000);)
     {
         havok_bpi* next = havok_bpo_get_next_entering(island);
+#endif
         collect_sorted_list(hierarchy_list, island);
         bool ready = true;
         for (int i = 0; i < hierarchy_list.size(); i++)
@@ -491,6 +544,9 @@ bool world::process_streaming_objects(bool hard_load)
         }
         island = next;
     }
+#ifdef OPENRFG_X64
+    stream_save_island(havok_bpi::ENTERING, island);
+#endif
     if (Multiplayer || wrecking_crew_is_active())
     {
         process_flagged_objects(2);
@@ -500,9 +556,16 @@ bool world::process_streaming_objects(bool hard_load)
 
     // Leaving islands: stream out (children first) when nothing is inside the radius or busy (2 ms budget).
     start = timer_get(TIMER_MICROSECONDS);
+#ifdef OPENRFG_X64
+    island = stream_first_island(havok_bpi::LEAVING, remaining);
+    for (; island != nullptr && island->state == havok_bpi::LEAVING && (hard_load || timer_get(TIMER_MICROSECONDS) - start < 2000);)
+    {
+        havok_bpi* next = stream_next_island(island, remaining);
+#else
     for (havok_bpi* island = havok_bpo_get_first_leaving(); island != nullptr && (hard_load || timer_get(TIMER_MICROSECONDS) - start < 2000);)
     {
         havok_bpi* next = havok_bpo_get_next_leaving(island);
+#endif
         collect_sorted_list(hierarchy_list, island);
         bool can_leave = true;
         for (int i = hierarchy_list.size() - 1; i >= 0; i--)
@@ -533,6 +596,9 @@ bool world::process_streaming_objects(bool hard_load)
         }
         island = next;
     }
+#ifdef OPENRFG_X64
+    stream_save_island(havok_bpi::LEAVING, island);
+#endif
     process_flagged_objects(2);
     process_flagged_objects(4);
     return num_streaming_objects > 0;
