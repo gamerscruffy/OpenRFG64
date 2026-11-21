@@ -118,7 +118,10 @@ struct rl_level_of_detail
     // OpenRFG: the Terrain Distance level plus one (0 = never set, counts as normal), the sixth padding byte. Read it
     // through rl_lod_get_terrain_distance_level.
     unsigned char m_terrain_distance; // 0x21
-    unsigned char padding[114]; // 0x22
+    // OpenRFG: the Shadow Distance in steps of 25 % of the original (0 = never set, counts as 100 %), the seventh
+    // padding byte. Read it through rl_lod_get_shadow_distance_percent.
+    unsigned char m_shadow_distance; // 0x22
+    unsigned char padding[113]; // 0x23
 };
 
 // OpenRFG: the SSAO level of the options menu: 0 off, 1 low (the original game's SSAO), 2 medium, 3 high, 4 very
@@ -242,6 +245,31 @@ inline int rl_lod_get_terrain_distance_level(const rl_level_of_detail& lod)
 inline void rl_lod_set_terrain_distance_level(rl_level_of_detail& lod, int level)
 {
     lod.m_terrain_distance = rl_lod_level_to_store(level, RL_TERRAIN_DISTANCE_LEVELS);
+}
+
+// OpenRFG: the Shadow Distance slider of the options menu, a percentage of the game's own shadow distances (the sun's
+// shadow cascades end 100 m out, the terrain-only extension at 240 m). Steps of 25 from 100 to 500 percent.
+#define RL_SHADOW_DISTANCE_MIN_PCT 100
+#define RL_SHADOW_DISTANCE_MAX_PCT 500
+#define RL_SHADOW_DISTANCE_STEP_PCT 25
+
+inline int rl_lod_get_shadow_distance_percent(const rl_level_of_detail& lod)
+{
+    const int pct = lod.m_shadow_distance * RL_SHADOW_DISTANCE_STEP_PCT;
+    return (pct < RL_SHADOW_DISTANCE_MIN_PCT || pct > RL_SHADOW_DISTANCE_MAX_PCT) ? RL_SHADOW_DISTANCE_MIN_PCT : pct;
+}
+
+inline void rl_lod_set_shadow_distance_percent(rl_level_of_detail& lod, int pct)
+{
+    if (pct < RL_SHADOW_DISTANCE_MIN_PCT)
+    {
+        pct = RL_SHADOW_DISTANCE_MIN_PCT;
+    }
+    if (pct > RL_SHADOW_DISTANCE_MAX_PCT)
+    {
+        pct = RL_SHADOW_DISTANCE_MAX_PCT;
+    }
+    lod.m_shadow_distance = (unsigned char)((pct + RL_SHADOW_DISTANCE_STEP_PCT / 2) / RL_SHADOW_DISTANCE_STEP_PCT);
 }
 
 // ---- inline members (no .cpp home)

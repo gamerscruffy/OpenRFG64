@@ -1043,6 +1043,8 @@ void game_render_check_for_vsync_change()
 //   - The bloom exposure blend writes Hdr_state back, so with a factor other than 1 it converges on the override
 //     exposure over the frames instead of being applied once.
 //   - Without a zone at the camera position the render offset is left as it was.
+extern float g_shadowMapMaxDist; // rl_scene_renderer.cpp
+extern float g_terrainShadowsMaxDist; // rl_scene_shadows.cpp
 void game_render_setup_frame(rl_renderer& renderer)
 {
     renderer.set_world_transform(IDENTITY_MATRIX43);
@@ -1071,6 +1073,11 @@ void game_render_setup_frame(rl_renderer& renderer)
         }
         camera_p->set_far_clip(far_clip);
         camera_p->set_high_lod_far_clip(high_lod_far_clip);
+        // OpenRFG: the Shadow Distance option scales where the sun's shadow cascades (100 m) and the terrain-only
+        // extension (240 m) end. The cascades keep their shares, so a longer distance stretches each over more ground.
+        const float shadow_scale = (float)rl_lod_get_shadow_distance_percent(lod) * 0.01f;
+        g_shadowMapMaxDist = 100.0f * shadow_scale;
+        g_terrainShadowsMaxDist = 240.0f * shadow_scale;
     }
     renderer.set_scissor_region(Scissor_region);
     set_entity_transform(camera_p, Rfg_camera.render_pos, Rfg_camera.render_orient);

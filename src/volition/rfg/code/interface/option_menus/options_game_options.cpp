@@ -125,7 +125,7 @@ extern int Ambient_range_pct; // game_options.cpp
 static const int kAmbientRangePct[9] = {100, 125, 150, 200, 250, 300, 400, 500, 600};
 static const char* cAmbientRangeChoices[9] = {"OPENRFG_AMB_100", "OPENRFG_AMB_125", "OPENRFG_AMB_150", "OPENRFG_AMB_200", "OPENRFG_AMB_250", "OPENRFG_AMB_300", "OPENRFG_AMB_400", "OPENRFG_AMB_500", "OPENRFG_AMB_600"};
 static const wchar_t* kAmbientRangeText[9] = {L"100%", L"125%", L"150%", L"200%", L"250%", L"300%", L"400%", L"500%", L"600%"};
-static wchar_t kAmbientRangeCaption[] = L"Ambient Range (experimental)";
+static wchar_t kAmbientRangeCaption[] = L"AMBIENT RANGE (EXPERIMENTAL)";
 
 // The row's text is not in the game's localization data: add it (once).
 static void game_options_add_ambient_text(const char* key, const wchar_t* text)

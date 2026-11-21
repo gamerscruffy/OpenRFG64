@@ -186,6 +186,8 @@ void game_options_ini_file_read_writer<0>::parse_display_settings(keen::FilePath
     rl_lod_set_draw_distance_level(lod, keen::readIniFileInt(path, "graphics", "draw_distance", rl_lod_get_draw_distance_level(lod)));
     // OpenRFG: Terrain Distance (0 normal 3x3 zones, 1 high 5x5; stream_terrain_distance_radius).
     rl_lod_set_terrain_distance_level(lod, keen::readIniFileInt(path, "graphics", "terrain_distance", rl_lod_get_terrain_distance_level(lod)));
+    // OpenRFG: Shadow Distance, 100 to 500 percent of the game's own (rl_lod_get_shadow_distance_percent).
+    rl_lod_set_shadow_distance_percent(lod, keen::readIniFileInt(path, "graphics", "shadow_distance", rl_lod_get_shadow_distance_percent(lod)));
     lod.m_sun_shafts_enabled = keen::readIniFileBool(path, "graphics", "sun_shafts_enabled", lod.m_sun_shafts_enabled);
     lod.m_new_data.m_texture_reduction = (unsigned char)keen::readIniFileInt(path, "graphics", "texture_resolution", lod.m_new_data.m_texture_reduction);
     lod.m_new_data.m_anisotropic_filtering = (rl_anisotropic_filtering_lod)keen::readIniFileInt(path, "graphics", "anisotropic_filtering", lod.m_new_data.m_anisotropic_filtering);
@@ -938,6 +940,7 @@ void game_options_ini_file_read_writer<1>::parse_display_settings(keen::FilePath
     keen::writeIniFileInt(path, "graphics", "lod_detail", rl_lod_get_lod_detail_level(lod)); // OpenRFG
     keen::writeIniFileInt(path, "graphics", "draw_distance", rl_lod_get_draw_distance_level(lod)); // OpenRFG
     keen::writeIniFileInt(path, "graphics", "terrain_distance", rl_lod_get_terrain_distance_level(lod)); // OpenRFG
+    keen::writeIniFileInt(path, "graphics", "shadow_distance", rl_lod_get_shadow_distance_percent(lod)); // OpenRFG
     keen::writeIniFileBool(path, "graphics", "sun_shafts_enabled", lod.m_sun_shafts_enabled);
     keen::writeIniFileInt(path, "graphics", "texture_resolution", lod.m_new_data.m_texture_reduction);
     keen::writeIniFileInt(path, "graphics", "anisotropic_filtering", lod.m_new_data.m_anisotropic_filtering);

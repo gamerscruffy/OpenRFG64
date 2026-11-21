@@ -41,7 +41,10 @@ enum rl_shadow_lod
     RL_SHADOW_LOD_LOW = 1,
     RL_SHADOW_LOD_MED = 2,
     RL_SHADOW_LOD_HIGH = 3,
-    RL_NUM_SHADOW_LODS = 4,
+    // OpenRFG: 4096 and 8192 shadow maps (the options menu's Very High and Ultra shadows).
+    RL_SHADOW_LOD_VERY_HIGH = 4,
+    RL_SHADOW_LOD_ULTRA = 5,
+    RL_NUM_SHADOW_LODS = 6,
 };
 
 enum rl_shadow_map_pass

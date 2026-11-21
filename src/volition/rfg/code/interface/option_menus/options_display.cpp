@@ -85,6 +85,10 @@ OPENRFG_SIZE_ASSERT(sizeof(refresh_rate) == 0x8, "refresh_rate");
 static const char* cPage_names_dxoptions[2] = {"MENU_GENERAL", "MENU_ADVANCED"}; // 0x01664154
 static detail_option_pages Cur_page_dxoptions = DETAIL_OPTIONS_PAGE_INVALID; // 0x0166415C
 static const char* cDisplay_settings_OLMH[4] = {"MENU_OFF", "MENU_LOW", "MENU_MED", "MENU_HIGH"}; // 0x01664160
+// OpenRFG: the Shadows row: off, low (512), medium (1024), high (2048), very high (4096), ultra (8192). The Ultra label is
+// not in the game's localization data and is added at runtime (kShadow_ultra_caption).
+static const char* cDisplay_settings_shadows[6] = {"MENU_OFF", "MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH", "OPENRFG_SHADOW_ULTRA"};
+static wchar_t kShadow_ultra_caption[] = L"ULTRA";
 static const char* cDisplay_settings_LMH[3] = {"MENU_LOW", "MENU_MED", "MENU_HIGH"}; // 0x01664170
 static const char* cDisplay_settings_LMHV[4] = {"MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH"}; // 0x016641A0
 // OpenRFG: the ambient occlusion row is a quality list instead of on/off (rl_lod_get_ssao_level).
@@ -93,7 +97,7 @@ static const char* cDisplay_settings_ssao[5] = {"MENU_OFF", "MENU_LOW", "MENU_ME
 // game's localization data and is added at runtime.
 static const char* cDisplay_settings_dynamic_lights[5] = {"MENU_OFF", "MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH"};
 static const char* kDynamic_lights_caption_key = "OPENRFG_DYNAMIC_LIGHTS";
-static wchar_t kDynamic_lights_caption[] = L"Dynamic Lights";
+static wchar_t kDynamic_lights_caption[] = L"DYNAMIC LIGHTS";
 static const int DOPTIONS_ADVANCED_ROW_DYNAMIC_LIGHTS = 9;
 // OpenRFG: the rows after it, each a list of its levels (labels added to the localization table at runtime,
 // display_add_openrfg_level_labels):
@@ -121,19 +125,25 @@ static const char* cDisplay_settings_world_detail[RL_WORLD_DETAIL_LEVELS] = {"OP
 static const char* cDisplay_settings_lod_detail[RL_LOD_DETAIL_LEVELS] = {"OPENRFG_LOD_320", "OPENRFG_LOD_400", "OPENRFG_LOD_490", "OPENRFG_LOD_660", "OPENRFG_LOD_830", "OPENRFG_LOD_1000", "OPENRFG_LOD_1170"};
 static const char* cDisplay_settings_draw_distance[RL_DRAW_DISTANCE_LEVELS] = {"OPENRFG_DRAW_475", "OPENRFG_DRAW_1000", "OPENRFG_DRAW_1500", "OPENRFG_DRAW_2000", "OPENRFG_DRAW_2500", "OPENRFG_DRAW_3000", "OPENRFG_DRAW_4000"};
 static const char* kWorld_detail_caption_key = "OPENRFG_WORLD_DETAIL_DISTANCE";
-static wchar_t kWorld_detail_caption[] = L"World Detail Distance";
+static wchar_t kWorld_detail_caption[] = L"WORLD DETAIL DISTANCE";
 static const int DOPTIONS_ADVANCED_ROW_WORLD_DETAIL = 10;
 static const char* kLod_detail_caption_key = "OPENRFG_LOD_DETAIL";
-static wchar_t kLod_detail_caption[] = L"LOD Detail";
+static wchar_t kLod_detail_caption[] = L"LOD DETAIL";
 static const int DOPTIONS_ADVANCED_ROW_LOD_DETAIL = 11;
 static const char* kDraw_distance_caption_key = "OPENRFG_DRAW_DISTANCE";
-static wchar_t kDraw_distance_caption[] = L"Draw Distance";
+static wchar_t kDraw_distance_caption[] = L"DRAW DISTANCE";
 static const int DOPTIONS_ADVANCED_ROW_DRAW_DISTANCE = 12;
 // OpenRFG: row 13, Terrain Distance.
 static const char* cDisplay_settings_terrain_distance[RL_TERRAIN_DISTANCE_LEVELS] = {"OPENRFG_GRID_3", "OPENRFG_GRID_5", "OPENRFG_GRID_7", "OPENRFG_GRID_9", "OPENRFG_GRID_11", "OPENRFG_GRID_13", "OPENRFG_GRID_15"};
 static const char* kTerrain_distance_caption_key = "OPENRFG_TERRAIN_DISTANCE";
-static wchar_t kTerrain_distance_caption[] = L"Terrain Distance";
+static wchar_t kTerrain_distance_caption[] = L"TERRAIN DISTANCE";
 static const int DOPTIONS_ADVANCED_ROW_TERRAIN_DISTANCE = 13;
+// OpenRFG: row 14, Shadow Distance, a slider in percent of the game's own shadow distance (100 to 500, steps of 25). A
+// slider's callback gets a pointer to the variable it edits, which is this static (copied into Pending_lod).
+static const char* kShadow_distance_caption_key = "OPENRFG_SHADOW_DISTANCE";
+static wchar_t kShadow_distance_caption[] = L"SHADOW DISTANCE";
+static const int DOPTIONS_ADVANCED_ROW_SHADOW_DISTANCE = 14;
+static int Shadow_distance_slider_pct = RL_SHADOW_DISTANCE_MIN_PCT;
 static const char* cAnti_alias_lod_names[7] = {"MENU_OFF", "MENU_AA_LOD_MODE_2X", "MENU_AA_LOD_MODE_4X", "MENU_AA_LOD_MODE_8X", "MENU_AA_LOD_MODE_16X", "MENU_AA_LOD_MODE_8XQ", "MENU_AA_LOD_MODE_16XQ"}; // 0x016641B0
 static const char* cDisplay_default_lod_setting_names[5] = {"MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH", "MENU_CUSTOM"}; // 0x016641CC
 static const char* cDisplay_window_mode_names[3] = {"MENU_WINDOW_MODE_WINDOWED", "MENU_WINDOW_MODE_BORDERLESS", "MENU_WINDOW_MODE_FULLSCREEN"}; // 0x016641E0
@@ -674,6 +684,10 @@ static void option_change_occurred_doptions(int choice, void* new_value)
             return;
         case DOPTIONS_ADVANCED_ROW_TERRAIN_DISTANCE:
             rl_lod_set_terrain_distance_level(Pending_lod, value); // OpenRFG
+            return;
+        case DOPTIONS_ADVANCED_ROW_SHADOW_DISTANCE:
+            // OpenRFG: a slider passes its variable, not the value.
+            rl_lod_set_shadow_distance_percent(Pending_lod, *(const int*)new_value);
             return;
         default:
             return;
@@ -1339,7 +1353,9 @@ void set_detail_page(detail_option_pages page)
     else if (page == DETAIL_OPTIONS_PAGE_ADVANCED)
     {
         // Original: the antialiasing mode's index is looked up and never used.
-        ui_menu_add_char_list_item(Menu_handle_doptions, "MENU_SHADOWS", cDisplay_settings_OLMH, 4, option_change_occurred_doptions, Pending_lod.m_shadow_lod, true);
+        // OpenRFG: six levels (very high 4096, ultra 8192); the Ultra label goes into the localization table first.
+        display_add_openrfg_caption("OPENRFG_SHADOW_ULTRA", kShadow_ultra_caption);
+        ui_menu_add_char_list_item(Menu_handle_doptions, "MENU_SHADOWS", cDisplay_settings_shadows, 6, option_change_occurred_doptions, Pending_lod.m_shadow_lod, true);
         ui_menu_add_bool_item(Menu_handle_doptions, "MENU_SOFT_SHADOWS", &Pending_lod.m_soft_shadows, option_change_occurred_doptions, true);
         ui_menu_add_bool_item(Menu_handle_doptions, "MENU_DEPTH_OF_FIELD", &Pending_lod.m_depth_of_field_enabled, option_change_occurred_doptions, true);
         ui_menu_add_bool_item(Menu_handle_doptions, "MENU_MOTION_BLUR", &Pending_lod.m_motion_blur_enabled, option_change_occurred_doptions, true);
@@ -1372,6 +1388,10 @@ void set_detail_page(detail_option_pages page)
         // OpenRFG: row 13, Terrain Distance (no effect on 32-bit: its zone pools hold the original 3x3).
         display_add_openrfg_caption(kTerrain_distance_caption_key, kTerrain_distance_caption);
         ui_menu_add_char_list_item(Menu_handle_doptions, kTerrain_distance_caption_key, cDisplay_settings_terrain_distance, RL_TERRAIN_DISTANCE_LEVELS, option_change_occurred_doptions, rl_lod_get_terrain_distance_level(Pending_lod), true);
+        // OpenRFG: row 14, Shadow Distance slider.
+        display_add_openrfg_caption(kShadow_distance_caption_key, kShadow_distance_caption);
+        Shadow_distance_slider_pct = rl_lod_get_shadow_distance_percent(Pending_lod);
+        ui_menu_add_slider_item(Menu_handle_doptions, kShadow_distance_caption_key, &Shadow_distance_slider_pct, RL_SHADOW_DISTANCE_MIN_PCT, RL_SHADOW_DISTANCE_MAX_PCT, RL_SHADOW_DISTANCE_STEP_PCT, option_change_occurred_doptions, true);
         // Magic number: row 1, soft shadows.
         ui_menu_enable_menu_item(Menu_handle_doptions, 1, false);
         ui_menu_show_menu_item(Menu_handle_doptions, 1, false);

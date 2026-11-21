@@ -124,8 +124,8 @@ rl_render_pass* Current_render_pass = nullptr; // 0x01B7BD14
 static const unsigned int DEFERRED_ITEMS_MAX = 0x400;
 static rl_deferred_batch_item deferred_items_array[DEFERRED_ITEMS_MAX]; // 0x01CCF6F0
 
-// The shadow map size per shadow LOD (off, low, medium, high).
-static const int shadow_map_resolutions[4] = { 0, 512, 1024, 2048 }; // 0x012C1BB4
+// The shadow map size per shadow LOD (off, low, medium, high; OpenRFG adds very high and ultra).
+static const int shadow_map_resolutions[RL_NUM_SHADOW_LODS] = { 0, 512, 1024, 2048, 4096, 8192 }; // 0x012C1BB4
 
 // Deferred sort list capacities (0x2400, 200, 200) and the transparent shadow casters (100).
 static const int DEFERRED_SORT_MAX = 0x2400;
@@ -1417,7 +1417,8 @@ void rl_scene_renderer::create_render_textures(keen::GraphicsCommandWriter* pCom
     clb_buffer.pDataBuffer = m_pClbTexture;
     clb_buffer.format = keen::PixelFormat_None;
     m_pClbTarget = keen::graphics::createRenderTarget(Init_params.m_pKeenGraphicsSystem, m_clb_width, m_clb_height, &clb_buffer, 1, &main_depth_buffer, keen::TilingMode_None);
-    const rl_shadow_lod shadow_lod = m_level_of_detail.m_shadow_lod;
+    // OpenRFG: the INI value is not range checked; keep it inside the size table.
+    const rl_shadow_lod shadow_lod = (m_level_of_detail.m_shadow_lod < 0) ? RL_SHADOW_LOD_OFF : (m_level_of_detail.m_shadow_lod >= RL_NUM_SHADOW_LODS ? (rl_shadow_lod)(RL_NUM_SHADOW_LODS - 1) : m_level_of_detail.m_shadow_lod);
     m_shadow_map_width = shadow_map_resolutions[shadow_lod];
     m_shadow_map_height = shadow_map_resolutions[shadow_lod];
     if (shadow_lod != RL_SHADOW_LOD_OFF)
