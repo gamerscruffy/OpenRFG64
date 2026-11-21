@@ -8788,6 +8788,12 @@ bool human::init_from_h_info()
     {
         // Original: "Unable to create character instance for character '%s'!\n" into the thread's debug message
         // buffer, printed as a debug message.
+#ifdef OPENRFG_X64
+        {
+            void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+            openrfg_fail_log("human-char-inst", "character_instance_create failed for '%s' (anim set '%s'): no character instance left", h_info->name, info->anim_set_name);
+        }
+#endif
         return false;
     }
     return true;

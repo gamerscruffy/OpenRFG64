@@ -358,6 +358,10 @@ bool npc::serialize(obj_prop_block& pblock, bool load)
     ai = ai_system_create();
     if (ai == nullptr)
     {
+#ifdef OPENRFG_X64
+        void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+        openrfg_fail_log("npc-ai", "ai_system_create failed: no ai system left");
+#endif
         return false;
     }
     ai->init(this);
