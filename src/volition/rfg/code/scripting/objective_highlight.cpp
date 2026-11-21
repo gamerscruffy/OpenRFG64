@@ -460,6 +460,14 @@ void objective_highlight_target_marker_update_render_cb(object_effect* oep)
     }
 
     rl_renderable_instance* head = vfx->get_mesh_instances().first();
+#ifdef OPENRFG_X64
+    // The effect's meshes can still be streaming in (or were dropped) at large view distances; rfg.exe reads the
+    // first instance unchecked and would crash the same way.
+    if (head == nullptr)
+    {
+        return;
+    }
+#endif
     const float scale = (float)((double)size / (double)highlight_instance_width(head));
     rl_renderable_instance* ri = head;
     while (ri != nullptr)
@@ -687,6 +695,14 @@ void objective_highlight_ground_marker_update_render_cb(object_effect* oep)
         }
     }
     rl_renderable_instance* head = vfx->get_mesh_instances().first();
+#ifdef OPENRFG_X64
+    // The effect's meshes can still be streaming in (or were dropped) at large view distances; rfg.exe reads the
+    // first instance unchecked and would crash the same way.
+    if (head == nullptr)
+    {
+        return;
+    }
+#endif
     const float scale = (float)((double)size / (double)highlight_instance_width(head));
     rl_renderable_instance* ri = head;
     while (ri != nullptr)
