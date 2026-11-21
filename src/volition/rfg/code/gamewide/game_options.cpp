@@ -181,6 +181,9 @@ void game_options_ini_file_read_writer<0>::parse_display_settings(keen::FilePath
     rl_lod_set_dynamic_lights_level(lod, keen::readIniFileInt(path, "graphics", "dynamic_lights", rl_lod_get_dynamic_lights_level(lod)));
     // OpenRFG: World Detail Distance (0 normal, 1 high, 2 ultra; stream_world_detail_level_radius).
     rl_lod_set_world_detail_level(lod, keen::readIniFileInt(path, "graphics", "world_detail_distance", rl_lod_get_world_detail_level(lod)));
+    // OpenRFG: LOD Detail and Draw Distance (0 normal, 1 high, 2 very high; rl_lod_detail_distance, rl_draw_distance).
+    rl_lod_set_lod_detail_level(lod, keen::readIniFileInt(path, "graphics", "lod_detail", rl_lod_get_lod_detail_level(lod)));
+    rl_lod_set_draw_distance_level(lod, keen::readIniFileInt(path, "graphics", "draw_distance", rl_lod_get_draw_distance_level(lod)));
     lod.m_sun_shafts_enabled = keen::readIniFileBool(path, "graphics", "sun_shafts_enabled", lod.m_sun_shafts_enabled);
     lod.m_new_data.m_texture_reduction = (unsigned char)keen::readIniFileInt(path, "graphics", "texture_resolution", lod.m_new_data.m_texture_reduction);
     lod.m_new_data.m_anisotropic_filtering = (rl_anisotropic_filtering_lod)keen::readIniFileInt(path, "graphics", "anisotropic_filtering", lod.m_new_data.m_anisotropic_filtering);
@@ -930,6 +933,8 @@ void game_options_ini_file_read_writer<1>::parse_display_settings(keen::FilePath
     }
     keen::writeIniFileInt(path, "graphics", "dynamic_lights", rl_lod_get_dynamic_lights_level(lod)); // OpenRFG
     keen::writeIniFileInt(path, "graphics", "world_detail_distance", rl_lod_get_world_detail_level(lod)); // OpenRFG
+    keen::writeIniFileInt(path, "graphics", "lod_detail", rl_lod_get_lod_detail_level(lod)); // OpenRFG
+    keen::writeIniFileInt(path, "graphics", "draw_distance", rl_lod_get_draw_distance_level(lod)); // OpenRFG
     keen::writeIniFileBool(path, "graphics", "sun_shafts_enabled", lod.m_sun_shafts_enabled);
     keen::writeIniFileInt(path, "graphics", "texture_resolution", lod.m_new_data.m_texture_reduction);
     keen::writeIniFileInt(path, "graphics", "anisotropic_filtering", lod.m_new_data.m_anisotropic_filtering);

@@ -111,7 +111,11 @@ struct rl_level_of_detail
     // OpenRFG: the World Detail Distance level plus one (0 = never set, counts as normal), the third padding byte.
     // Read it through rl_lod_get_world_detail_level.
     unsigned char m_world_detail; // 0x1E
-    unsigned char padding[117]; // 0x1F
+    // OpenRFG: the LOD Detail and Draw Distance levels plus one (0 = never set, counts as normal), the fourth and fifth
+    // padding bytes. Read them through rl_lod_get_lod_detail_level / rl_lod_get_draw_distance_level.
+    unsigned char m_lod_detail; // 0x1F
+    unsigned char m_draw_distance; // 0x20
+    unsigned char padding[115]; // 0x21
 };
 
 // OpenRFG: the SSAO level of the options menu: 0 off, 1 low (the original game's SSAO), 2 medium, 3 high, 4 very
@@ -167,6 +171,46 @@ inline void rl_lod_set_world_detail_level(rl_level_of_detail& lod, int level)
         level = 0;
     }
     lod.m_world_detail = (unsigned char)(level + 1);
+}
+
+// OpenRFG: the LOD Detail level of the options menu: 0 normal, 1 high, 2 very high. How far buildings, objects and the
+// full detail terrain are drawn (the camera's high LOD far clip; rl_lod_detail_distance). Unset counts as normal.
+inline int rl_lod_get_lod_detail_level(const rl_level_of_detail& lod)
+{
+    const int stored = lod.m_lod_detail;
+    return (stored < 1 || stored > 3) ? 0 : stored - 1;
+}
+
+inline void rl_lod_set_lod_detail_level(rl_level_of_detail& lod, int level)
+{
+    lod.m_lod_detail = (unsigned char)((level < 0 || level > 2 ? 0 : level) + 1);
+}
+
+// Magic numbers: 320 m is the game's own (rfg_camera_system_init); 400 and 490 stay inside the High and Very High World
+// Detail Distance stream radii (425, 510 m) so the full detail edge is loaded before it is drawn.
+inline float rl_lod_detail_distance(int level)
+{
+    return level >= 2 ? 490.0f : (level == 1 ? 400.0f : 320.0f);
+}
+
+// OpenRFG: the Draw Distance level of the options menu: 0 normal, 1 high, 2 very high. The camera's far clip, which
+// ends the low detail terrain (landmark LODs have their own 10 km frustum; rl_draw_distance). Unset counts as normal.
+inline int rl_lod_get_draw_distance_level(const rl_level_of_detail& lod)
+{
+    const int stored = lod.m_draw_distance;
+    return (stored < 1 || stored > 3) ? 0 : stored - 1;
+}
+
+inline void rl_lod_set_draw_distance_level(rl_level_of_detail& lod, int level)
+{
+    lod.m_draw_distance = (unsigned char)((level < 0 || level > 2 ? 0 : level) + 1);
+}
+
+// Magic numbers: 475 m is the game's own (rfg_camera_system_init); 1000 m is its unused LOD 0 far clip
+// (game_render_set_lod_level).
+inline float rl_draw_distance(int level)
+{
+    return level >= 2 ? 1000.0f : (level == 1 ? 700.0f : 475.0f);
 }
 
 // ---- inline members (no .cpp home)

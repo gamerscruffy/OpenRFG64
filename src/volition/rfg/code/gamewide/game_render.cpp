@@ -39,6 +39,7 @@
 #include "volition/render_lib/code/rl_quadtree.h"
 #include "volition/render_lib/code/rl_quadtree_sector.h"
 #include "volition/render_lib/code/rl_render_lib.h"
+#include "volition/render_lib/code/rl_screen_info.h"
 #include "volition/render_lib/code/rl_renderable_particles.h"
 #include "volition/render_lib/code/rl_renderer.h"
 #include "volition/render_lib/code/rl_renderer_core.h"
@@ -1024,8 +1025,29 @@ void game_render_setup_frame(rl_renderer& renderer)
     rl_camera* camera_p = camera_get_main_render_camera();
     Rfg_camera.real_orient.orthogonalize();
     camera_p->set_near_clip(Rfg_camera.m_near_clip_dist);
-    camera_p->set_far_clip(Rfg_camera.m_far_clip_dist);
-    camera_p->set_high_lod_far_clip(Rfg_camera.m_high_lod_far_clip_dist);
+    {
+        // OpenRFG: the LOD Detail and Draw Distance options. Normal keeps the game's own distances; higher levels only
+        // raise them. The far clip is kept past the full detail distance, which it would otherwise cut off.
+        const rl_level_of_detail& lod = rl_render_lib::get_instance()->get_level_of_detail();
+        float high_lod_far_clip = Rfg_camera.m_high_lod_far_clip_dist;
+        float far_clip = Rfg_camera.m_far_clip_dist;
+        const int lod_detail = rl_lod_get_lod_detail_level(lod);
+        const int draw_distance = rl_lod_get_draw_distance_level(lod);
+        if (lod_detail > 0 && rl_lod_detail_distance(lod_detail) > high_lod_far_clip)
+        {
+            high_lod_far_clip = rl_lod_detail_distance(lod_detail);
+        }
+        if (draw_distance > 0 && rl_draw_distance(draw_distance) > far_clip)
+        {
+            far_clip = rl_draw_distance(draw_distance);
+        }
+        if (far_clip < high_lod_far_clip + 10.0f)
+        {
+            far_clip = high_lod_far_clip + 10.0f;
+        }
+        camera_p->set_far_clip(far_clip);
+        camera_p->set_high_lod_far_clip(high_lod_far_clip);
+    }
     renderer.set_scissor_region(Scissor_region);
     set_entity_transform(camera_p, Rfg_camera.render_pos, Rfg_camera.render_orient);
     camera_p->set_fov(Rfg_camera.real_fov);

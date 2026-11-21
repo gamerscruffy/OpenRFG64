@@ -95,12 +95,20 @@ static const char* cDisplay_settings_dynamic_lights[5] = {"MENU_OFF", "MENU_LOW"
 static const char* kDynamic_lights_caption_key = "OPENRFG_DYNAMIC_LIGHTS";
 static wchar_t kDynamic_lights_caption[] = L"Dynamic Lights";
 static const int DOPTIONS_ADVANCED_ROW_DYNAMIC_LIGHTS = 9;
-// OpenRFG: the World Detail Distance row after it (rl_lod_get_world_detail_level), 64-bit only: how far buildings
-// stream at full detail.
+// OpenRFG: the rows after it, each normal (medium), high, very high:
+//   World Detail Distance: how far buildings stream at full detail (rl_lod_get_world_detail_level, 64-bit only).
+//   LOD Detail: how far they are drawn at full detail (rl_lod_detail_distance).
+//   Draw Distance: the camera's far clip, where the low detail terrain ends (rl_draw_distance).
 static const char* cDisplay_settings_world_detail[3] = {"MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH"};
 static const char* kWorld_detail_caption_key = "OPENRFG_WORLD_DETAIL_DISTANCE";
 static wchar_t kWorld_detail_caption[] = L"World Detail Distance";
 static const int DOPTIONS_ADVANCED_ROW_WORLD_DETAIL = 10;
+static const char* kLod_detail_caption_key = "OPENRFG_LOD_DETAIL";
+static wchar_t kLod_detail_caption[] = L"LOD Detail";
+static const int DOPTIONS_ADVANCED_ROW_LOD_DETAIL = 11;
+static const char* kDraw_distance_caption_key = "OPENRFG_DRAW_DISTANCE";
+static wchar_t kDraw_distance_caption[] = L"Draw Distance";
+static const int DOPTIONS_ADVANCED_ROW_DRAW_DISTANCE = 12;
 static const char* cAnti_alias_lod_names[7] = {"MENU_OFF", "MENU_AA_LOD_MODE_2X", "MENU_AA_LOD_MODE_4X", "MENU_AA_LOD_MODE_8X", "MENU_AA_LOD_MODE_16X", "MENU_AA_LOD_MODE_8XQ", "MENU_AA_LOD_MODE_16XQ"}; // 0x016641B0
 static const char* cDisplay_default_lod_setting_names[5] = {"MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH", "MENU_CUSTOM"}; // 0x016641CC
 static const char* cDisplay_window_mode_names[3] = {"MENU_WINDOW_MODE_WINDOWED", "MENU_WINDOW_MODE_BORDERLESS", "MENU_WINDOW_MODE_FULLSCREEN"}; // 0x016641E0
@@ -185,6 +193,24 @@ static bool lods_equal(const rl_level_of_detail& lhs, const rl_level_of_detail& 
     return lhs.m_depth_of_field_enabled == rhs.m_depth_of_field_enabled && lhs.m_motion_blur_enabled == rhs.m_motion_blur_enabled && lhs.m_particle_lod == rhs.m_particle_lod && lhs.m_shadow_lod == rhs.m_shadow_lod && lhs.m_soft_shadows == rhs.m_soft_shadows && rl_lod_get_ssao_level(lhs) == rl_lod_get_ssao_level(rhs) && rl_lod_get_dynamic_lights_level(lhs) == rl_lod_get_dynamic_lights_level(rhs) && lhs.m_sun_shafts_enabled == rhs.m_sun_shafts_enabled && lhs.m_new_data.m_texture_reduction == rhs.m_new_data.m_texture_reduction && lhs.m_new_data.m_anisotropic_filtering == rhs.m_new_data.m_anisotropic_filtering;
 }
 
+// OpenRFG: World Detail Distance, LOD Detail and Draw Distance, which the presets (lods_equal) leave out.
+static bool display_openrfg_distances_equal(const rl_level_of_detail& lhs, const rl_level_of_detail& rhs)
+{
+    return rl_lod_get_world_detail_level(lhs) == rl_lod_get_world_detail_level(rhs) && rl_lod_get_lod_detail_level(lhs) == rl_lod_get_lod_detail_level(rhs) && rl_lod_get_draw_distance_level(lhs) == rl_lod_get_draw_distance_level(rhs);
+}
+
+// OpenRFG: puts the caption of an OpenRFG row into the localization table (the game's data has none), once.
+static void display_add_openrfg_caption(const char* key, wchar_t* caption)
+{
+    const unsigned int caption_hash = keen::getCrc32LwrValue(key);
+    wchar_t* existing = nullptr;
+    Localization_hash.get(caption_hash, existing);
+    if (existing == nullptr)
+    {
+        Localization_hash.insert_key_data(caption_hash, caption);
+    }
+}
+
 // 0x008AF650 (:382)
 // The four presets (low, medium, high, very high). Original: medium's antialiasing, shadows, particles and anisotropic
 // filtering and high's shadows... are left as constructed where not set here.
@@ -262,10 +288,14 @@ static void display_info_set_to_default_lod_settings(display_default_settings de
         return;
     }
     {
-        // OpenRFG: the presets leave World Detail Distance as it is (it is not part of them).
+        // OpenRFG: the presets leave World Detail Distance, LOD Detail and Draw Distance as they are (not part of them).
         const int world_detail = rl_lod_get_world_detail_level(Pending_lod);
+        const int lod_detail = rl_lod_get_lod_detail_level(Pending_lod);
+        const int draw_distance = rl_lod_get_draw_distance_level(Pending_lod);
         Pending_lod = Default_lods[default_setting];
         rl_lod_set_world_detail_level(Pending_lod, world_detail);
+        rl_lod_set_lod_detail_level(Pending_lod, lod_detail);
+        rl_lod_set_draw_distance_level(Pending_lod, draw_distance);
     }
     display_info_read_aa_modes();
     // Original: a level beyond the supported count (the level, not its index) clamps to the last mode.
@@ -442,7 +472,7 @@ static bool screen_info_changed()
 static bool lod_info_changed()
 {
     // OpenRFG: World Detail Distance is not part of the presets (lods_equal), but changing it is a change.
-    return !lods_equal(Pending_lod, Old_lod) || rl_lod_get_world_detail_level(Pending_lod) != rl_lod_get_world_detail_level(Old_lod);
+    return !lods_equal(Pending_lod, Old_lod) || !display_openrfg_distances_equal(Pending_lod, Old_lod);
 }
 
 // 0x008AFA80 (:989)
@@ -591,6 +621,12 @@ static void option_change_occurred_doptions(int choice, void* new_value)
         case DOPTIONS_ADVANCED_ROW_WORLD_DETAIL:
             // OpenRFG: World Detail Distance normal (medium), high, ultra (very high).
             rl_lod_set_world_detail_level(Pending_lod, value);
+            return;
+        case DOPTIONS_ADVANCED_ROW_LOD_DETAIL:
+            rl_lod_set_lod_detail_level(Pending_lod, value); // OpenRFG
+            return;
+        case DOPTIONS_ADVANCED_ROW_DRAW_DISTANCE:
+            rl_lod_set_draw_distance_level(Pending_lod, value); // OpenRFG
             return;
         default:
             return;
@@ -1277,19 +1313,14 @@ void set_detail_page(detail_option_pages page)
             }
         }
         ui_menu_add_char_list_item(Menu_handle_doptions, kDynamic_lights_caption_key, cDisplay_settings_dynamic_lights, 5, option_change_occurred_doptions, rl_lod_get_dynamic_lights_level(Pending_lod), true);
-#ifdef OPENRFG_X64
-        // OpenRFG: row 10, World Detail Distance (64-bit only: the 32-bit cell arrays hold the original 5x5).
-        {
-            const unsigned int caption_hash = keen::getCrc32LwrValue(kWorld_detail_caption_key);
-            wchar_t* existing = nullptr;
-            Localization_hash.get(caption_hash, existing);
-            if (existing == nullptr)
-            {
-                Localization_hash.insert_key_data(caption_hash, kWorld_detail_caption);
-            }
-        }
+        // OpenRFG: rows 10..12, World Detail Distance (no effect on 32-bit: its cell arrays hold the original 5x5), LOD
+        // Detail and Draw Distance.
+        display_add_openrfg_caption(kWorld_detail_caption_key, kWorld_detail_caption);
         ui_menu_add_char_list_item(Menu_handle_doptions, kWorld_detail_caption_key, cDisplay_settings_world_detail, 3, option_change_occurred_doptions, rl_lod_get_world_detail_level(Pending_lod), true);
-#endif
+        display_add_openrfg_caption(kLod_detail_caption_key, kLod_detail_caption);
+        ui_menu_add_char_list_item(Menu_handle_doptions, kLod_detail_caption_key, cDisplay_settings_world_detail, 3, option_change_occurred_doptions, rl_lod_get_lod_detail_level(Pending_lod), true);
+        display_add_openrfg_caption(kDraw_distance_caption_key, kDraw_distance_caption);
+        ui_menu_add_char_list_item(Menu_handle_doptions, kDraw_distance_caption_key, cDisplay_settings_world_detail, 3, option_change_occurred_doptions, rl_lod_get_draw_distance_level(Pending_lod), true);
         // Magic number: row 1, soft shadows.
         ui_menu_enable_menu_item(Menu_handle_doptions, 1, false);
         ui_menu_show_menu_item(Menu_handle_doptions, 1, false);
