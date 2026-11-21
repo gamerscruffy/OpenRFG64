@@ -460,6 +460,47 @@ static bool repulsor_straddles_route(const vehicle* vp, const object* repulsor, 
     return out_min.x < -width && out_max.x > width;
 }
 
+#ifdef OPENRFG_X64
+// OpenRFG: is the repulsor clear of the route, i.e. does no part of it come within margin metres of the route's centre
+// line? The collector cone is about 5.5 m wide at its far end, so a car in the other lane is inside it.
+static bool repulsor_clear_of_route(const vehicle* vp, const object* repulsor, float margin)
+{
+    const vehicle_route_info& route = vp->vai.route_info;
+    if (!vp->vai.current_path_info.flags.road_spline_path || route.num_route_segments <= 0)
+    {
+        return false;
+    }
+    const cubic_bezier_spline* spline = &route.route[route.bumper_info.route_index].cb_spline;
+    float u = spline->get_closest_point_approx(repulsor->pos);
+    if (u == 1.0f && route.bumper_info.route_index < route.num_route_segments - 1)
+    {
+        spline = &route.route[route.bumper_info.route_index + 1].cb_spline;
+        u = spline->get_closest_point_approx(repulsor->pos);
+    }
+    vector spline_pos;
+    vector tangent;
+    spline->get_point(spline_pos, u);
+    spline->get_tangent(tangent, u);
+    matrix spline_orient;
+    spline_orient.make(tangent);
+    if (vp->vai.vai_flags.m_road_offset)
+    {
+        spline_pos += spline_orient.rvec * vp->vai.steer_info.road_offset;
+    }
+    const vector rel = repulsor->pos - spline_pos;
+    const float lateral = rel.x * spline_orient.rvec.x + rel.y * spline_orient.rvec.y + rel.z * spline_orient.rvec.z;
+    vector bmin;
+    vector bmax;
+    repulsor->get_local_bbox(bmin, bmax);
+    const float half_width = (bmax.x - bmin.x) * 0.5f;
+    const float half_length = (bmax.z - bmin.z) * 0.5f;
+    const float along_fvec = repulsor->orient.fvec.x * spline_orient.rvec.x + repulsor->orient.fvec.y * spline_orient.rvec.y + repulsor->orient.fvec.z * spline_orient.rvec.z;
+    const float along_rvec = repulsor->orient.rvec.x * spline_orient.rvec.x + repulsor->orient.rvec.y * spline_orient.rvec.y + repulsor->orient.rvec.z * spline_orient.rvec.z;
+    const float extent = fabsf(along_fvec) * half_length + fabsf(along_rvec) * half_width;
+    return fabsf(lateral) - extent > margin;
+}
+#endif
+
 // A vehicle's desired speed, three seconds of it, squared against the distance to the repulsor.
 static bool repulsor_is_far(const vehicle* vp, const object* repulsor)
 {
@@ -702,7 +743,13 @@ static bool maybe_ignore_vehicle(vehicle* vp, vehicle* other, const repulsor_ori
     human* other_driver = vehicle_passenger_in_seat(other, VSI_DRIVER);
     if (vp->is_ambient())
     {
+#ifdef OPENRFG_X64
+        // OpenRFG: a player in the other lane is not in the way. Without this the driver stops and honks for anyone
+        // inside the 20 m collector cone, including oncoming traffic a lane over (1 m of clearance from the route).
+        if (other_driver != nullptr && object_is_player(other_driver) && !repulsor_clear_of_route(vp, other, 1.0f))
+#else
         if (other_driver != nullptr && object_is_player(other_driver))
+#endif
         {
             vehicle_set_ambient_wait_timer(vp, 1000, other->get_handle());
             if (will_wait)
