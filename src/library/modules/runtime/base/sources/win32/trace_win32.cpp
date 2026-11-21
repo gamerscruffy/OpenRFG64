@@ -16,6 +16,9 @@
 
 #include <stdarg.h>
 #include <windows.h>
+#include <string.h>
+
+void openrfg_log(const char* text); // crash_early.cpp
 
 #if defined(OPENRFG_NATIVE_PRINT_STDOUT)
 #include <stdio.h>
@@ -191,6 +194,23 @@ namespace keen
             formatStringVarArgs(buffer, sizeof(buffer), pFormat, arguments);
             va_end(arguments);
             nativePrint(buffer);
+            // OpenRFG: errors, failed calls and vlib critical failures (VLIB_CRITICAL_FAILURE) also go to
+            // openrfg_crash.txt (the first 300), since some of them are followed by a silent _exit or a later crash.
+            if (strstr(buffer, "Int3 critical") != nullptr || strstr(buffer, "[error]") != nullptr || strstr(buffer, "[Fatal error]") != nullptr || strstr(buffer, "failed") != nullptr || strstr(buffer, "Failed") != nullptr)
+            {
+                static volatile LONG s_count = 0;
+                if (InterlockedIncrement(&s_count) <= 300)
+                {
+                    char line[2100];
+                    formatString(line, sizeof(line), "NATIVE %s", buffer);
+                    const size_t length = strlen(line);
+                    if (length > 0 && line[length - 1] == '\n')
+                    {
+                        line[length - 1] = '\0';
+                    }
+                    openrfg_log(line);
+                }
+            }
         }
     }
 }

@@ -184,6 +184,9 @@ namespace
         {
             DeleteFileA("openrfg_crash.txt"); // each run starts a fresh file
             AddVectoredExceptionHandler(1, early_crash_handler);
+            // Stack kept back for the handler on the main thread (keen threads do this in their entry).
+            ULONG stack_guarantee = 0x10000;
+            SetThreadStackGuarantee(&stack_guarantee);
             SetUnhandledExceptionFilter(late_filter);
             signal(SIGABRT, abort_handler);
             set_terminate(terminate_handler);

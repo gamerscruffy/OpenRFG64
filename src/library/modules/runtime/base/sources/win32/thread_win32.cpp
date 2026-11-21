@@ -166,6 +166,9 @@ namespace keen
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
         }
+        // OpenRFG: stack kept back for the crash handler, so a stack overflow on this thread gets reported.
+        ULONG stackGuarantee = 0x10000;
+        SetThreadStackGuarantee(&stackGuarantee);
         return (uint32)pThread->m_pFunction(*pThread);
     }
 

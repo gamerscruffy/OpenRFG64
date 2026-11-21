@@ -165,15 +165,15 @@ static bool Undergrowth_use_player_pos = false; // 0x02CA1672
 
 // ---- state
 
-static data_hash_table<unsigned int,undergrowth_zone*,&hash_uint,9,unsigned char> Zone_hash(false); // 0x01668B00
+static data_hash_table<unsigned int,undergrowth_zone*,&hash_uint,OPENRFG_MAX_ZONES,unsigned char> Zone_hash(false); // 0x01668B00
 static undergrowth_wind_info Undergrowth_wind_infos[8]; // 0x02CCBA88
 static bool Undergrowth_init; // 0x02CEC1E2
 static rl_clone_mesh_pool* Undergrowth_clone_pool; // 0x02CEC1E4
 static object_pool<destruction_event,8,1> Destruction_event_pool; // 0x02F972E0
 static object_pool<undergrowth_active_cell,256,1> Active_cell_pool; // 0x02F9C820
-static object_pool<undergrowth_zone,9,1> Zone_pool; // 0x02FD98E0
+static object_pool<undergrowth_zone,OPENRFG_MAX_ZONES,1> Zone_pool; // 0x02FD98E0
 static game_render_task Update_render_task_undergrowth; // 0x02FDD868
-static object_pool<undergrowth_layer,32,1> Layer_pool; // 0x02FDD890
+static object_pool<undergrowth_layer,OPENRFG_ZONE_POOL(32),1> Layer_pool; // 0x02FDD890
 static object_pool<fading_cell,16,1> Fading_cell_pool; // 0x02FDE550
 static rl_clone_mesh_wind_info Render_wind_info; // 0x02FE50B0
 
