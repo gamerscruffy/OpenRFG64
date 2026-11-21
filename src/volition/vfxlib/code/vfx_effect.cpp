@@ -601,9 +601,9 @@ static const vfx_synthetic_light_profile Vfx_synthetic_light_profiles[] = {
     {"flare", 1.0f, 0.25f, 0.15f, 2.0f, 9.0f, 0.8f, 0.1f, false, false, false},
     {"barracade_light", 1.0f, 0.6f, 0.2f, 0.5f, 4.0f, 0.4f, 0.0f, false, true, false}, // construction light: small, dim, blinks with its corona
     // Glow-sprite lamps (street lights, beacons...): a light where the glow is, in the glow's color.
-    {"street", 1.0f, 0.85f, 0.55f, 1.2f, 12.0f, 0.0f, 0.0f, false, true, false},
-    {"lamp", 1.0f, 0.85f, 0.55f, 1.2f, 12.0f, 0.0f, 0.0f, false, true, false},
-    {"light_", 1.0f, 0.85f, 0.55f, 1.0f, 10.0f, 0.0f, 0.0f, false, true, false},
+    {"street", 1.0f, 0.85f, 0.55f, 0.8f, 12.0f, 0.0f, 0.0f, false, true, false},
+    {"lamp", 1.0f, 0.85f, 0.55f, 0.8f, 12.0f, 0.0f, 0.0f, false, true, false},
+    {"light_", 1.0f, 0.85f, 0.55f, 0.7f, 10.0f, 0.0f, 0.0f, false, true, false},
 };
 
 // 0..1: the key track's value now, relative to its highest key (a blink's on/off), 1 without a track.
@@ -1360,6 +1360,41 @@ void vfx_effect::update_dynamic_lights()
             return;
         }
         const float radius = profile_p->range;
+        // A fixture often has several glow effects (a floodlight tower has four): within 3 m of a light of the same kind
+        // already shown this frame, this one stays off, so a cluster is lit once, not four times over.
+        if (!profile_p->fades)
+        {
+            struct cluster_entry
+            {
+                vector pos;
+                const vfx_synthetic_light_profile* profile_p;
+            };
+            static cluster_entry s_clusters[64];
+            static int s_num_clusters = 0;
+            static unsigned int s_cluster_frame = 0xFFFFFFFFu;
+            if (s_cluster_frame != Rl_dynamic_lights_frame)
+            {
+                s_cluster_frame = Rl_dynamic_lights_frame;
+                s_num_clusters = 0;
+            }
+            for (int i = 0; i < s_num_clusters; i++)
+            {
+                const float dx = s_clusters[i].pos.x - m_position.x;
+                const float dy = s_clusters[i].pos.y - m_position.y;
+                const float dz = s_clusters[i].pos.z - m_position.z;
+                if (s_clusters[i].profile_p == profile_p && dx * dx + dy * dy + dz * dz < 9.0f)
+                {
+                    light_p->set_is_visible(false);
+                    return;
+                }
+            }
+            if (s_num_clusters < 64)
+            {
+                s_clusters[s_num_clusters].pos = m_position;
+                s_clusters[s_num_clusters].profile_p = profile_p;
+                s_num_clusters++;
+            }
+        }
         light_p->set_is_visible(true);
         light_p->set_light_type(rl_light::LIGHT_TYPE_POINT);
         light_p->set_position(vector(m_position.x, m_position.y + profile_p->height, m_position.z));

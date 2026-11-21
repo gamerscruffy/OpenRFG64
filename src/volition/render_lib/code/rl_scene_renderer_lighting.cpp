@@ -85,8 +85,11 @@ void rl_dynamic_lights_debug_light(const rl_light& light, unsigned int vis_flags
 }
 
 // Once every 120 frames, then the counts start over.
+unsigned int Rl_dynamic_lights_frame = 0;
+
 void rl_dynamic_lights_debug_report(int scene_lights)
 {
+    Rl_dynamic_lights_frame++;
     if (++Dynamic_lights_dbg_frame >= 120)
     {
         Dynamic_lights_dbg_frame = 0;

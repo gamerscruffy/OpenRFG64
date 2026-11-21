@@ -37,5 +37,7 @@ extern int Rl_dynamic_lights_dbg_vehicle_updates; // vehicle light updates since
 extern int Rl_dynamic_lights_dbg_vehicle_lit; // of those, with headlights lit (engine running, headlights on)
 // scene_lights: every rl_light of the scene, shown or hidden (rl_scene::get_light_count).
 void rl_dynamic_lights_debug_report(int scene_lights);
+// Counts rendered frames (bumped by rl_dynamic_lights_debug_report, once per frame); effects use it to share per-frame state.
+extern unsigned int Rl_dynamic_lights_frame;
 // Called by render_lighting_passes for each light drawn.
 void rl_dynamic_lights_debug_light(const rl_light& light, unsigned int vis_flags);
