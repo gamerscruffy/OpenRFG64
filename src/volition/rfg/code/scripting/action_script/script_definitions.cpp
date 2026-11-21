@@ -3936,6 +3936,14 @@ void Action_callback_object_set_position(script_node** args)
     if (objp != nullptr)
     {
         const object* target = World.object_from_handle(target_handle);
+#ifdef OPENRFG_X64
+        {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "SCRIPTPLACE object_set_position obj=%08X type=%d at <%.1f %.1f %.1f> target=%08X %s", handle, (int)objp->get_obj_type(), objp->pos.x, objp->pos.y, objp->pos.z, target_handle,
+                World.object_from_handle(target_handle) != nullptr ? "found" : "MISSING");
+            openrfg_log(msg);
+        }
+#endif
         if (target != nullptr)
         {
             objp->update_pos_and_orient(target->pos, target->orient, true);
@@ -4694,6 +4702,15 @@ void Action_callback_spawn_npc(script_node** args)
     if (node != nullptr)
     {
         const unsigned int child = node->spawn_child_object();
+#ifdef OPENRFG_X64
+        {
+            char msg[256];
+            object* made = child != 0xFFFFFFFF ? World.object_from_handle(child) : nullptr;
+            snprintf(msg, sizeof(msg), "SCRIPTPLACE spawn_npc node=%08X at <%.1f %.1f %.1f> -> child=%08X at <%.1f %.1f %.1f>", (unsigned int)*args[0], node->pos.x, node->pos.y, node->pos.z, child,
+                made != nullptr ? made->pos.x : 0.0f, made != nullptr ? made->pos.y : 0.0f, made != nullptr ? made->pos.z : 0.0f);
+            openrfg_log(msg);
+        }
+#endif
         if (child != 0xFFFFFFFF)
         {
             Action_return_value.set(child);
@@ -5442,6 +5459,17 @@ void Action_callback_human_teleport(script_node** args)
 {
     const unsigned int handle = (unsigned int)*args[0];
     object* target = World.object_from_handle((unsigned int)*args[1]);
+#ifdef OPENRFG_X64
+    {
+        // OpenRFG: scripted placements (an NPC walked up to the player) are rare, so each one is logged.
+        char msg[256];
+        object* who = World.object_from_handle(handle);
+        snprintf(msg, sizeof(msg), "SCRIPTPLACE human_teleport who=%08X %s at <%.1f %.1f %.1f> target=%08X %s at <%.1f %.1f %.1f>", handle, who != nullptr ? "found" : "MISSING",
+            who != nullptr ? who->pos.x : 0.0f, who != nullptr ? who->pos.y : 0.0f, who != nullptr ? who->pos.z : 0.0f, (unsigned int)*args[1], target != nullptr ? "found" : "MISSING",
+            target != nullptr ? target->pos.x : 0.0f, target != nullptr ? target->pos.y : 0.0f, target != nullptr ? target->pos.z : 0.0f);
+        openrfg_log(msg);
+    }
+#endif
     if (target == nullptr || handle == 0xFFFFFFFF)
     {
         return;
