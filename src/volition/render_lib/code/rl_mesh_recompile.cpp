@@ -212,11 +212,12 @@ void rl_mesh_recompile_initialize()
     recompile_queue.create();
     finalize_queue.create();
     s_completionEntriesMutex.create("completionEntries");
-    s_params_mem_p = new unsigned char[0xC000];
+    // X64 fix: 0xC000 bytes held 4,096 records of 0xC bytes on x86; the x64 record is 0x18 bytes, so only 2,048 fitted.
+    s_params_mem_p = new unsigned char[0x1000 * sizeof(rl_mesh_recompile_parameters)];
     s_params_pool.init_dynamic(0x1000);
-    for (int offset = 0; offset < 0xC000; offset += sizeof(rl_mesh_recompile_parameters))
+    for (int i = 0; i < 0x1000; i++)
     {
-        s_params_pool.add((rl_mesh_recompile_parameters*)(s_params_mem_p + offset));
+        s_params_pool.add((rl_mesh_recompile_parameters*)(s_params_mem_p + i * sizeof(rl_mesh_recompile_parameters)));
     }
     mesh_recompile_thread_handle = thread_spawn(mesh_recompile_thread, nullptr, 0, THREAD_PRIOR_LOW, "mesh recompile thread", 0);
     memset(s_completionEntries, 0, sizeof(s_completionEntries));
@@ -294,6 +295,18 @@ void rl_start_recompile_mesh_instance(rl_destroyable_model_instance* instance_p,
 {
     if (!Rl_recompile_mesh_enable || s_params_pool.size() <= 0)
     {
+        // Fix (rfgphys's d_start_recompile does the same in rfg.exe): with no request free the instance's pending
+        // compile went on with the instance as it was when it counted. After a shatter burst (every new piece asks for
+        // a compile) a building's vertices then ran into the next block of the buffer heap, and the next allocation
+        // crashed in tlsf (in compile_cache_data). The pending one is cancelled, as a new request would.
+        if (Rl_recompile_mesh_enable && instance_p != nullptr)
+        {
+            rl_mesh_recompile_parameters* pending = instance_p->get_recompile_parameters();
+            if (pending != nullptr && pending->m_instance_p == instance_p)
+            {
+                _InterlockedExchange((volatile long*)&pending->m_valid, 0);
+            }
+        }
         return;
     }
     if (!initing)
