@@ -127,6 +127,45 @@ namespace
         CloseHandle(file);
     }
 
+    DWORD WINAPI report_thread(LPVOID param)
+    {
+        report((EXCEPTION_POINTERS*)param, "CRASH (stack overflow)");
+        return 0;
+    }
+
+    // Small-stack first line for a stack overflow: no snprintf, just hex digits.
+    void stack_overflow_line(EXCEPTION_POINTERS* info)
+    {
+        char line[96] = "=== STACK OVERFLOW rip_off=0x";
+        const unsigned char* base = (const unsigned char*)GetModuleHandleA(nullptr);
+#ifdef _M_X64
+        unsigned long long v = (unsigned long long)((const unsigned char*)info->ContextRecord->Rip - base);
+#else
+        unsigned long long v = (unsigned long long)((const unsigned char*)info->ContextRecord->Eip - base);
+#endif
+        char* p = line + strlen(line);
+        for (int shift = 60; shift >= 0; shift -= 4)
+        {
+            *p++ = "0123456789ABCDEF"[(v >> shift) & 0xF];
+        }
+        memcpy(p, " thread=", 8);
+        p += 8;
+        unsigned long tid = GetCurrentThreadId();
+        for (int shift = 28; shift >= 0; shift -= 4)
+        {
+            *p++ = "0123456789ABCDEF"[(tid >> shift) & 0xF];
+        }
+        *p++ = '\r';
+        *p++ = '\n';
+        *p = 0;
+        HANDLE file = CreateFileA("openrfg_crash.txt", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file != INVALID_HANDLE_VALUE)
+        {
+            put(file, line);
+            CloseHandle(file);
+        }
+    }
+
     LONG CALLBACK early_crash_handler(EXCEPTION_POINTERS* info)
     {
         const EXCEPTION_RECORD* rec = info->ExceptionRecord;
@@ -165,6 +204,20 @@ namespace
         }
         if (InterlockedIncrement(&Crash_count) > 4)
         {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        if (code == EXCEPTION_STACK_OVERFLOW)
+        {
+            // The overflowed stack has only the guaranteed reserve left, too little for dbghelp: a second overflow
+            // inside the handler ends the process with no report at all. Write one small line here, then build the
+            // report on a fresh thread with its own stack.
+            stack_overflow_line(info);
+            HANDLE helper = CreateThread(nullptr, 0x100000, report_thread, info, 0, nullptr);
+            if (helper != nullptr)
+            {
+                WaitForSingleObject(helper, 10000);
+                CloseHandle(helper);
+            }
             return EXCEPTION_CONTINUE_SEARCH;
         }
         report(info, "CRASH");
