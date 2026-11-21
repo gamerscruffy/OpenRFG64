@@ -23,3 +23,14 @@ void rl_dynamic_lights_apply_level(int level);
 // How much of a light is drawn from the camera position: 1 inside the distance, fading to 0 at its end. Directional
 // lights are always 1.
 float rl_dynamic_lights_fade(const rl_light& light, const vector& camera_pos);
+
+// OpenRFG diagnostics: per-frame counts, logged to openrfg_crash.txt every 120 frames by rl_dynamic_lights_debug_report.
+extern int Rl_dynamic_lights_dbg_found; // lights in the visible light sectors (before any test)
+extern int Rl_dynamic_lights_dbg_in_range; // of those, inside the Dynamic Lights distance
+extern int Rl_dynamic_lights_dbg_visible; // visible lights before the budget
+extern int Rl_dynamic_lights_dbg_drawn; // light passes drawn
+extern int Rl_dynamic_lights_dbg_headlights; // vehicle headlight spots lit (vehicle_effects.cpp)
+extern int Rl_dynamic_lights_dbg_night; // vehicle_effects_headlights_should_be_on
+void rl_dynamic_lights_debug_report();
+// Called by render_lighting_passes for each light drawn.
+void rl_dynamic_lights_debug_light(const rl_light& light, unsigned int vis_flags);

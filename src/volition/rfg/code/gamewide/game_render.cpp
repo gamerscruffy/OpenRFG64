@@ -205,6 +205,66 @@ static void game_render_wait_and_unlock_scene()
     }
 }
 
+// OpenRFG diagnostics: Ctrl+Shift+L toggles a bright orange test light 4 m in front of the camera (follows it), to
+// check that the secondary light passes draw (the Dynamic Lights option must not be off).
+extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vKey);
+void openrfg_log(const char* text); // crash_early.cpp
+static rl_light* Dynamic_lights_test_light_p = nullptr;
+
+static void game_render_test_light_release()
+{
+    if (Dynamic_lights_test_light_p != nullptr)
+    {
+        Dynamic_lights_test_light_p->set_is_visible(false);
+        Dynamic_lights_test_light_p->release();
+        Dynamic_lights_test_light_p = nullptr;
+    }
+}
+
+static void game_render_test_light_update()
+{
+    static bool s_key_was_down = false;
+    const bool down = (GetAsyncKeyState(0x11) & 0x8000) != 0 && (GetAsyncKeyState(0x10) & 0x8000) != 0 && (GetAsyncKeyState('L') & 0x8000) != 0; // VK_CONTROL, VK_SHIFT
+    const bool toggled = down && !s_key_was_down;
+    s_key_was_down = down;
+    if (toggled)
+    {
+        if (Dynamic_lights_test_light_p != nullptr)
+        {
+            game_render_test_light_release();
+            openrfg_log("DYNLIGHTS test light off");
+        }
+        else if (rl_light::can_create())
+        {
+            Dynamic_lights_test_light_p = rl_light::create();
+            openrfg_log(Dynamic_lights_test_light_p != nullptr ? "DYNLIGHTS test light on" : "DYNLIGHTS test light: create failed");
+        }
+        else
+        {
+            openrfg_log("DYNLIGHTS test light: light pool full");
+        }
+    }
+    rl_light* light_p = Dynamic_lights_test_light_p;
+    if (light_p == nullptr)
+    {
+        return;
+    }
+    // Magic numbers: 4 m ahead, 20 m reach, a bright orange.
+    const float range = 20.0f;
+    const vector pos(Rfg_camera.real_pos.x + Rfg_camera.real_orient.fvec.x * 4.0f, Rfg_camera.real_pos.y + Rfg_camera.real_orient.fvec.y * 4.0f, Rfg_camera.real_pos.z + Rfg_camera.real_orient.fvec.z * 4.0f);
+    light_p->set_light_type(rl_light::LIGHT_TYPE_POINT);
+    light_p->set_position(pos);
+    light_p->set_rotation(IDENTITY_MATRIX);
+    light_p->set_local_bounding_sphere(rl_sphere(ZERO_VECTOR, range));
+    light_p->set_clip_min(vector(-range, -range, -range));
+    light_p->set_clip_max(vector(range, range, range));
+    light_p->set_color(rl_color_float(4.0f, 2.0f, 0.8f, 1.0f));
+    light_p->set_attenuation_start(1.0f);
+    light_p->set_attenuation_end(range);
+    light_p->set_is_visible(true);
+    light_p->update_partition_system();
+}
+
 // 0x007C2570 (:807)
 void game_render_dyn_light_add(const vector& pos, const vector& color, float atten_start, float atten_end)
 {
@@ -317,6 +377,7 @@ void game_render_system_shutdown()
 void game_render_level_shutdown()
 {
     rl_unlock();
+    game_render_test_light_release(); // OpenRFG diagnostics
     game_render_dyn_light_clear();
     game_render_terrain_level_shutdown();
     Scene_main_p->get_partition_system()->clean();
@@ -1184,6 +1245,7 @@ void game_render_do_frame(rl_renderer& renderer, bool render_scene, rl_renderer&
 // The gamma change is only tracked.
 void game_render_begin_frame()
 {
+    game_render_test_light_update(); // OpenRFG diagnostics
     if (Color_correct_gamma != Last_color_correct_gamma)
     {
         Last_color_correct_gamma = Color_correct_gamma;

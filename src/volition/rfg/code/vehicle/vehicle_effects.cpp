@@ -584,6 +584,8 @@ void vehicle_camera_shake_play_onfire(vehicle* vp)
 }
 
 // 0x00B66DC0 (:1216)
+bool vehicle_effects_headlights_should_be_on();
+
 // ---- OpenRFG: headlight spot lights (the Dynamic Lights option, rl_dynamic_lights.h)
 // The headlight effects are coronas only; with Dynamic Lights on, a vehicle whose headlights are lit also gets one spot
 // light (at the middle of its headlights, along their direction) so the road and walls in front of it are lit. A few
@@ -687,6 +689,8 @@ static void vehicle_headlight_spots_sweep(int max_spots)
         }
         used++;
     }
+    Rl_dynamic_lights_dbg_headlights = used; // OpenRFG diagnostics
+    Rl_dynamic_lights_dbg_night = vehicle_effects_headlights_should_be_on() ? 1 : 0;
 }
 
 static void vehicle_headlight_spot_release_for(unsigned int handle)

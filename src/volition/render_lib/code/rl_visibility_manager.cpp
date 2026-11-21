@@ -913,6 +913,7 @@ void rl_visibility_manager::determine_visible_lights(rl_renderer& renderer, rl_c
         {
             rl_light* light = (rl_light*)entry->m_entity_p;
             unsigned int visible = 0;
+            Rl_dynamic_lights_dbg_found++; // OpenRFG diagnostics
             // OpenRFG: lights past the Dynamic Lights distance are not drawn (or tested).
             if (rl_dynamic_lights_fade(*light, camera.get_position()) <= 0.0f)
             {
@@ -923,6 +924,7 @@ void rl_visibility_manager::determine_visible_lights(rl_renderer& renderer, rl_c
                 }
                 continue;
             }
+            Rl_dynamic_lights_dbg_in_range++; // OpenRFG diagnostics
             if (category_enabled(m_render_category_filter, light) && m_visibility_lists[light->get_visibility_list_index()] != nullptr)
             {
                 unsigned int to_test = sector.pass_visibility_flags & ~sector.pass_fully_visible_flags;
@@ -969,6 +971,7 @@ void rl_visibility_manager::determine_visible_lights(rl_renderer& renderer, rl_c
             num_directional++;
         }
     }
+    Rl_dynamic_lights_dbg_visible = m_visible_light_list->size(); // OpenRFG diagnostics
     const int keep = num_directional + Rl_dynamic_lights_max;
     if (m_visible_light_list->size() > keep)
     {

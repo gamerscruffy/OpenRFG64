@@ -15,6 +15,9 @@
 #include "volition/render_lib/code/rl_terrain_renderer.h"
 
 #include <math.h>
+#include <stdio.h>
+
+void openrfg_log(const char* text); // crash_early.cpp
 
 // The position the lights are sorted by distance to (the camera).
 static vector Reference_pos; // 0x01C20A54
@@ -54,6 +57,47 @@ void rl_dynamic_lights_apply_level(int level)
     Rl_dynamic_lights_max = Dynamic_lights_presets[level].max_lights;
     Rl_dynamic_lights_distance = Dynamic_lights_presets[level].distance;
     RL_enable_secondary_lights = level > 0;
+}
+
+int Rl_dynamic_lights_dbg_found = 0;
+int Rl_dynamic_lights_dbg_in_range = 0;
+int Rl_dynamic_lights_dbg_visible = 0;
+int Rl_dynamic_lights_dbg_drawn = 0;
+int Rl_dynamic_lights_dbg_headlights = 0;
+int Rl_dynamic_lights_dbg_night = 0;
+static int Dynamic_lights_dbg_frame = 0;
+static char Dynamic_lights_dbg_first[256] = "";
+
+void rl_dynamic_lights_debug_light(const rl_light& light, unsigned int vis_flags)
+{
+    Rl_dynamic_lights_dbg_drawn++;
+    if (Rl_dynamic_lights_dbg_drawn == 1)
+    {
+        const vector& pos = light.get_position();
+        const rl_color_float& color = light.get_color();
+        snprintf(Dynamic_lights_dbg_first, sizeof(Dynamic_lights_dbg_first), "first: type=%d pos=(%.1f %.1f %.1f) color=(%.2f %.2f %.2f) atten=%.1f..%.1f vis_flags=%08X",
+                 (int)light.get_light_type(), pos.x, pos.y, pos.z, color.red, color.green, color.blue, light.get_attenuation_start(), light.get_attenuation_end(), vis_flags);
+    }
+}
+
+// Once every 120 frames, then the counts start over.
+void rl_dynamic_lights_debug_report()
+{
+    if (++Dynamic_lights_dbg_frame >= 120)
+    {
+        Dynamic_lights_dbg_frame = 0;
+        char text[512];
+        snprintf(text, sizeof(text), "DYNLIGHTS level=%d enabled=%d max=%d dist=%.0f found=%d in_range=%d visible=%d drawn=%d headlights=%d night=%d %s",
+                 Rl_dynamic_lights_level, (int)RL_enable_secondary_lights, Rl_dynamic_lights_max, Rl_dynamic_lights_distance, Rl_dynamic_lights_dbg_found,
+                 Rl_dynamic_lights_dbg_in_range, Rl_dynamic_lights_dbg_visible, Rl_dynamic_lights_dbg_drawn, Rl_dynamic_lights_dbg_headlights,
+                 Rl_dynamic_lights_dbg_night, Dynamic_lights_dbg_first);
+        openrfg_log(text);
+    }
+    Rl_dynamic_lights_dbg_found = 0;
+    Rl_dynamic_lights_dbg_in_range = 0;
+    Rl_dynamic_lights_dbg_visible = 0;
+    Rl_dynamic_lights_dbg_drawn = 0;
+    Dynamic_lights_dbg_first[0] = 0;
 }
 
 // The last quarter of the distance fades out.
@@ -133,6 +177,7 @@ void rl_scene_renderer::render_lighting_passes(rl_renderer& renderer, rl_camera&
         renderer.set_active_camera(&camera);
         renderer.set_is_base_pass(false);
         renderer.set_light(*light, false);
+        rl_dynamic_lights_debug_light(*light, vis_flags); // OpenRFG diagnostics
         // Magic numbers: the packed light pass state (additive alpha, read depth, back face culling, RGBA writes and
         // msaa bit 19).
         rl_primitive_state light_state;
