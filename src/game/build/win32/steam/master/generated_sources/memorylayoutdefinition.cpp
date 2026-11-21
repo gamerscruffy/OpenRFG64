@@ -15,7 +15,14 @@ namespace keen
     {
         { 1000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_SysMempoolProvider" }, // 0
         { 80000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_VramMempoolProvider" }, // 1
+#ifdef OPENRFG_X64
+        // OpenRFG: the larger 15x15 distance buffers (terrain renderer chunk lists, broadphase pools) come from this block
+        // before the 476 MB vehicle slot allocator; at 1.7 GB it ran dry again ("vehicle allocator init ok=0" in trace.log,
+        // no ambient vehicles).
+        { 2400000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_MempoolProvider" }, // 2
+#else
         { 1700000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_MempoolProvider" }, // 2
+#endif
         { 300000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_GpuScratchMem" }, // 3
         { 0u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_Graphics" }, // 4
         { 0u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_Framebuffers" }, // 5
