@@ -68,7 +68,7 @@ static bool road_on_route_list(const road_spline_identifier& road_id, const base
 }
 
 // 0x00652B60 (:59). LTCG: pos EAX, size XMM0, road_list EDI.
-static void collect_local_road_list(const vector& pos, float size, farray<object_path_road*, OPENRFG_ZONE_POOL(322)>& road_list)
+static void collect_local_road_list(const vector& pos, float size, farray<object_path_road*, OPENRFG_ZONE_LIST(322)>& road_list)
 {
     road_list.clear();
     const vector box_min(pos.x - size, pos.y - size, pos.z - size);
@@ -355,7 +355,7 @@ static unsigned short pick_destination_on_road(const object_path_road* road, con
 }
 
 // 0x00610BF0 (:778). LTCG: destination_road_id ESI, pp EDX, road_list on the stack; start_road_id is dropped.
-static bool pick_destination_road_player(road_spline_identifier& destination_road_id, const player* pp, const farray<object_path_road*, OPENRFG_ZONE_POOL(322)>& road_list)
+static bool pick_destination_road_player(road_spline_identifier& destination_road_id, const player* pp, const farray<object_path_road*, OPENRFG_ZONE_LIST(322)>& road_list)
 {
     vector closest;
     float u;
@@ -374,9 +374,9 @@ static bool pick_destination_road_player(road_spline_identifier& destination_roa
 }
 
 // 0x00653760 (:801). LTCG: start_road_id EAX. Any road that comes closer to the player than the start.
-static bool pick_destination_road(road_spline_identifier& destination_road_id, const road_spline_identifier& start_road_id, const player* pp, const farray<object_path_road*, OPENRFG_ZONE_POOL(322)>& road_list)
+static bool pick_destination_road(road_spline_identifier& destination_road_id, const road_spline_identifier& start_road_id, const player* pp, const farray<object_path_road*, OPENRFG_ZONE_LIST(322)>& road_list)
 {
-    farray<object_path_road*, OPENRFG_ZONE_POOL(322)> candidates;
+    farray<object_path_road*, OPENRFG_ZONE_LIST(322)> candidates;
     const vector start_pos = start_road_id.road_spline->get_road_point(start_road_id.point);
     const float start_dist_sq = vec_dist_squared(start_pos, pp->pos);
     for (int i = 0; i < road_list.size(); i++)
@@ -563,7 +563,7 @@ static bool find_route_start_point_intersection(road_spline_identifier& start_ro
 }
 
 // 0x00653950 (:1087)
-static bool collect_local_ambient_roads(const vector& point, farray<object_path_road*, OPENRFG_ZONE_POOL(322)>& road_list)
+static bool collect_local_ambient_roads(const vector& point, farray<object_path_road*, OPENRFG_ZONE_LIST(322)>& road_list)
 {
     road_list.clear();
     const int num_roads = World.get_num_objects<object_path_road>();
@@ -593,7 +593,7 @@ static bool collect_local_ambient_roads(const vector& point, farray<object_path_
 }
 
 // 0x00611170 (:1111). The nearest clear point ahead of the vehicle off the last route, otherwise the nearest point of all.
-static bool find_route_start_point_list(road_spline_identifier& start_road_id, const vehicle* vp, const base_array<road_segment_info>& last_road_route, const farray<object_path_road*, OPENRFG_ZONE_POOL(322)>& road_list)
+static bool find_route_start_point_list(road_spline_identifier& start_road_id, const vehicle* vp, const base_array<road_segment_info>& last_road_route, const farray<object_path_road*, OPENRFG_ZONE_LIST(322)>& road_list)
 {
     road_spline_identifier best_clear = { nullptr, 0 };
     road_spline_identifier best_any = { nullptr, 0 };
@@ -651,7 +651,7 @@ bool find_route_start_point(road_spline_identifier& start_road_id, const vehicle
     {
         return true;
     }
-    farray<object_path_road*, OPENRFG_ZONE_POOL(322)> road_list;
+    farray<object_path_road*, OPENRFG_ZONE_LIST(322)> road_list;
     if (collect_local_ambient_roads(vp->pos, road_list))
     {
         return find_route_start_point_list(start_road_id, vp, last_road_route, road_list);
@@ -692,7 +692,7 @@ bool ambient_build_road_waypoints(farray<road_segment_info, 8>& spawn_road_list,
     start_road_id.road_spline = root_road;
     start_road_id.point = (unsigned short)start_index;
     const player* pp = player_get_local_player();
-    farray<object_path_road*, OPENRFG_ZONE_POOL(322)> road_list;
+    farray<object_path_road*, OPENRFG_ZONE_LIST(322)> road_list;
     collect_local_road_list(pp->pos, LOCAL_ROAD_DIST, road_list);
     if (road_list.size() < 1)
     {

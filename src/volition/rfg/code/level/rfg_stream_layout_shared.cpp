@@ -15,8 +15,8 @@
 // for the zone callback and loads the stream mask file.
 //
 // Notes (decompiled behaviour, kept as is):
-// - get_cell_list does not clamp to the grid: positions near the edge give indices outside the cell array, which
-//   stream_grid::do_frame reads without checking.
+// - get_cell_list did not clamp to the grid: positions near the edge gave indices outside the cell array, which
+//   stream_grid::do_frame reads without checking. OpenRFG skips those cells (the larger stream radii reach the edge).
 // - create_cell_mask_region stores uninitialised region handles for the broadphases that do not exist (zero here).
 // - sl_slurp_zone_and_terrain creates the stitch containers from the first stitch record only, once per record.
 // - stream_layout_level_init returns false without disabling standard access again when a packfile is missing.
@@ -70,39 +70,46 @@ static int s_terrain_distance_level = 0;
 
 void openrfg_log(const char* text); // crash_early.cpp
 
-// Magic numbers: the level cells are 170.33 m. 340 is the original radius (a box of up to 5x5 cells); 425 reaches up to
-// 6x6; 510 up to 7x7 (just under three cells, as the original stays just under two). The 32-bit build keeps 340: its
-// cell arrays hold 25.
+// Magic numbers: the level cells are 170.33 m. 340 is the original radius (a box of up to 5x5 cells, just under two
+// cells); each level adds a cell on every side (7x7 up to 15x15), staying just under a whole number of cells as the
+// original does. The 32-bit build keeps 340: its cell arrays hold 25.
 float stream_world_detail_level_radius(int level)
 {
 #ifdef OPENRFG_X64
-    if (level >= 2)
+    if (level < 0)
     {
-        return 510.0f;
+        level = 0;
     }
-    if (level == 1)
+    if (level > RL_WORLD_DETAIL_LEVELS - 1)
     {
-        return 425.0f;
+        level = RL_WORLD_DETAIL_LEVELS - 1;
     }
+    return 170.33333f * (float)(level + 2) - 0.66f;
 #else
     (void)level;
-#endif
     return 340.0f;
+#endif
 }
 
-// Magic numbers: the terrain cells (zones) are 511 m. 510 is the original radius (a box of up to 3x3 cells); 1020 reaches
-// up to 5x5 (just under two cells). The 32-bit build keeps 510: its zone pools hold 9 (OPENRFG_MAX_ZONES).
+// Magic numbers: the terrain cells (zones) are 511 m. 510 is the original radius (a box of up to 3x3 cells, just under
+// one cell); each level adds a zone on every side (5x5 up to 15x15). The 32-bit build keeps 510: its zone pools hold 9
+// (OPENRFG_MAX_ZONES).
 float stream_terrain_distance_radius(int level)
 {
 #ifdef OPENRFG_X64
-    if (level >= 1)
+    if (level < 0)
     {
-        return 1020.0f;
+        level = 0;
     }
+    if (level > RL_TERRAIN_DISTANCE_LEVELS - 1)
+    {
+        level = RL_TERRAIN_DISTANCE_LEVELS - 1;
+    }
+    return 510.0f * (float)(level + 1);
 #else
     (void)level;
-#endif
     return 510.0f;
+#endif
 }
 static mempool_base* Layout_tmp_pool; // 0x02CEC1D8
 static mempool_base* zonescript_preload_pool_ptr; // 0x02CEC1DC
@@ -450,6 +457,12 @@ int stream_layer::get_cell_list(const vector& _bmin, const vector& _bmax, bbox* 
     {
         for (int x = x0; x <= x1; x++)
         {
+            // OpenRFG: cells off the grid are skipped. The original returned them (see the file notes), which the
+            // larger stream radii reach at the world's edge: their indices wrap to another row or leave the array.
+            if (x < 0 || x >= dim_x || z < 0 || z >= dim_z)
+            {
+                continue;
+            }
             if (cell_indices != nullptr)
             {
                 cell_indices[count] = dim_x * z + x;

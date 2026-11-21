@@ -60,7 +60,7 @@ extern hash_table<unsigned int,&uint_hash,1024,unsigned short> Auto_restorations
 extern hash_table<unsigned int,&uint_hash,3072,unsigned short> Pending_restorations; // 0x0166AB68
 extern hash_table<unsigned int,&uint_hash,2048,unsigned short> Restored_objects; // 0x01670B70
 extern hash_table<unsigned int,&hash_uint,2048,unsigned short> Restored_shapes; // 0x01674BB8
-extern hash_table<unsigned int,&uint_hash,OPENRFG_MAX_ZONES,unsigned char> Zone_table; // 0x01674B78
+extern hash_table<unsigned int,&uint_hash,OPENRFG_MAX_ZONES,OPENRFG_ZONE_HASH_INDEX> Zone_table; // 0x01674B78
 
 bool verify_hierarchy(); // 0x00934740 (world_restore.cpp:79)
 void remove_descendants_from_auto_restore(unsigned int handle); // 0x0092D250 (world_restore.cpp:206)

@@ -52,21 +52,22 @@ enum layout_layer
     NUM_LAYERS = 2,
 };
 
-// OpenRFG: the most cells a layer streams at once. The original is 25 (5x5); the 64-bit build allows 7x7 for the
-// World Detail Distance option (stream_world_detail_level_radius).
+// OpenRFG: the most cells a layer streams at once. The original is 25 (5x5); the 64-bit build allows up to 15x15 for
+// the World Detail Distance and Terrain Distance options (stream_world_detail_level_radius,
+// stream_terrain_distance_radius). STREAM_MAX_CELL_SPAN is the widest square of new cells stream_new_cells groups.
 #ifdef OPENRFG_X64
-#define STREAM_MAX_ACTIVE_CELLS 49
-#define STREAM_MAX_CELL_SPAN 7
+#define STREAM_MAX_ACTIVE_CELLS 256
+#define STREAM_MAX_CELL_SPAN 16
 #else
 #define STREAM_MAX_ACTIVE_CELLS 25
 #define STREAM_MAX_CELL_SPAN 5
 #endif
 
-// OpenRFG: the level layer's stream radius for a World Detail Distance level (0 normal = 5x5 cells, 1 high = up to
-// 6x6, 2 ultra = 7x7; levels above 0 only on 64-bit).
+// OpenRFG: the level layer's stream radius for a World Detail Distance level (0 normal = 5x5 cells, then 7x7 up to
+// 15x15; levels above 0 only on 64-bit).
 float stream_world_detail_level_radius(int level);
-// OpenRFG: the terrain layer's stream radius for a Terrain Distance level (0 normal = 3x3 zones, 1 high = up to 5x5;
-// x64 only).
+// OpenRFG: the terrain layer's stream radius for a Terrain Distance level (0 normal = 3x3 zones, then 5x5 up to 15x15;
+// levels above 0 only on 64-bit).
 float stream_terrain_distance_radius(int level);
 
 // size 0x18

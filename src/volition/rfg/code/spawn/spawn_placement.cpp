@@ -1814,7 +1814,7 @@ static bool do_npc_spawn_navpoint(npc_spawn_param_list& spawn_param_list, const 
     return (Navpoint_treat_all_as_enabled || navp->heap_data.disabled_by == 0) && do_npc_spawn_navpoint_edge(spawn_param_list, navp);
 }
 // 0x00B48810 (:1975). LTCG: action_node_list EDI.
-static int find_nearest_action_node(const vector& pos, const farray<object_action_node const*, OPENRFG_ZONE_POOL(608)>& action_node_list)
+static int find_nearest_action_node(const vector& pos, const farray<object_action_node const*, OPENRFG_ZONE_LIST(608)>& action_node_list)
 {
     int best = -1;
     float best_dist_sq = FLT_MAX;
@@ -1851,7 +1851,7 @@ static bool do_single_npc_spawn_action(npc_spawn_param_list& spawn_param_list, n
 }
 
 // 0x00B50310 (:2034). LTCG: action_node_list EAX. A node that fails is off the list for the next npc too.
-static bool do_npc_spawn_action_node_list(npc_spawn_param_list& spawn_param_list, farray<object_action_node const*, OPENRFG_ZONE_POOL(608)>& action_node_list, bool nearest_node)
+static bool do_npc_spawn_action_node_list(npc_spawn_param_list& spawn_param_list, farray<object_action_node const*, OPENRFG_ZONE_LIST(608)>& action_node_list, bool nearest_node)
 {
     for (int i = 0; i < spawn_param_list.npc_spawn_info.size(); i++)
     {
@@ -1887,7 +1887,7 @@ static bool do_npc_spawn_action_node_list(npc_spawn_param_list& spawn_param_list
 }
 
 // Splits nodes into high priority and normal ones, tries the high priority ones nearest first, then the rest at random.
-static bool spawn_in_sorted_action_nodes(npc_spawn_param_list& spawn_param_list, farray<object_action_node const*, OPENRFG_ZONE_POOL(608)>& high_priority, farray<object_action_node const*, OPENRFG_ZONE_POOL(608)>& normal)
+static bool spawn_in_sorted_action_nodes(npc_spawn_param_list& spawn_param_list, farray<object_action_node const*, OPENRFG_ZONE_LIST(608)>& high_priority, farray<object_action_node const*, OPENRFG_ZONE_LIST(608)>& normal)
 {
     if (0 < high_priority.size() && do_npc_spawn_action_node_list(spawn_param_list, high_priority, true))
     {
@@ -1899,8 +1899,8 @@ static bool spawn_in_sorted_action_nodes(npc_spawn_param_list& spawn_param_list,
 // 0x00B50490 (:2076). The free action nodes of the wanted type within 30 m.
 static bool do_npc_spawn_action_node(npc_spawn_param_list& spawn_param_list)
 {
-    farray<object_action_node const*, OPENRFG_ZONE_POOL(608)> high_priority;
-    farray<object_action_node const*, OPENRFG_ZONE_POOL(608)> normal;
+    farray<object_action_node const*, OPENRFG_ZONE_LIST(608)> high_priority;
+    farray<object_action_node const*, OPENRFG_ZONE_LIST(608)> normal;
     const int num_nodes = World.get_num_objects<object_action_node>();
     if (num_nodes < 1)
     {
@@ -2086,8 +2086,8 @@ static bool do_npc_spawn_building_action(npc_spawn_param_list& spawn_param_list,
     {
         return false;
     }
-    farray<object_action_node const*, OPENRFG_ZONE_POOL(608)> high_priority;
-    farray<object_action_node const*, OPENRFG_ZONE_POOL(608)> normal;
+    farray<object_action_node const*, OPENRFG_ZONE_LIST(608)> high_priority;
+    farray<object_action_node const*, OPENRFG_ZONE_LIST(608)> normal;
     for (int i = 0; i < child_lists.action_node_list.size(); i++)
     {
         const object_action_node* node = child_lists.action_node_list[i];

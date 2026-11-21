@@ -159,75 +159,89 @@ inline void rl_lod_set_dynamic_lights_level(rl_level_of_detail& lod, int level)
     lod.m_dynamic_lights = (unsigned char)(level + 1);
 }
 
-// OpenRFG: the World Detail Distance level of the options menu: 0 normal (the original 5x5 building cells), 1 high,
-// 2 ultra (7x7; stream_world_detail_level_radius). An unset or out of range byte counts as normal.
+// OpenRFG: the number of levels of the World Detail Distance, LOD Detail, Draw Distance and Terrain Distance options
+// (the menu lists hold one entry per level). The byte of each keeps level + 1, so 0 (unset) counts as the first level.
+#define RL_WORLD_DETAIL_LEVELS 6
+#define RL_LOD_DETAIL_LEVELS 7
+#define RL_DRAW_DISTANCE_LEVELS 7
+#define RL_TERRAIN_DISTANCE_LEVELS 7
+
+inline int rl_lod_stored_level(unsigned char stored, int count)
+{
+    return (stored < 1 || stored > count) ? 0 : stored - 1;
+}
+
+inline unsigned char rl_lod_level_to_store(int level, int count)
+{
+    return (unsigned char)((level < 0 || level >= count ? 0 : level) + 1);
+}
+
+// OpenRFG: the World Detail Distance level of the options menu: how far buildings stream at full detail. 0 is the
+// original 5x5 building cells, each level adds a cell on every side up to 15x15 (64-bit only;
+// stream_world_detail_level_radius).
 inline int rl_lod_get_world_detail_level(const rl_level_of_detail& lod)
 {
-    const int stored = lod.m_world_detail;
-    return (stored < 1 || stored > 3) ? 0 : stored - 1;
+    return rl_lod_stored_level(lod.m_world_detail, RL_WORLD_DETAIL_LEVELS);
 }
 
 inline void rl_lod_set_world_detail_level(rl_level_of_detail& lod, int level)
 {
-    if (level < 0 || level > 2)
-    {
-        level = 0;
-    }
-    lod.m_world_detail = (unsigned char)(level + 1);
+    lod.m_world_detail = rl_lod_level_to_store(level, RL_WORLD_DETAIL_LEVELS);
 }
 
-// OpenRFG: the LOD Detail level of the options menu: 0 normal, 1 high, 2 very high. How far buildings, objects and the
-// full detail terrain are drawn (the camera's high LOD far clip; rl_lod_detail_distance). Unset counts as normal.
+// OpenRFG: the LOD Detail level of the options menu. How far buildings, objects and the full detail terrain are drawn
+// (the camera's high LOD far clip; rl_lod_detail_distance).
 inline int rl_lod_get_lod_detail_level(const rl_level_of_detail& lod)
 {
-    const int stored = lod.m_lod_detail;
-    return (stored < 1 || stored > 3) ? 0 : stored - 1;
+    return rl_lod_stored_level(lod.m_lod_detail, RL_LOD_DETAIL_LEVELS);
 }
 
 inline void rl_lod_set_lod_detail_level(rl_level_of_detail& lod, int level)
 {
-    lod.m_lod_detail = (unsigned char)((level < 0 || level > 2 ? 0 : level) + 1);
+    lod.m_lod_detail = rl_lod_level_to_store(level, RL_LOD_DETAIL_LEVELS);
 }
 
-// Magic numbers: 320 m is the game's own (rfg_camera_system_init); 400 and 490 stay inside the High and Very High World
-// Detail Distance stream radii (425, 510 m) so the full detail edge is loaded before it is drawn.
+// Magic numbers: 320 m is the game's own (rfg_camera_system_init); 400 and 490 stay inside the 7x7 World Detail
+// Distance radius (510 m); the rest stay inside the 9x9, 11x11, 13x13 and 15x15 radii (681, 851, 1021, 1192 m), so the
+// full detail edge is loaded before it is drawn when both options are raised together.
 inline float rl_lod_detail_distance(int level)
 {
-    return level >= 2 ? 490.0f : (level == 1 ? 400.0f : 320.0f);
+    static const float distances[RL_LOD_DETAIL_LEVELS] = {320.0f, 400.0f, 490.0f, 660.0f, 830.0f, 1000.0f, 1170.0f};
+    return distances[(level < 0 || level >= RL_LOD_DETAIL_LEVELS) ? 0 : level];
 }
 
-// OpenRFG: the Draw Distance level of the options menu: 0 normal, 1 high, 2 very high. The camera's far clip, which
-// ends the low detail terrain (landmark LODs have their own 10 km frustum; rl_draw_distance). Unset counts as normal.
+// OpenRFG: the Draw Distance level of the options menu. The camera's far clip, which ends the low detail terrain
+// (landmark LODs have their own 10 km frustum; rl_draw_distance).
 inline int rl_lod_get_draw_distance_level(const rl_level_of_detail& lod)
 {
-    const int stored = lod.m_draw_distance;
-    return (stored < 1 || stored > 3) ? 0 : stored - 1;
+    return rl_lod_stored_level(lod.m_draw_distance, RL_DRAW_DISTANCE_LEVELS);
 }
 
 inline void rl_lod_set_draw_distance_level(rl_level_of_detail& lod, int level)
 {
-    lod.m_draw_distance = (unsigned char)((level < 0 || level > 2 ? 0 : level) + 1);
+    lod.m_draw_distance = rl_lod_level_to_store(level, RL_DRAW_DISTANCE_LEVELS);
 }
 
 // Magic numbers: 475 m is the game's own (rfg_camera_system_init); 1000 m is its unused LOD 0 far clip
-// (game_render_set_lod_level). 1500 m reaches the edge of the 5x5 zones of Terrain Distance High.
+// (game_render_set_lod_level). 1500 m reaches the edge of 5x5 zones of Terrain Distance; 2000 to 4000 m reach 7x7 up
+// to 15x15 (the zone ring is 511 m further each level, the corners further still).
 inline float rl_draw_distance(int level)
 {
-    return level >= 2 ? 1500.0f : (level == 1 ? 1000.0f : 475.0f);
+    static const float distances[RL_DRAW_DISTANCE_LEVELS] = {475.0f, 1000.0f, 1500.0f, 2000.0f, 2500.0f, 3000.0f, 4000.0f};
+    return distances[(level < 0 || level >= RL_DRAW_DISTANCE_LEVELS) ? 0 : level];
 }
 
-// OpenRFG: the Terrain Distance level of the options menu: 0 normal (3x3 zones, the original), 1 high (5x5 zones, 64-bit
-// only; stream_terrain_distance_radius). Each zone is a 511 m terrain cell with its low detail terrain and its objects.
-// Unset counts as normal.
+// OpenRFG: the Terrain Distance level of the options menu: 0 the original 3x3 zones, each level adds a zone on every
+// side up to 15x15 (64-bit only; stream_terrain_distance_radius). Each zone is a 511 m terrain cell with its low detail
+// terrain and its objects.
 inline int rl_lod_get_terrain_distance_level(const rl_level_of_detail& lod)
 {
-    const int stored = lod.m_terrain_distance;
-    return (stored < 1 || stored > 2) ? 0 : stored - 1;
+    return rl_lod_stored_level(lod.m_terrain_distance, RL_TERRAIN_DISTANCE_LEVELS);
 }
 
 inline void rl_lod_set_terrain_distance_level(rl_level_of_detail& lod, int level)
 {
-    lod.m_terrain_distance = (unsigned char)((level < 0 || level > 1 ? 0 : level) + 1);
+    lod.m_terrain_distance = rl_lod_level_to_store(level, RL_TERRAIN_DISTANCE_LEVELS);
 }
 
 // ---- inline members (no .cpp home)

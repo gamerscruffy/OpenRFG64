@@ -1722,8 +1722,8 @@ static bool find_spawn_location_road(team_spawn_location& spawn_info, float min_
     {
         return false;
     }
-    farray<road_search_info, OPENRFG_ZONE_POOL(322)> search;
-    farray<object_path_road const*, OPENRFG_ZONE_POOL(322)> visited;
+    farray<road_search_info, OPENRFG_ZONE_LIST(322)> search;
+    farray<object_path_road const*, OPENRFG_ZONE_LIST(322)> visited;
     road_search_info first;
     first.reset();
     first.road = closest_road;

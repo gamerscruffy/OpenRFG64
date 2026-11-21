@@ -44,11 +44,11 @@ static bool Rl_is_initialized = false; // 0x01B7BD08
 static bool Rl_is_locked = false; // 0x01B7BD09
 static mempool Factory_mempool; // 0x01C320E0
 static fober_lock_free_queue Deferred_operation_list; // 0x01515198
-// Magic number: at most 512 operations queued while the renderer is locked. OpenRFG: 8192 on x64, since a wider
+// Magic number: at most 512 operations queued while the renderer is locked. OpenRFG: 32768 on x64, since a wider
 // World Detail Distance releases many more level cells (every object and terrain patch in them) in one frame; a
 // dropped release leaves a freed mesh in the scene.
 #ifdef OPENRFG_X64
-static object_pool<rl_deferred_operation, 8192, 1> Deferred_op_pool; // 0x01C20C30
+static object_pool<rl_deferred_operation, 32768, 1> Deferred_op_pool; // 0x01C20C30
 void openrfg_log(const char* text); // crash_early.cpp
 #else
 static object_pool<rl_deferred_operation, 512, 1> Deferred_op_pool; // 0x01C20C30

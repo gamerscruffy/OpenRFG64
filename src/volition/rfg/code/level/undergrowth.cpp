@@ -165,7 +165,7 @@ static bool Undergrowth_use_player_pos = false; // 0x02CA1672
 
 // ---- state
 
-static data_hash_table<unsigned int,undergrowth_zone*,&hash_uint,OPENRFG_MAX_ZONES,unsigned char> Zone_hash(false); // 0x01668B00
+static data_hash_table<unsigned int,undergrowth_zone*,&hash_uint,OPENRFG_MAX_ZONES,OPENRFG_ZONE_HASH_INDEX> Zone_hash(false); // 0x01668B00
 static undergrowth_wind_info Undergrowth_wind_infos[8]; // 0x02CCBA88
 static bool Undergrowth_init; // 0x02CEC1E2
 static rl_clone_mesh_pool* Undergrowth_clone_pool; // 0x02CEC1E4

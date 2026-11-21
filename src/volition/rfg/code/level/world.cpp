@@ -103,7 +103,9 @@ world World; // 0x02F98490
 bool Stream_pause; // 0x02CA1670
 
 // ---- file-static globals
-static obj_name_string Obj_name_buf[2048]; // 0x02CA1678
+// OpenRFG: OBJ_NAME_COUNT names (2048 in the original), scaled with the zone pools.
+static const int OBJ_NAME_COUNT = OPENRFG_ZONE_POOL(2048);
+static obj_name_string Obj_name_buf[OBJ_NAME_COUNT]; // 0x02CA1678
 static unsigned short Obj_name_used_list; // 0x02CCB678
 static unsigned short Obj_name_free_list; // 0x02CCBA84
 static bool Debug_player_start; // 0x02CEC1E3
@@ -172,7 +174,7 @@ static char* alloc_obj_name(unsigned short& name_index)
 static void dealloc_obj_name(unsigned short& name_index)
 {
     const unsigned short entry = name_index;
-    if (entry == NO_NAME || entry >= 2048)
+    if (entry == NO_NAME || entry >= OBJ_NAME_COUNT)
     {
         return;
     }
@@ -355,10 +357,10 @@ void world::system_init()
             }
         }
         max_world_objects += count;
-        unsigned short* indices = (unsigned short*)Permanent_mempool.alloc(count * 2, 2);
+        OPENRFG_OBJECT_INDEX* indices = (OPENRFG_OBJECT_INDEX*)Permanent_mempool.alloc(count * sizeof(OPENRFG_OBJECT_INDEX), sizeof(OPENRFG_OBJECT_INDEX));
         type_objects[type].init(indices, count, 0);
     }
-    if (max_world_objects > 0xFFFF)
+    if (max_world_objects > 0xFFFF && sizeof(OPENRFG_OBJECT_INDEX) == 2)
     {
         keen::debug::nativePrintArgs("world::max_objects must fit within 16 bits - please check object pool sizes!");
     }
@@ -372,7 +374,7 @@ void world::system_init()
         const int class_index = obj_class_instantiator::get_class_index_by_subtype((object_sub_type)sub_type);
         // Deviation: no class for the subtype means an empty list (see the file comment).
         const int count = class_index >= 0 ? obj_class_instantiator::max_objects[obj_class_instantiator::class_index[class_index]] : 0;
-        unsigned short* indices = (unsigned short*)Permanent_mempool.alloc(count * 2, 2);
+        OPENRFG_OBJECT_INDEX* indices = (OPENRFG_OBJECT_INDEX*)Permanent_mempool.alloc(count * sizeof(OPENRFG_OBJECT_INDEX), sizeof(OPENRFG_OBJECT_INDEX));
         subtype_objects[sub_type].init(indices, count, 0);
     }
 
@@ -1391,7 +1393,7 @@ void world::set_object_name(object* objp, const char* new_name)
 const char* world::get_object_name(const object* objp) const
 {
     const unsigned short index = objp->name_index;
-    if (index != NO_NAME && index < 2048)
+    if (index != NO_NAME && index < OBJ_NAME_COUNT)
     {
         return Obj_name_buf[index].str;
     }
@@ -1792,7 +1794,7 @@ void world_system_init()
     // Every name entry starts on the free list.
     Obj_name_used_list = NO_NAME;
     Obj_name_free_list = NO_NAME;
-    for (int i = 0; i < 2048; i++)
+    for (int i = 0; i < OBJ_NAME_COUNT; i++)
     {
         name_list_append(Obj_name_free_list, (unsigned short)i);
     }

@@ -280,12 +280,12 @@ bool world::create_object_from_stub(object* stub, obj_prop_block& pblock)
         }
         return false;
     }
-    stub->all_index = (unsigned short)all_objects.add(stub);
-    stub->type_index = (unsigned short)type_objects[stub->obj_type].add(stub->all_index);
-    stub->subtype_index = 0xFFFF;
+    stub->all_index = (OPENRFG_OBJECT_INDEX)all_objects.add(stub);
+    stub->type_index = (OPENRFG_OBJECT_INDEX)type_objects[stub->obj_type].add(stub->all_index);
+    stub->subtype_index = (OPENRFG_OBJECT_INDEX)0xFFFF;
     if (stub->sub_type != -1)
     {
-        stub->subtype_index = (unsigned short)subtype_objects[stub->sub_type].add(stub->all_index);
+        stub->subtype_index = (OPENRFG_OBJECT_INDEX)subtype_objects[stub->sub_type].add(stub->all_index);
     }
     if (stub->bp_handle == nullptr)
     {
@@ -419,10 +419,10 @@ void world::free_object(object* objp)
     objp->obj_flags.stub = 1;
     objp->set_name(nullptr);
 
-    const unsigned short all_index = objp->all_index;
+    const OPENRFG_OBJECT_INDEX all_index = objp->all_index;
     const int type = objp->obj_type;
     const int sub_type = objp->sub_type;
-    base_array<unsigned short>& type_list = type_objects[type];
+    base_array<OPENRFG_OBJECT_INDEX>& type_list = type_objects[type];
     if ((int)objp->type_index < type_list.size() - 1)
     {
         object* last = all_objects[type_list[type_list.size() - 1]];
@@ -432,7 +432,7 @@ void world::free_object(object* objp)
     type_list.resize(type_list.size() - 1);
     if (sub_type != -1)
     {
-        base_array<unsigned short>& subtype_list = subtype_objects[sub_type];
+        base_array<OPENRFG_OBJECT_INDEX>& subtype_list = subtype_objects[sub_type];
         if ((int)objp->subtype_index < subtype_list.size() - 1)
         {
             object* last = all_objects[subtype_list[subtype_list.size() - 1]];
@@ -669,7 +669,7 @@ bool world::serialize_layer(const char* layer_name, unsigned int* object_list, i
         {
             zobjs[num_stubs] = current;
             stubs[num_stubs] = stub;
-            stub->all_index = (unsigned short)num_stubs;
+            stub->all_index = (OPENRFG_OBJECT_INDEX)num_stubs;
             num_stubs++;
             if (num_stubs >= 512)
             {
@@ -873,7 +873,7 @@ bool world::serialize_zone(world_zone* wz, zone_file* orig_zone, bool preload)
             }
             apply_zone_object_flags(stub, zobjp);
             saved_handles->insert(stub->handle);
-            stub->all_index = (unsigned short)num_stubs;
+            stub->all_index = (OPENRFG_OBJECT_INDEX)num_stubs;
             zobj_list[num_stubs] = zobjp;
             stub_list[num_stubs] = stub;
             num_stubs++;
@@ -922,7 +922,7 @@ bool world::serialize_zone(world_zone* wz, zone_file* orig_zone, bool preload)
             continue;
         }
         apply_zone_object_flags(stub, zobjp);
-        stub->all_index = (unsigned short)num_stubs;
+        stub->all_index = (OPENRFG_OBJECT_INDEX)num_stubs;
         zobj_list[num_stubs] = zobjp;
         num_stubs++;
         stub_list[num_stubs - 1] = stub;

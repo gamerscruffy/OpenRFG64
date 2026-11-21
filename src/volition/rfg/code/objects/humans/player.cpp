@@ -5175,7 +5175,7 @@ bool player_is_near_action_node(player* pp, t_usable_object& usable_object)
     {
         return false;
     }
-    farray<object_action_node const*, OPENRFG_ZONE_POOL(608)> nodes;
+    farray<object_action_node const*, OPENRFG_ZONE_LIST(608)> nodes;
     if (!action_node_collect_nodes(pp, 15.0f, nodes)) // Magic number: 15 m
     {
         return false;

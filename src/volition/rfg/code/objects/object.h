@@ -304,9 +304,9 @@ private:
     unsigned int handle; // 0x6C
     unsigned int parent; // 0x70
     havok_bpo* bp_handle; // 0x74
-    unsigned short all_index; // 0x78
-    unsigned short type_index; // 0x7A
-    unsigned short subtype_index; // 0x7C
+    OPENRFG_OBJECT_INDEX all_index; // 0x78 (unsigned short in the original)
+    OPENRFG_OBJECT_INDEX type_index; // 0x7A
+    OPENRFG_OBJECT_INDEX subtype_index; // 0x7C
     signed char obj_type; // 0x7E
     signed char sub_type; // 0x7F
 public:

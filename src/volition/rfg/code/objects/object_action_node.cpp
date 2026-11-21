@@ -2192,7 +2192,7 @@ void action_node_system_init()
 }
 
 // 0x00A60910 (:3049)
-bool action_node_collect_nodes(const npc* np, float radius, farray<object_action_node const*, OPENRFG_ZONE_POOL(608)>& node_list, bool ped_only, bool patrol_only)
+bool action_node_collect_nodes(const npc* np, float radius, farray<object_action_node const*, OPENRFG_ZONE_LIST(608)>& node_list, bool ped_only, bool patrol_only)
 {
     node_list.clear();
     unsigned int handles[608];
@@ -2230,7 +2230,7 @@ bool action_node_collect_nodes(const npc* np, float radius, farray<object_action
 }
 
 // 0x00A60AD0 (:3154)
-bool action_node_collect_nodes(const player* pp, float radius, farray<object_action_node const*, OPENRFG_ZONE_POOL(608)>& node_list)
+bool action_node_collect_nodes(const player* pp, float radius, farray<object_action_node const*, OPENRFG_ZONE_LIST(608)>& node_list)
 {
     node_list.clear();
     unsigned int handles[608];
@@ -2305,7 +2305,7 @@ static bool action_node_build_set_internal(const human* hp, const object_action_
     {
         return true;
     }
-    farray<object_action_node const*, OPENRFG_ZONE_POOL(608)> candidates;
+    farray<object_action_node const*, OPENRFG_ZONE_LIST(608)> candidates;
     for (int i = 0; i < root_anp->node_links.size(); i++)
     {
         const object_action_node* linked = World.object_from_handle<object_action_node>(root_anp->node_links[i]);

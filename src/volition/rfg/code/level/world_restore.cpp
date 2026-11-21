@@ -59,7 +59,7 @@ hash_table<unsigned int,&uint_hash,1024,unsigned short> Auto_restorations(false)
 hash_table<unsigned int,&uint_hash,3072,unsigned short> Pending_restorations(false); // 0x0166AB68
 hash_table<unsigned int,&uint_hash,2048,unsigned short> Restored_objects(false); // 0x01670B70
 hash_table<unsigned int,&hash_uint,2048,unsigned short> Restored_shapes(false); // 0x01674BB8
-hash_table<unsigned int,&uint_hash,OPENRFG_MAX_ZONES,unsigned char> Zone_table(false); // 0x01674B78
+hash_table<unsigned int,&uint_hash,OPENRFG_MAX_ZONES,OPENRFG_ZONE_HASH_INDEX> Zone_table(false); // 0x01674B78
 
 // 0x0091CF90 (:45)
 object_hierarchy_node::object_hierarchy_node()
@@ -567,7 +567,7 @@ bool world::restore_serialize_zone(world_zone* wz, zone_file* orig_zone)
             object* stub = visit_stub(zobjp);
             if (stub != nullptr)
             {
-                stub->all_index = (unsigned short)num_stubs;
+                stub->all_index = (OPENRFG_OBJECT_INDEX)num_stubs;
                 zobj_list[num_stubs] = zobjp;
                 stub_list[num_stubs] = stub;
                 num_stubs++;

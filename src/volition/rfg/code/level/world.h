@@ -322,8 +322,8 @@ public:
 private:
     int max_world_objects; // 0x5C
     base_array<object*> all_objects; // 0x60
-    base_array<unsigned short> type_objects[53]; // 0x70
-    base_array<unsigned short> subtype_objects[11]; // 0x3C0
+    base_array<OPENRFG_OBJECT_INDEX> type_objects[53]; // 0x70
+    base_array<OPENRFG_OBJECT_INDEX> subtype_objects[11]; // 0x3C0
     float tech_level; // 0x470
     float tech_level_max; // 0x474
     volatile unsigned int thread_id; // 0x478

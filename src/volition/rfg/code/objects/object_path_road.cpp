@@ -792,7 +792,7 @@ float object_road_get_direction(object_path_road* road, const vector& fvec, floa
 }
 
 // 0x00A92950 (:1340)
-bool object_road_get_roads_in_zone(const vector& point, farray<object_path_road const*, OPENRFG_ZONE_POOL(322)>& road_list, bool use_special_roads)
+bool object_road_get_roads_in_zone(const vector& point, farray<object_path_road const*, OPENRFG_ZONE_LIST(322)>& road_list, bool use_special_roads)
 {
     return object_road_get_roads_in_zone(rfg_zonex_get_grid_xy(point), road_list, use_special_roads);
 }
@@ -804,7 +804,7 @@ static unsigned int road_zone(const object_path_road* road)
 }
 
 // 0x00A69050 (:1349): Original quirk kept: use_special_roads asks for special roads only.
-bool object_road_get_roads_in_zone(unsigned short zone_id_xy, farray<object_path_road const*, OPENRFG_ZONE_POOL(322)>& road_list, bool use_special_roads)
+bool object_road_get_roads_in_zone(unsigned short zone_id_xy, farray<object_path_road const*, OPENRFG_ZONE_LIST(322)>& road_list, bool use_special_roads)
 {
     if (zone_id_xy > 0xFF)
     {
