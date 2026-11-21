@@ -216,7 +216,12 @@ unsigned int havok_cm_manager_add(const hkpShape* collision_model)
     }
     if (Num_collision_models >= MAX_COLLISION_MODELS)
     {
+#ifdef OPENRFG_X64
+        // "failed" so the line also reaches openrfg_crash.txt
+        keen::debug::nativePrintArgs("havok_cm_manager_add failed: collision model table full (%d), returning the default box\n", Num_collision_models);
+#else
         keen::debug::nativePrintArgs("havok_cm_manager_add: Too many collision models already exist, increase MAX_COLLISION_MODELS!\n");
+#endif
         return 0;
     }
     if (Num_collision_models < 0)
@@ -244,6 +249,13 @@ unsigned int havok_cm_manager_get_count()
 // 0x008199E0 (:697)
 void havok_cm_manager_remove_from_list(unsigned int cm_index)
 {
+#ifdef OPENRFG_X64
+    // index 0 is the shared default box, which havok_cm_manager_add also hands out on failure; only shutdown frees it
+    if (cm_index == 0 && !Allow_default_cm_removal)
+    {
+        return;
+    }
+#endif
     if (cm_index < (unsigned int)MAX_COLLISION_MODELS && Collision_models[cm_index] != nullptr)
     {
         Collision_models[cm_index]->removeReference();

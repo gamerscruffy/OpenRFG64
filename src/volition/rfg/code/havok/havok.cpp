@@ -117,7 +117,14 @@
 #include <intrin.h>
 #include <math.h>
 
+#ifdef OPENRFG_X64
+// 15x15 World Detail Distance loads more than 32767 collision models; once the table was full every new vehicle got
+// index 0 (the shared default box) and the first vehicle unload freed it for all of them. Chunk files keep indices in
+// unsigned shorts with 0xFFFF meaning none, so 0xFFFF entries (indices 0..0xFFFE) is the ceiling.
+static const int MAX_COLLISION_MODELS = 0xFFFF;
+#else
 static const int MAX_COLLISION_MODELS = 0x7FFF; // 32767 collision model table entries
+#endif
 static const unsigned int MAX_RIGID_BODIES = 0x100000; // 2^20 rigid body handles (wrap mask 0xFFFFF)
 static const unsigned int HAVOK_SDK_VERSION_NUMBER = 20140205; // 0x13350AD, Havok 2014.2.5
 
@@ -4167,7 +4174,7 @@ int havok_collect_objects_in_capsule(const vector& pos, const float& radius, con
 static const hkMoppBvTreeShapeBase* get_zone_navmesh_tree(const obj_zone* zone, bool vehicle_pfg)
 {
     unsigned int cm_index = vehicle_pfg ? zone->zone_pfg.vehicle_pfg_shape : zone->zone_pfg.pfg_shape;
-    if (cm_index >= 0x7FFF)
+    if (cm_index >= (unsigned int)MAX_COLLISION_MODELS)
     {
         return nullptr;
     }

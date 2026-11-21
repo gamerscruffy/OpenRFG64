@@ -1602,9 +1602,10 @@ static void vehicle_stream_create_body(vehicle* vp, vehicle::resource_dependent_
 
     const hkpShape* shape = havok_cm_manager_get(v_rdd->sub_info->m_cm_dynamics_info.m_cm_index);
 #ifdef OPENRFG_X64
-    // A missing collision model (its container unloaded under it at large World Detail Distance) would crash in
-    // getType; use the default 1 m box instead, without the MOPP that belongs to the real shape.
-    const bool cm_missing = shape == nullptr;
+    // A missing collision model would crash in getType, and index 0 (the default box, which havok_cm_manager_add
+    // returns when the table is full) paired with the real shape's MOPP sends hkBvTreeAgent3 into an endless loop.
+    // Use the default 1 m box without the MOPP in both cases.
+    const bool cm_missing = shape == nullptr || v_rdd->sub_info->m_cm_dynamics_info.m_cm_index == 0;
     if (cm_missing) {
         GAME_TRACE("vehicle", "no collision model for %s (cm=%u): using the default box", vp->info != nullptr ? vp->info->name : "?",
                    v_rdd->sub_info->m_cm_dynamics_info.m_cm_index);
