@@ -35,7 +35,71 @@
 #include "keen/math/axisalignedrectangle.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <math.h>
+#include <stdio.h>
+
+#ifdef OPENRFG_X64
+// OpenRFG: a RENDERDIAG log line every 3 s (main visibility pass): how many entities each visibility list got per
+// pass, how many were dropped because the list was full, how many were LOD-offed, the road draw counters and the
+// material library usage. Written to find why roads and buildings are not drawn at the wider view distances.
+static int Rdiag_list_added[8];
+static int Rdiag_list_dropped[8];
+static int Rdiag_lod_offed;
+static int Rdiag_passes;
+extern int Openrfg_road_instances_drawn; // rl_terrain_renderer.cpp
+extern int Openrfg_road_blocks_drawn;
+extern int Openrfg_road_blocks_no_material;
+extern int Openrfg_road_instances_not_flagged;
+void openrfg_matlib_usage(int& buckets_used, int& entries_used, int& capacity, int& add_failures, int& register_failures); // rl_material_library.cpp
+void openrfg_log(const char* text); // crash_early.cpp
+
+static void rdiag_report(const base_array<pool_list<rl_scene_entity*>*>& lists)
+{
+    Rdiag_passes++;
+    static std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last).count() < 3000)
+    {
+        return;
+    }
+    last = now;
+    char caps[128];
+    int pos = 0;
+    for (int i = 0; i < lists.size() && i < 8; i++)
+    {
+        pos += snprintf(caps + pos, sizeof(caps) - pos, "%s%d", i == 0 ? "" : "/", lists[i] != nullptr ? lists[i]->capacity() : -1);
+    }
+    int buckets = 0;
+    int entries = 0;
+    int capacity = 0;
+    int add_failures = 0;
+    int register_failures = 0;
+    openrfg_matlib_usage(buckets, entries, capacity, add_failures, register_failures);
+    const int n = Rdiag_passes;
+    char text[768];
+    snprintf(text, sizeof(text),
+             "RENDERDIAG %d passes | per pass added %d/%d/%d/%d/%d/%d/%d, dropped %d/%d/%d/%d/%d/%d/%d (lists height/inst/light/lowlod/landmark/skirt/road, caps %s), "
+             "lod-offed %d | roads drawn %d instances %d blocks, no material %d blocks, not flagged %d | matlib buckets %d entries %d of %d, add fails %d, register fails %d",
+             n, Rdiag_list_added[0] / n, Rdiag_list_added[1] / n, Rdiag_list_added[2] / n, Rdiag_list_added[3] / n, Rdiag_list_added[4] / n,
+             Rdiag_list_added[5] / n, Rdiag_list_added[6] / n, Rdiag_list_dropped[0] / n, Rdiag_list_dropped[1] / n, Rdiag_list_dropped[2] / n,
+             Rdiag_list_dropped[3] / n, Rdiag_list_dropped[4] / n, Rdiag_list_dropped[5] / n, Rdiag_list_dropped[6] / n, caps, Rdiag_lod_offed / n,
+             Openrfg_road_instances_drawn / n, Openrfg_road_blocks_drawn / n, Openrfg_road_blocks_no_material / n, Openrfg_road_instances_not_flagged / n,
+             buckets, entries, capacity, add_failures, register_failures);
+    openrfg_log(text);
+    for (int i = 0; i < 8; i++)
+    {
+        Rdiag_list_added[i] = 0;
+        Rdiag_list_dropped[i] = 0;
+    }
+    Rdiag_lod_offed = 0;
+    Rdiag_passes = 0;
+    Openrfg_road_instances_drawn = 0;
+    Openrfg_road_blocks_drawn = 0;
+    Openrfg_road_blocks_no_material = 0;
+    Openrfg_road_instances_not_flagged = 0;
+}
+#endif
 
 // <rl_visibility_manager::release> 0x004D4800 (:39)
 RL_DYNAMIC_CLASS_IMPLEMENTATION(rl_visibility_manager)
@@ -704,6 +768,12 @@ void rl_visibility_manager::perform_visibility_pass(rl_renderer& renderer, rl_ca
                 const bool lod_off = Rl_lod_off_enabled && m_lod_off_enabled && 1.0f <= entity->get_lod_off_distance() &&
                                      entity->get_lod_off_distance() < -(position.y * near_plane.y + position.x * near_plane.x + position.z * near_plane.z + near_plane.w);
 #endif
+#ifdef OPENRFG_X64
+                if (lod_off && (~occluded & visible) != 0)
+                {
+                    Rdiag_lod_offed++;
+                }
+#endif
                 if ((~occluded & visible) == 0 || lod_off)
                 {
                     entity->set_vis_pass_flags(0);
@@ -758,12 +828,21 @@ void rl_visibility_manager::perform_visibility_pass(rl_renderer& renderer, rl_ca
                 if (entity->get_vis_pass_flags() != 0)
                 {
                     pool_list<rl_scene_entity*>* list = m_visibility_lists[entity->get_visibility_list_index()];
+#ifdef OPENRFG_X64
+                    const int list_index = entity->get_visibility_list_index() & 7;
+#endif
                     if (list->size() < list->capacity())
                     {
                         list->add(entity);
+#ifdef OPENRFG_X64
+                        Rdiag_list_added[list_index]++;
+#endif
                     }
                     else
                     {
+#ifdef OPENRFG_X64
+                        Rdiag_list_dropped[list_index]++;
+#endif
                         // Magic number: metrics warning 0x1000, a visibility list overflowed.
                         rl_render_lib::get_instance()->m_metrics_p->set_warning_flag(0x1000);
                     }
@@ -776,6 +855,12 @@ void rl_visibility_manager::perform_visibility_pass(rl_renderer& renderer, rl_ca
             }
         }
     }
+#ifdef OPENRFG_X64
+    if (Rl_visibility_threaded && m_lod_off_enabled)
+    {
+        rdiag_report(m_visibility_lists);
+    }
+#endif
     if (g_visibilityDebugRender)
     {
         Debug::Context context;
