@@ -86,6 +86,8 @@ static detail_option_pages Cur_page_dxoptions = DETAIL_OPTIONS_PAGE_INVALID; // 
 static const char* cDisplay_settings_OLMH[4] = {"MENU_OFF", "MENU_LOW", "MENU_MED", "MENU_HIGH"}; // 0x01664160
 static const char* cDisplay_settings_LMH[3] = {"MENU_LOW", "MENU_MED", "MENU_HIGH"}; // 0x01664170
 static const char* cDisplay_settings_LMHV[4] = {"MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH"}; // 0x016641A0
+// OpenRFG: the ambient occlusion row is a quality list instead of on/off (rl_lod_get_ssao_level).
+static const char* cDisplay_settings_ssao[5] = {"MENU_OFF", "MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH"};
 static const char* cAnti_alias_lod_names[7] = {"MENU_OFF", "MENU_AA_LOD_MODE_2X", "MENU_AA_LOD_MODE_4X", "MENU_AA_LOD_MODE_8X", "MENU_AA_LOD_MODE_16X", "MENU_AA_LOD_MODE_8XQ", "MENU_AA_LOD_MODE_16XQ"}; // 0x016641B0
 static const char* cDisplay_default_lod_setting_names[5] = {"MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH", "MENU_CUSTOM"}; // 0x016641CC
 static const char* cDisplay_window_mode_names[3] = {"MENU_WINDOW_MODE_WINDOWED", "MENU_WINDOW_MODE_BORDERLESS", "MENU_WINDOW_MODE_FULLSCREEN"}; // 0x016641E0
@@ -167,7 +169,7 @@ extern bool Active; // 0x02C03754, ui_document_hud_tool_tips.cpp (the in-game op
 // LTCG: lhs in ECX, rhs in EAX. The menu's detail settings (antialiasing, bloom and distortion are not compared).
 static bool lods_equal(const rl_level_of_detail& lhs, const rl_level_of_detail& rhs)
 {
-    return lhs.m_depth_of_field_enabled == rhs.m_depth_of_field_enabled && lhs.m_motion_blur_enabled == rhs.m_motion_blur_enabled && lhs.m_particle_lod == rhs.m_particle_lod && lhs.m_shadow_lod == rhs.m_shadow_lod && lhs.m_soft_shadows == rhs.m_soft_shadows && lhs.m_ssao_enabled == rhs.m_ssao_enabled && lhs.m_sun_shafts_enabled == rhs.m_sun_shafts_enabled && lhs.m_new_data.m_texture_reduction == rhs.m_new_data.m_texture_reduction && lhs.m_new_data.m_anisotropic_filtering == rhs.m_new_data.m_anisotropic_filtering;
+    return lhs.m_depth_of_field_enabled == rhs.m_depth_of_field_enabled && lhs.m_motion_blur_enabled == rhs.m_motion_blur_enabled && lhs.m_particle_lod == rhs.m_particle_lod && lhs.m_shadow_lod == rhs.m_shadow_lod && lhs.m_soft_shadows == rhs.m_soft_shadows && rl_lod_get_ssao_level(lhs) == rl_lod_get_ssao_level(rhs) && lhs.m_sun_shafts_enabled == rhs.m_sun_shafts_enabled && lhs.m_new_data.m_texture_reduction == rhs.m_new_data.m_texture_reduction && lhs.m_new_data.m_anisotropic_filtering == rhs.m_new_data.m_anisotropic_filtering;
 }
 
 // 0x008AF650 (:382)
@@ -212,6 +214,7 @@ static void display_info_initialize_default_detail_settings()
     Default_lods[3].m_motion_blur_enabled = true;
     Default_lods[3].m_depth_of_field_enabled = true;
     Default_lods[3].m_ssao_enabled = true;
+    Default_lods[3].m_ssao_quality = 3; // OpenRFG: high
     Default_lods[3].m_sun_shafts_enabled = true;
     Default_lods[3].m_new_data.m_texture_reduction = 0;
     Default_lods[3].m_new_data.m_anisotropic_filtering = RL_AF_LOD_HIGH;
@@ -545,6 +548,10 @@ static void option_change_occurred_doptions(int choice, void* new_value)
             return;
         case 4:
             Pending_lod.m_particle_lod = (rl_particle_lod)value;
+            return;
+        case 5:
+            // OpenRFG: ambient occlusion off, low (the original), medium, high, very high.
+            rl_lod_set_ssao_level(Pending_lod, value);
             return;
         case 7:
             // The row lists low to high; the reduction is the other way.
@@ -1222,7 +1229,8 @@ void set_detail_page(detail_option_pages page)
         ui_menu_add_bool_item(Menu_handle_doptions, "MENU_DEPTH_OF_FIELD", &Pending_lod.m_depth_of_field_enabled, option_change_occurred_doptions, true);
         ui_menu_add_bool_item(Menu_handle_doptions, "MENU_MOTION_BLUR", &Pending_lod.m_motion_blur_enabled, option_change_occurred_doptions, true);
         ui_menu_add_char_list_item(Menu_handle_doptions, "MENU_PARTICLE_DETAIL", cDisplay_settings_LMHV, 4, option_change_occurred_doptions, Pending_lod.m_particle_lod, true);
-        ui_menu_add_bool_item(Menu_handle_doptions, "MENU_AMBIENT_OCCLUSION", &Pending_lod.m_ssao_enabled, option_change_occurred_doptions, true);
+        // OpenRFG: was ui_menu_add_bool_item(..., &Pending_lod.m_ssao_enabled, ...); now a quality list.
+        ui_menu_add_char_list_item(Menu_handle_doptions, "MENU_AMBIENT_OCCLUSION", cDisplay_settings_ssao, 5, option_change_occurred_doptions, rl_lod_get_ssao_level(Pending_lod), true);
         ui_menu_add_bool_item(Menu_handle_doptions, "MENU_SUNSHAFTS", &Pending_lod.m_sun_shafts_enabled, option_change_occurred_doptions, true);
         ui_menu_add_char_list_item(Menu_handle_doptions, "MENU_TEXTURE_RESOLUTION", cDisplay_settings_LMH, 3, option_change_occurred_doptions, 2 - Pending_lod.m_new_data.m_texture_reduction, true);
         ui_menu_add_char_list_item(Menu_handle_doptions, "MENU_ANISOTROPIC_FILTERING", cDisplay_settings_OLMH, 4, option_change_occurred_doptions, Pending_lod.m_new_data.m_anisotropic_filtering, true);

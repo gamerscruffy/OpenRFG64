@@ -57,4 +57,7 @@ float imagePlanePixelsPerMeter(float vertical_fov, float height); // 0x004D1B90 
 void renderMinifyEffect(SsaoContext* pContext, keen::GraphicsCommandWriter* pCommandWriter, const keen::float2& targetSize, const keen::float2& sourceSize, const keen::TextureData* pInputTexture, const keen::RenderTarget* pOutputTarget); // 0x004FD110 (:166)
 void renderBilateralBlurEffect(SsaoContext* pContext, keen::GraphicsCommandWriter* pCommandWriter, float depth, bool clearRemainingPixels, const keen::float2& axis, const keen::TextureData* pInputTexture, const keen::RenderTarget* pOutputTarget); // 0x004FD680 (:190)
 void renderSsaoEffect(SsaoContext* pContext, keen::GraphicsCommandWriter* pCommandWriter, const SsaoRenderSettings& settings, rl_camera& camera, const keen::TextureData* pInputDepthTexture, const keen::RenderTarget* pOutputTarget, const keen::RenderTarget* pBlurIntermediateTarget0, const keen::RenderTarget* pBlurIntermediateTarget1); // 0x004FDB90 (:219)
+// OpenRFG: the SSAO tweakables for a quality level (1 low = the original values .. 4 very high): how far the AO
+// reaches (depth threshold and fade), the sample radius and the intensity.
+void rl_ssao_apply_quality(int level);
 void renderSsaoDebug(SsaoContext* pContext, keen::GraphicsCommandWriter* pCommandWriter, const keen::RenderTarget* pOutputTarget, const keen::TextureData* pSsaoTexture); // 0x004FEA90 (:337)

@@ -102,8 +102,32 @@ struct rl_level_of_detail
     bool m_ssao_enabled; // 0x11
     bool m_sun_shafts_enabled; // 0x12
     new_rl_level_of_detail_settings m_new_data; // 0x14
-    unsigned char padding[120]; // 0x1C
+    // OpenRFG: SSAO quality 1 low (the original), 2 medium, 3 high, 4 very high; off is m_ssao_enabled false. Taken
+    // from the first padding byte (layout unchanged). Read it through rl_lod_get_ssao_level.
+    unsigned char m_ssao_quality; // 0x1C
+    unsigned char padding[119]; // 0x1D
 };
+
+// OpenRFG: the SSAO level of the options menu: 0 off, 1 low (the original game's SSAO), 2 medium, 3 high, 4 very
+// high. A quality byte out of range (old saved data) counts as low.
+inline int rl_lod_get_ssao_level(const rl_level_of_detail& lod)
+{
+    if (!lod.m_ssao_enabled)
+    {
+        return 0;
+    }
+    const int quality = lod.m_ssao_quality;
+    return (quality < 1 || quality > 4) ? 1 : quality;
+}
+
+inline void rl_lod_set_ssao_level(rl_level_of_detail& lod, int level)
+{
+    lod.m_ssao_enabled = level > 0;
+    if (level > 0)
+    {
+        lod.m_ssao_quality = (unsigned char)(level > 4 ? 4 : level);
+    }
+}
 
 // ---- inline members (no .cpp home)
 
@@ -223,6 +247,7 @@ inline rl_level_of_detail::rl_level_of_detail()
     m_depth_of_field_enabled = true;
     m_distortion_enabled = true;
     m_ssao_enabled = true;
+    m_ssao_quality = 2; // OpenRFG
     m_sun_shafts_enabled = true;
     m_new_data.m_texture_reduction = 0;
     m_new_data.m_anisotropic_filtering = RL_AF_LOD_OFF;

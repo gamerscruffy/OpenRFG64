@@ -37,6 +37,8 @@
 #include "volition/render_lib/code/rl_scene.h"
 #include "volition/render_lib/code/rl_shader_library.h"
 #include "volition/render_lib/code/rl_ssao.h"
+
+extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vKey); // OpenRFG: SSAO debug view key
 #include "volition/render_lib/code/rl_state_manager.h"
 #include "volition/render_lib/code/rl_terrain_renderer.h"
 #include "volition/render_lib/code/rl_visibility_manager.h"
@@ -649,8 +651,19 @@ int rl_scene_renderer::runSceneRenderPart2(const keen::Thread& thread)
 void rl_scene_renderer::render_scene_part2(rl_renderer& deferredRenderer, rl_camera& camera, const bool msaa_enabled, rl_scene& scene, rl_dev_render_target original_rt, rl_shadow_render_parameters& shadow_render_params, const rl_hdr_state& hdr_state, const rl_color_correct_state& color_correct_state, rl_dev_depth_stencil_target original_ds, rl_rect original_vp)
 {
     bool ssao_enabled = false;
+    // OpenRFG: Ctrl+Shift+O toggles the SSAO debug view (the AO buffer full screen; white = no occlusion).
+    {
+        static bool s_ssao_vis_key_was_down = false;
+        const bool down = (GetAsyncKeyState(0x11) & 0x8000) != 0 && (GetAsyncKeyState(0x10) & 0x8000) != 0 && (GetAsyncKeyState('O') & 0x8000) != 0; // VK_CONTROL, VK_SHIFT
+        if (down && !s_ssao_vis_key_was_down)
+        {
+            g_ssaoVisEnabled = !g_ssaoVisEnabled;
+        }
+        s_ssao_vis_key_was_down = down;
+    }
     if (m_level_of_detail.m_ssao_enabled)
     {
+        rl_ssao_apply_quality(rl_lod_get_ssao_level(m_level_of_detail)); // OpenRFG: the options menu's quality level
         SsaoRenderSettings ssao_settings;
         ssao_settings.minZ = deferredRenderer.m_z_near;
         ssao_settings.maxZ = deferredRenderer.m_z_far;
@@ -1365,7 +1378,10 @@ void rl_scene_renderer::create_render_textures(keen::GraphicsCommandWriter* pCom
         keen::RenderTargetBuffer buffer;
         buffer.pDataBuffer = m_pSsaoBlurTexture[i];
         buffer.format = keen::PixelFormat_None;
-        m_pSsaoBlurTarget[i] = keen::graphics::createRenderTarget(Init_params.m_pKeenGraphicsSystem, m_ssao_width, m_ssao_height, &buffer, 1, nullptr, keen::TilingMode_None);
+        // OpenRFG fix: the SSAO passes split near/far pixels with a depth test (quad at the threshold depth, test
+        // greater, then the far ones cleared with less equal). Without a depth buffer D3D11 skips the test, the clear
+        // covers every pixel and the AO comes out all white. Attach the main scene depth, as the CLB target does.
+        m_pSsaoBlurTarget[i] = keen::graphics::createRenderTarget(Init_params.m_pKeenGraphicsSystem, m_ssao_width, m_ssao_height, &buffer, 1, &main_depth_buffer, keen::TilingMode_None);
     }
     m_pRecordedCommandBuffer = keen::graphics::createCommandBuffer(Init_params.m_pKeenGraphicsSystem, m_commandBufferMemory);
 }

@@ -175,6 +175,8 @@ void game_options_ini_file_read_writer<0>::parse_display_settings(keen::FilePath
     lod.m_depth_of_field_enabled = keen::readIniFileBool(path, "graphics", "depth_of_field_enabled", lod.m_depth_of_field_enabled);
     lod.m_distortion_enabled = keen::readIniFileBool(path, "graphics", "distortion_enabled", lod.m_distortion_enabled);
     lod.m_ssao_enabled = keen::readIniFileBool(path, "graphics", "ssao_enabled", lod.m_ssao_enabled);
+    // OpenRFG: the SSAO quality (1 low = original .. 4 very high); rl_lod_get_ssao_level clamps bad values.
+    lod.m_ssao_quality = (unsigned char)keen::readIniFileInt(path, "graphics", "ssao_quality", rl_lod_get_ssao_level(lod) > 0 ? rl_lod_get_ssao_level(lod) : 2);
     lod.m_sun_shafts_enabled = keen::readIniFileBool(path, "graphics", "sun_shafts_enabled", lod.m_sun_shafts_enabled);
     lod.m_new_data.m_texture_reduction = (unsigned char)keen::readIniFileInt(path, "graphics", "texture_resolution", lod.m_new_data.m_texture_reduction);
     lod.m_new_data.m_anisotropic_filtering = (rl_anisotropic_filtering_lod)keen::readIniFileInt(path, "graphics", "anisotropic_filtering", lod.m_new_data.m_anisotropic_filtering);
@@ -917,6 +919,11 @@ void game_options_ini_file_read_writer<1>::parse_display_settings(keen::FilePath
     keen::writeIniFileBool(path, "graphics", "depth_of_field_enabled", lod.m_depth_of_field_enabled);
     keen::writeIniFileBool(path, "graphics", "distortion_enabled", lod.m_distortion_enabled);
     keen::writeIniFileBool(path, "graphics", "ssao_enabled", lod.m_ssao_enabled);
+    {
+        // OpenRFG: the quality is kept while SSAO is off.
+        const int ssao_quality = lod.m_ssao_quality;
+        keen::writeIniFileInt(path, "graphics", "ssao_quality", (ssao_quality < 1 || ssao_quality > 4) ? 1 : ssao_quality);
+    }
     keen::writeIniFileBool(path, "graphics", "sun_shafts_enabled", lod.m_sun_shafts_enabled);
     keen::writeIniFileInt(path, "graphics", "texture_resolution", lod.m_new_data.m_texture_reduction);
     keen::writeIniFileInt(path, "graphics", "anisotropic_filtering", lod.m_new_data.m_anisotropic_filtering);

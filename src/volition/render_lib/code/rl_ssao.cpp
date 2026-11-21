@@ -43,6 +43,39 @@ static float g_intensity = 4.0f; // 0x014FA61C
 static float g_imagePlanePixelsPerMeterFactor = 0.32f; // 0x014FA620
 static float g_radius = 1.2f; // 0x014FA624
 
+// OpenRFG: the quality levels of the options menu. Level 1 is the original game (AO only nearer than 18 m); the higher
+// levels push the threshold out (with a wider fade so there is no visible edge) and widen and strengthen the AO a bit.
+struct SsaoQualityPreset
+{
+    float depthThreshold;
+    float depthFadeRange;
+    float radius;
+    float intensity;
+};
+static const SsaoQualityPreset cSsaoQualityPresets[4] = {
+    {18.0f, 1.0f, 1.2f, 4.0f}, // low (the original)
+    {60.0f, 12.0f, 1.4f, 4.0f}, // medium
+    {150.0f, 30.0f, 1.7f, 4.5f}, // high
+    {400.0f, 80.0f, 2.0f, 5.0f}, // very high
+};
+
+void rl_ssao_apply_quality(int level)
+{
+    if (level < 1)
+    {
+        level = 1;
+    }
+    else if (level > 4)
+    {
+        level = 4;
+    }
+    const SsaoQualityPreset& preset = cSsaoQualityPresets[level - 1];
+    g_depthThreshold = preset.depthThreshold;
+    g_depthFadeRange = preset.depthFadeRange;
+    g_radius = preset.radius;
+    g_intensity = preset.intensity;
+}
+
 // The immediate vertex (GraphicsStockVertexFormat_Immediate): position, color, texture coordinate.
 struct SsaoScreenQuadVertex
 {
@@ -258,8 +291,20 @@ void renderSsaoEffect(SsaoContext* pContext, keen::GraphicsCommandWriter* pComma
     const float far_clip = camera.get_far_clip();
     const float far_times_near = (float)((double)far_clip * (double)near_clip);
     const float far_minus_near = (float)((double)far_clip - (double)near_clip);
+    // OpenRFG: the higher quality levels reach far; keep the threshold inside the far clip (a quad beyond it would be
+    // clipped and leave the targets stale). Level 1's 18 m is never clamped.
+    float depth_threshold = g_depthThreshold;
+    if (depth_threshold > far_clip * 0.95f)
+    {
+        depth_threshold = far_clip * 0.95f;
+    }
+    float depth_fade_range = g_depthFadeRange;
+    if (depth_fade_range > depth_threshold * 0.5f)
+    {
+        depth_fade_range = depth_threshold * 0.5f;
+    }
     // The device depth of g_depthThreshold: D3D's z = (far - far * near / d) / (far - near).
-    const float threshold_depth = (float)-(((double)far_times_near / (double)g_depthThreshold - (double)far_clip) / (double)far_minus_near);
+    const float threshold_depth = (float)-(((double)far_times_near / (double)depth_threshold - (double)far_clip) / (double)far_minus_near);
 
     pCommandWriter->writeBeginRenderPassCommand(pBlurIntermediateTarget0, keen::RenderTargetPartFlagMask_None, nullptr);
     pCommandWriter->writeSetRasterizerStateCommand(pContext->pRasterizerState);
@@ -289,10 +334,10 @@ void renderSsaoEffect(SsaoContext* pContext, keen::GraphicsCommandWriter* pComma
     pConstants->projScale = pixels_per_meter * g_imagePlanePixelsPerMeterFactor;
     pConstants->minMaxDepth.x = settings.minZ;
     pConstants->minMaxDepth.y = (float)(1.0 / (double)settings.maxZ);
-    pConstants->depthThreshold = g_depthThreshold;
+    pConstants->depthThreshold = depth_threshold;
     pConstants->depthThresholdRcp = (float)(1.0 / (double)far_clip);
-    pConstants->depthFadeStart = (float)((double)g_depthThreshold - (double)g_depthFadeRange);
-    pConstants->depthVisibleRangeRcp = (float)(1.0 / (double)g_depthFadeRange);
+    pConstants->depthFadeStart = (float)((double)depth_threshold - (double)depth_fade_range);
+    pConstants->depthVisibleRangeRcp = (float)(1.0 / (double)depth_fade_range);
     const float radius_squared = (float)((double)g_radius * (double)g_radius);
     const float radius_cubed = (float)((double)g_radius * (double)radius_squared);
     const float radius_6 = (float)((double)radius_cubed * (double)radius_cubed);
