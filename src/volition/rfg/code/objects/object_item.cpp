@@ -1228,7 +1228,13 @@ static void create_physics_object(item* ip)
     item_calc_collision_params(pci, ip->info, bmin, bmax);
     const bool loaded = ip->rdd.is_loaded();
     const bool pickup = loaded && ip->get_parent() == 0xFFFFFFFF && ip->rdd.get_data()->pickup_smesh_instance_p != nullptr;
+#ifdef OPENRFG_X64
+    // OpenRFG: an item whose mesh is not streamed in (rdd not loaded) has no data; the original reads through null
+    // here. It gets the plain box instead. Seen when a civilian drops an ambient prop with a large World Detail Distance.
+    if ((ip->char_inst == nullptr || pickup) && loaded)
+#else
     if (ip->char_inst == nullptr || pickup)
+#endif
     {
         item::resource_dependent_data* data = ip->rdd.get_data();
         static_mesh* smesh = pickup ? data->pickup_smesh : data->smesh;
