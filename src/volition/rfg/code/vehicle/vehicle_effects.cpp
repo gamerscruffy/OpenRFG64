@@ -718,16 +718,18 @@ static void vehicle_headlight_spot_update(vehicle* vp, bool lit)
     int count = 0;
     for (unsigned int i = 0; i < data->m_num_vehicle_lights; i++) {
         const vehicle_light& light = data->m_vehicle_lights[i];
-        if (light.type != VLT_HEAD_LIGHT || light.tag_index == -1 || light.flags.is_broken || light.flags.broken) {
+        // Mesh lights have no tag_index; like the coronas (vehicle_light::start_coronas) use the light tag id: 0x05 in the
+        // high byte, the light's index, then the tag within it (the first one).
+        if (light.type != VLT_HEAD_LIGHT || light.mesh_light == NULL || light.mesh_light->on_mesh_tags.get_num_tags() <= 0 || light.flags.is_broken || light.flags.broken) {
             continue;
         }
-        const int component = vp->get_component_index_from_tag_index(light.tag_index);
-        if (component != -1 && (data->m_components[component].get_flags() & VCF_DETACHED) != 0) {
+        if (light.parent_idx >= 0 && (data->m_components[light.parent_idx].get_flags() & VCF_DETACHED) != 0) {
             continue;
         }
+        const int light_tag = ((int)(i | 0x500) << 16);
         vector pos;
         matrix orient;
-        vp->get_tag_world_coords(light.tag_index, pos, &orient, NULL, NULL);
+        vp->get_tag_world_coords(light_tag, pos, &orient, NULL, NULL);
         pos_sum.x += pos.x;
         pos_sum.y += pos.y;
         pos_sum.z += pos.z;

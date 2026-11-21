@@ -10,7 +10,9 @@
 #include "volition/vfxlib/code/vfx_effect.h"
 
 #include "volition/render_lib/code/rl_dynamic_lights.h"
+#include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 void openrfg_log(const char* text); // crash_early.cpp
 
@@ -455,6 +457,15 @@ void vfx_effect::init()
             m_lights.append(light_p);
         }
     }
+    if (data_p->num_lights == 0 && Rl_dynamic_lights_level > 0 && vfx_synthetic_light_profile_find(data_p->effect_name.to_pointer()) != nullptr && rl_light::can_create())
+    {
+        rl_light* light_p = rl_light::create();
+        if (light_p != nullptr)
+        {
+            light_p->set_is_visible(false);
+            m_lights.append(light_p);
+        }
+    }
 
     if (Coronas)
     {
@@ -554,6 +565,50 @@ void vfx_effect::release()
         corona_p->release();
         corona_p = next_p != head_p ? next_p : nullptr;
     }
+}
+
+// OpenRFG: effects the game gives no light (fire, welding, flares...) get one synthetic point light under the Dynamic
+// Lights option, chosen by the effect's name. Returns false for effects without one.
+struct vfx_synthetic_light_profile
+{
+    const char* name_part;
+    float red, green, blue; // color at full strength
+    float intensity;
+    float range;
+    float height; // above the effect's position
+    float flicker; // 0..1 how much it flickers
+    bool fades; // a one-shot (explosion): dims over the effect's duration
+};
+
+static const vfx_synthetic_light_profile Vfx_synthetic_light_profiles[] = {
+    {"explosion", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true},
+    {"expl", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true},
+    {"blast", 1.0f, 0.55f, 0.2f, 5.0f, 25.0f, 1.0f, 0.2f, true},
+    {"fireball", 1.0f, 0.5f, 0.15f, 5.0f, 25.0f, 1.0f, 0.3f, true},
+    {"fire", 1.0f, 0.45f, 0.12f, 2.2f, 14.0f, 0.8f, 0.45f, false},
+    {"flame", 1.0f, 0.45f, 0.12f, 2.2f, 14.0f, 0.8f, 0.45f, false},
+    {"burn", 1.0f, 0.45f, 0.12f, 2.0f, 12.0f, 0.8f, 0.45f, false},
+    {"molotov", 1.0f, 0.45f, 0.12f, 2.5f, 14.0f, 0.8f, 0.45f, false},
+    {"welding", 0.6f, 0.75f, 1.0f, 3.0f, 10.0f, 0.5f, 0.7f, false},
+    {"flare_blue", 0.3f, 0.5f, 1.0f, 2.5f, 14.0f, 0.8f, 0.1f, false},
+    {"flare", 1.0f, 0.25f, 0.15f, 2.5f, 14.0f, 0.8f, 0.1f, false},
+    {"barracade_light", 1.0f, 0.8f, 0.5f, 1.6f, 14.0f, 0.5f, 0.05f, false},
+};
+
+static const vfx_synthetic_light_profile* vfx_synthetic_light_profile_find(const char* name)
+{
+    if (name == nullptr || strstr(name, "muzzle") != nullptr || strstr(name, "weap") != nullptr || strstr(name, "bullet") != nullptr || strstr(name, "impact") != nullptr || strstr(name, "veh_") != nullptr)
+    {
+        return nullptr;
+    }
+    for (const vfx_synthetic_light_profile& profile : Vfx_synthetic_light_profiles)
+    {
+        if (strstr(name, profile.name_part) != nullptr)
+        {
+            return &profile;
+        }
+    }
+    return nullptr;
 }
 
 // 0x00CA3CC0 (:450)
@@ -1174,6 +1229,45 @@ void vfx_effect::update_dynamic_lights()
         return;
     }
     int light_index = 0;
+    if (m_effect_template_p->m_vfx_data_p->num_lights == 0)
+    {
+        // OpenRFG: the synthetic light (see vfx_synthetic_light_profile).
+        const vfx_synthetic_light_profile* profile_p = vfx_synthetic_light_profile_find(m_effect_template_p->m_vfx_data_p->effect_name.to_pointer());
+        if (profile_p == nullptr || Rl_dynamic_lights_level <= 0)
+        {
+            light_p->set_is_visible(false);
+            return;
+        }
+        // Magic numbers: two sines at unrelated rates make a believable flicker; each effect has its own phase.
+        const float t = m_elapsed_time * 9.0f + (float)(((size_t)this >> 4) & 255);
+        float strength = 1.0f - profile_p->flicker * (0.5f + 0.25f * sinf(t) + 0.25f * sinf(t * 2.7f + 1.3f));
+        if (profile_p->fades)
+        {
+            const float duration = m_effect_template_p->m_vfx_data_p->duration;
+            float fade = duration > 0.0f ? 1.0f - m_elapsed_time / duration : 0.0f;
+            fade = fade < 0.0f ? 0.0f : fade;
+            strength *= fade * fade;
+        }
+        const float intensity = profile_p->intensity * strength;
+        if (intensity < VFX_EFFECT_LIGHT_MIN_INTENSITY)
+        {
+            light_p->set_is_visible(false);
+            return;
+        }
+        const float radius = profile_p->range;
+        light_p->set_is_visible(true);
+        light_p->set_light_type(rl_light::LIGHT_TYPE_POINT);
+        light_p->set_position(vector(m_position.x, m_position.y + profile_p->height, m_position.z));
+        light_p->set_rotation(IDENTITY_MATRIX);
+        light_p->set_local_bounding_sphere(rl_sphere(ZERO_VECTOR, radius));
+        light_p->set_clip_min(vector(-radius, -radius, -radius));
+        light_p->set_clip_max(vector(radius, radius, radius));
+        light_p->set_color(rl_color_float(profile_p->red * intensity, profile_p->green * intensity, profile_p->blue * intensity, 1.0f));
+        light_p->set_attenuation_start(1.0f);
+        light_p->set_attenuation_end(radius);
+        light_p->update_partition_system();
+        return;
+    }
     do
     {
         const vector effect_position = m_position;
