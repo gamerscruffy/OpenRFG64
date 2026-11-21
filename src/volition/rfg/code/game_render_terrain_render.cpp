@@ -183,6 +183,21 @@ void game_render_terrain_create_stitched_piece(terrain_stitch_instance_data* ins
     }
 }
 
+// The release functions below mark a slot empty with offset 0. With NULLABLE = 0, to_pointer() turns offset 0 into the
+// slot's own address, so the nullptr checks never fire; a slot that was never filled (its create failed, or it is
+// released twice) then calls release() through garbage. x64 treats offset 0 as empty.
+template<typename T>
+static T* filled_slot(const et_ptr_offset<T,0>& slot)
+{
+#ifdef OPENRFG_X64
+    if (slot.get_offset() == 0)
+    {
+        return nullptr;
+    }
+#endif
+    return slot.to_pointer();
+}
+
 // 0x005DA1F0 (:235)
 // The piece's physics body, its skirts (a blend skirt with its root mesh) and its meshes.
 // Notes (decompiled behaviour, kept as is): a released mesh slot is set to offset 0, which points at the slot itself.
@@ -213,7 +228,7 @@ void game_render_terrain_release_stitched_piece(terrain_stitch_instance_data* in
     for (int i = 0; i < instance_data_p->num_stitched_meshes; i++)
     {
         et_ptr_offset<rl_mesh_instance,0>& slot = instance_data_p->stitched_meshes_p[i];
-        rl_mesh_instance* mesh_instance_p = slot.to_pointer();
+        rl_mesh_instance* mesh_instance_p = filled_slot(slot);
         if (mesh_instance_p != nullptr)
         {
             mesh_instance_p->release();
@@ -252,7 +267,7 @@ void game_render_terrain_release_road_mesh(road_mesh_data* road_data_p)
     for (int i = 0; i < road_data_p->m_num_mesh_instances; i++)
     {
         et_ptr_offset<rl_renderable_instance,0>& slot = road_data_p->m_mesh_instances_p[i];
-        rl_renderable_instance* instance_p = slot.to_pointer();
+        rl_renderable_instance* instance_p = filled_slot(slot);
         if (instance_p != nullptr)
         {
             instance_p->release();
@@ -281,7 +296,7 @@ void game_render_terrain_create_low_lod_mesh(terrain_lowlod_patch* patch_data_p,
 // 0x005D6CC0 (:330)
 void game_render_terrain_release_low_lod_mesh(terrain_lowlod_patch* patch_data_p)
 {
-    rl_low_lod_mesh_instance* instance_p = patch_data_p->m_renderable_p.to_pointer();
+    rl_low_lod_mesh_instance* instance_p = filled_slot(patch_data_p->m_renderable_p);
     if (instance_p != nullptr)
     {
         instance_p->release();
@@ -327,7 +342,7 @@ void game_render_terrain_release_subzone_renderables(terrain_subzone_data* subzo
     for (int i = 0; i < subzone_data_p->patch_count; i++)
     {
         terrain_subzone_data::patch& patch = subzone_data_p->patches[i];
-        rl_height_mesh_instance* instance_p = patch.instance_p.to_pointer();
+        rl_height_mesh_instance* instance_p = filled_slot(patch.instance_p);
         if (instance_p != nullptr)
         {
             instance_p->release();
