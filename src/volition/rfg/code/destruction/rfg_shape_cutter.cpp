@@ -37,7 +37,7 @@
 #include "volition/rfg/code/weapons/weapons.h"
 #include "volition/vlib/code/memory/object_pool.h"
 
-static const int SHAPE_CUTTER_POOL_SIZE = 103;
+static const int SHAPE_CUTTER_POOL_SIZE = OPENRFG_ZONE_POOL(103);
 static const int SHAPE_CUTTER_POOL_USAGE = 0x4F90; // memory footprint registered with the instantiator
 static const int MAX_CUT_OBJECTS = 100;
 static const float GENERAL_MOVER_CUT_DAMAGE = 50000.0f;

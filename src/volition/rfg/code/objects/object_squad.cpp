@@ -68,7 +68,7 @@ extern float VEHICLE_MAX_SPEED; // automobile.cpp
 
 // Magic numbers: rfg.exe's pool holds 100 squads; a squad is given up on at more than 90 NPCs in the world; at most 32
 // automobiles, 8 flyers and 4 walkers; an initial spawn lasts 8 s; a fodder squad waits 5 s after a member died.
-static object_pool<object_squad,100,1> object_squadpool; // 0x03396AC0
+static object_pool<object_squad,OPENRFG_ZONE_POOL(100),1> object_squadpool; // 0x03396AC0
 static const int MAX_NPCS_FOR_SQUAD_SPAWN = 90;
 static const int MAX_SQUAD_AUTOMOBILES = 32;
 static const int MAX_SQUAD_FLYERS = 8;
@@ -1524,7 +1524,7 @@ object* alloc_object_squad()
     return object_squadpool.alloc(0);
 }
 
-static obj_class_instantiator object_squad_instantiator("object_squad", alloc_object_squad, types_object_squad, bpo_index_object_squad, classname_object_squad, object_squad::pool_remaining, sizeof(object_squadpool), 100); // 0x0303CADC
+static obj_class_instantiator object_squad_instantiator("object_squad", alloc_object_squad, types_object_squad, bpo_index_object_squad, classname_object_squad, object_squad::pool_remaining, sizeof(object_squadpool), OPENRFG_ZONE_POOL(100)); // 0x0303CADC
 
 // 0x00A1D920 (:2097)
 unsigned int object_squad::get_classname_hash()

@@ -254,9 +254,10 @@ const weapon_info* weapons_get_weapon_info(const inv_item_info* weapon_inv_item_
 
 // ---- the weapon object (player_minimal.md P4: creation, streaming and the ammo state; firing is P5)
 static bool Unlimited_magazine_ammo; // 0x03882CBC (debug cheat, never set)
-static object_pool<weapon,256,1> weaponpool; // 0x03882D10
-// read from rfg.exe: pool usage 0x30140 bytes, 256 weapons
-static obj_class_instantiator weapon_instantiator("weapon", alloc_weapon, types_weapon, bpo_index_weapon, classname_weapon, weapon::pool_remaining, 0x30140, 256); // 0x03882CFC
+static object_pool<weapon,OPENRFG_ZONE_POOL(256),1> weaponpool; // 0x03882D10
+// read from rfg.exe: pool usage 0x30140 bytes, 256 weapons. OpenRFG: scaled on x64, where the weapons placed in a 15x15 load
+// used up all 256 and the player's own weapons could not be created (empty inventory, no weapon animations).
+static obj_class_instantiator weapon_instantiator("weapon", alloc_weapon, types_weapon, bpo_index_weapon, classname_weapon, weapon::pool_remaining, 0x30140, OPENRFG_ZONE_POOL(256)); // 0x03882CFC
 
 // ---- class registration (:382)
 // 0x005DC720 (.h:415)
