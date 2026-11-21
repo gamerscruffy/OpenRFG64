@@ -102,6 +102,7 @@ float RL_alpha_dist_end = 75.0f; // 0x014FA478
 bool g_fxaaEnabled = true; // 0x014FA47C
 bool g_ssaoVisEnabled = false; // 0x01B7BD1E
 extern bool g_spotShadowVisEnabled; // rl_scene_shadows.cpp (OpenRFG)
+extern bool g_spotShadowUseLightPass; // rl_scene_shadows.cpp (OpenRFG)
 const keen::TextureData* rl_spot_shadow_map_texture(); // rl_scene_shadows.cpp (OpenRFG)
 void openrfg_log(const char* text); // crash_early.cpp
 bool Rl_landmarks_enabled = true; // 0x014FA47D
@@ -675,6 +676,15 @@ void rl_scene_renderer::render_scene_part2(rl_renderer& deferredRenderer, rl_cam
             openrfg_log(g_spotShadowVisEnabled ? "DYNLIGHTS spot shadow debug view on" : "DYNLIGHTS spot shadow debug view off");
         }
         s_spot_vis_key_was_down = down;
+        // Ctrl+Shift+J: the map's casters from the light's sphere pass instead of its shadow pass (diagnostic).
+        static bool s_spot_pass_key_was_down = false;
+        const bool pass_down = (GetAsyncKeyState(0x11) & 0x8000) != 0 && (GetAsyncKeyState(0x10) & 0x8000) != 0 && (GetAsyncKeyState('J') & 0x8000) != 0;
+        if (pass_down && !s_spot_pass_key_was_down)
+        {
+            g_spotShadowUseLightPass = !g_spotShadowUseLightPass;
+            openrfg_log(g_spotShadowUseLightPass ? "DYNLIGHTS spot shadow casters: light sphere pass" : "DYNLIGHTS spot shadow casters: shadow pass");
+        }
+        s_spot_pass_key_was_down = pass_down;
     }
     // OpenRFG: the Dynamic Lights budget of the options menu (the next frame's visible lights use it).
     rl_dynamic_lights_apply_level(rl_lod_get_dynamic_lights_level(m_level_of_detail));

@@ -48,8 +48,9 @@ void buildShadowParamsProjectionTexture(rl_shadow_render_parameters* pParams, rl
 // OpenRFG, dynamic light shadows stage 1: the spot light shadow map and its debug view (Ctrl+Shift+K shows the map
 // full screen, and only then is it drawn). Later stages use the map to keep shadowed pixels out of the light pass.
 bool g_spotShadowVisEnabled = false;
-// The shadow map's clear value (1 = far). The spot light debug view clears to 0, so drawn casters show against black.
-static float g_shadowClearValue = 1.0f;
+// Diagnostic (Ctrl+Shift+J): draw the map with the light's sphere pass instead of its shadow pass, to tell an empty
+// shadow pass (no casters collected) from a wrong matrix.
+bool g_spotShadowUseLightPass = false;
 static rl_render_texture* Spot_shadow_target_p = nullptr;
 static const int SPOT_SHADOW_MAP_SIZE = 1024;
 
@@ -100,10 +101,13 @@ bool rl_scene_renderer::render_spot_light_shadow_map(rl_renderer& renderer, rl_c
              -(orient.rvec.x * eye.x + orient.rvec.y * eye.y + orient.rvec.z * eye.z),
              -(orient.uvec.x * eye.x + orient.uvec.y * eye.y + orient.uvec.z * eye.z),
              -(orient.fvec.x * eye.x + orient.fvec.y * eye.y + orient.fvec.z * eye.z), 1.0f);
-    // Magic numbers: the cone's half angle (the falloff angle) limited to 6..83 degrees; near 0.3 m; far = the light's range.
+    // Magic numbers: the cone's half angle (the falloff angle) limited to 6..83 degrees; near 1.5 m; far = the light's range.
+    // The map is Depth16 with perspective (hyperbolic) depth: a 0.3 m near plane put everything past 3 m above 0.97
+    // (pure white in the debug view, poor precision). 1.5 m spreads 3..20 m over about 0.5..0.97 and clips the
+    // headlight's own vehicle body out of its map.
     float half_angle = light.get_hotspot_falloff_size();
     half_angle = half_angle < 0.1f ? 0.1f : (half_angle > 1.45f ? 1.45f : half_angle);
-    const float near_z = 0.3f;
+    const float near_z = 1.5f;
     const float far_z = light.get_attenuation_end();
     const float scale = 1.0f / tanf(half_angle);
     const float depth_scale = far_z / (far_z - near_z);
@@ -113,9 +117,8 @@ bool rl_scene_renderer::render_spot_light_shadow_map(rl_renderer& renderer, rl_c
     creation_params.shadow_map_matrix = view * projection;
     creation_params.shadow_zbias = 0.0f;
     creation_params.shadow_slope_zbias = 0.0f;
-    g_shadowClearValue = 0.0f;
-    render_shadow_pass(renderer, camera, light, Spot_shadow_target_p->m_render_target, SPOT_SHADOW_MAP_SIZE, SPOT_SHADOW_MAP_SIZE, creation_params, batch_to_use, vis_flags, transparent_casters, num_transparent_casters, true);
-    g_shadowClearValue = 1.0f;
+    const unsigned int draw_flags = g_spotShadowUseLightPass ? light.get_render_vis_pass_flags() : vis_flags;
+    render_shadow_pass(renderer, camera, light, Spot_shadow_target_p->m_render_target, SPOT_SHADOW_MAP_SIZE, SPOT_SHADOW_MAP_SIZE, creation_params, batch_to_use, draw_flags, transparent_casters, num_transparent_casters, true);
     return true;
 }
 
@@ -155,7 +158,7 @@ void rl_scene_renderer::render_shadow_pass(rl_renderer& renderer, rl_camera& cam
     renderer.m_z_far = 1.0f;
     renderer.set_viewport(renderer.m_viewPort);
     // Magic number: clear flags 3 (color and depth).
-    renderer.clear(rl_color_float(g_shadowClearValue, g_shadowClearValue, g_shadowClearValue, g_shadowClearValue), 3, 1.0f, 0);
+    renderer.clear(rl_color_float(1.0f, 1.0f, 1.0f, 1.0f), 3, 1.0f, 0);
     const rl_primitive_state saved_state = renderer.get_macro_state();
     rl_primitive_state state = saved_state;
     // (bits & 0xFFACA120) | 0x20A100: no blending, full depth, no stencil, culling, no color writes, the shadow bias.
