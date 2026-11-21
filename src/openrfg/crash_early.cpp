@@ -2,6 +2,8 @@
 // started) with the function, file and line of the first access violations, including ones before WinMain.
 #include <windows.h>
 #include <dbghelp.h>
+#define PSAPI_VERSION 2
+#include <psapi.h>
 #include <tlhelp32.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -559,10 +561,31 @@ namespace
         LONG last = -1;
         int stalled = 0;
         int reports = 0;
+        LONG stats_frames = 0;
+        int stats_seconds = 0;
         for (;;)
         {
             Sleep(1000);
             LONG now = Heartbeat;
+            // Every 30 s, one STATS line (memory, handles, frames per second): a number that keeps growing across a long
+            // 15x15 run points at a leak, and a low frame rate shows where a slowdown starts.
+            if (++stats_seconds >= 30)
+            {
+                PROCESS_MEMORY_COUNTERS_EX pmc;
+                memset(&pmc, 0, sizeof(pmc));
+                DWORD handles = 0;
+                GetProcessHandleCount(GetCurrentProcess(), &handles);
+                char line[200];
+                if (K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc)))
+                {
+                    snprintf(line, sizeof(line), "STATS private=%llu MB working_set=%llu MB peak_private=%llu MB handles=%lu fps=%.1f",
+                        (unsigned long long)(pmc.PrivateUsage >> 20), (unsigned long long)(pmc.WorkingSetSize >> 20),
+                        (unsigned long long)(pmc.PeakPagefileUsage >> 20), (unsigned long)handles, (double)(now - stats_frames) / 30.0);
+                    openrfg_log(line);
+                }
+                stats_frames = now;
+                stats_seconds = 0;
+            }
             if (now != last) { last = now; stalled = 0; continue; }
             if (++stalled < 6 || reports >= 3) continue;
             if (SuspendThread(Main_thread) == (DWORD)-1) continue;
