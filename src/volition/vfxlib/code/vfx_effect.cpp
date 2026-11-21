@@ -29,6 +29,7 @@ void openrfg_log(const char* text); // crash_early.cpp
 #include "volition/vfxlib/code/vfx_animation.h"
 #include "volition/vfxlib/code/vfx_effect_manager.h"
 #include "volition/vfxlib/code/vfx_effect_template.h"
+#include "keen/base/trace.hpp"
 #include "volition/vfxlib/code/vfx_particle.h"
 #include "volition/vfxlib/code/vfx_particle_system_emitter.h"
 #include "volition/vfxlib/code/vfx_particle_system_filter.h"
@@ -172,16 +173,34 @@ vfx_effect::~vfx_effect()
 {
 }
 
-// 0x00CBA670 (:69): placement-constructs an effect from the manager's free list. Original bug kept: with the free list
-// empty (512 effects) the null effect is dereferenced.
+// 0x00CBA670 (:69): placement-constructs an effect from the manager's free list. Original bug kept on x86: with the free
+// list empty (512 effects) the null effect is dereferenced.
 vfx_effect* vfx_effect::create(vfx_effect_template* template_p)
 {
     vfx_effect_manager* manager_p = vfx_system::get_effect_manager();
+#ifdef OPENRFG_X64
+    // OpenRFG: no effect when the effect pool or the particle instance groups (one per effect, taken by init) are used
+    // up: the original dereferences the null effect or group. The callers (object_effect::visual_create, the hammer
+    // hit) handle a null effect. Logged as a failure in openrfg_crash.txt (the first 20, then every 1000th).
+    static int s_failures = 0;
+    const bool no_group = rl_renderable_particles_instance_group::get_object_pool().size() < 1;
+    vfx_effect* effect_p = no_group ? nullptr : manager_p->get_new_effect();
+    if (effect_p == nullptr)
+    {
+        if (++s_failures <= 20 || s_failures % 1000 == 0)
+        {
+            keen::debug::nativePrintArgs("vfx_effect::create failed (#%d): %s\n", s_failures, no_group ? "no particle instance group left" : "every effect of the pool is in use");
+        }
+        return nullptr;
+    }
+    effect_p = new (effect_p) vfx_effect();
+#else
     vfx_effect* effect_p = manager_p->get_new_effect();
     if (effect_p != nullptr)
     {
         effect_p = new (effect_p) vfx_effect();
     }
+#endif
     effect_p->m_instance_handle = manager_p->register_effect(effect_p);
     effect_p->m_effect_template_p = template_p;
     effect_p->init();
