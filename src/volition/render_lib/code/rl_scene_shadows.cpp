@@ -54,7 +54,7 @@ static const int SPOT_SHADOW_MAP_SIZE = 1024;
 // The spot shadow map's texture (null before the first one is drawn).
 const keen::TextureData* rl_spot_shadow_map_texture()
 {
-    return Spot_shadow_target_p != nullptr ? Spot_shadow_target_p->m_dyn_texture_p->get_texture_data().pData : nullptr;
+    return Spot_shadow_target_p != nullptr ? Spot_shadow_target_p->get_texture_data().pData : nullptr;
 }
 
 // The light's shadow map: a perspective view down the cone, as the shadow map matrix (view * projection, which
