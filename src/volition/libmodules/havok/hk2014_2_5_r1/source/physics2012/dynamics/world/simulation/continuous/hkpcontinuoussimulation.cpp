@@ -8,7 +8,6 @@
 
 #include <stddef.h>
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/world/simulation/continuous/hkpcontinuoussimulation.h"
-static void dbgchk3(hkpWorld* w,const char* tag);
 
 #include <math.h>
 #include <string.h>
@@ -444,9 +443,7 @@ void hkpContinuousSimulation::collideEntitiesBroadPhaseContinuous(hkpEntity** en
     {
         hkpTypedBroadPhaseDispatcher::removeDuplicates(newPairs, delPairs);
     }
-    dbgchk3(world,"beforeWait");
     waitForSolverExport(exportFinished);
-    dbgchk3(world,"afterWait");
     if (delPairs.getSize() + newPairs.getSize() > 0)
     {
         world->lockIslandForConstraintUpdate(entities[0]->m_simulationIsland);
@@ -773,9 +770,6 @@ void hkpContinuousSimulation::reintegrateAndRecollideEntities(hkpEntity** entiti
 }
 
 
-#include <stdio.h>
-extern void openrfg_log(const char*);
-static void dbgchk3(hkpWorld* w,const char* tag){ static int n=0; if(n>6) return; for(int p=0;p<2;p++){ const hkArray<hkpSimulationIsland*>& L = p==0? w->m_activeSimulationIslands : w->m_inactiveSimulationIslands; for(int i=0;i<L.getSize();i++){ hkpSimulationIsland* is=L[i]; for(int j=0;j<is->m_entities.getSize();j++){ hkpEntity* e=is->m_entities[j]; if(e->m_simulationIsland!=is){ n++; char b[160]; snprintf(b,sizeof b,"DBGCHK3 %s e=%p isl=%p expect=%p pass=%d i=%d j=%d",tag,(void*)e,(void*)e->m_simulationIsland,(void*)is,p,i,j); openrfg_log(b); if(n>6) return; } } } } }
 // 0x00DFD940: after a failed step the queued TOIs are dropped; then the broadphase and the continuous narrowphase of
 // every active island
 void hkpContinuousSimulation::collideInternal(const hkStepInfo& stepInfoIn)
@@ -789,7 +783,6 @@ void hkpContinuousSimulation::collideInternal(const hkStepInfo& stepInfoIn)
         }
         m_toiEvents.m_size = 0;
     }
-    dbgchk3(m_world,"collideStart");
     m_world->m_dynamicsStepInfo.m_stepInfo = stepInfoIn;
     m_world->m_collisionInput->m_stepInfo = stepInfoIn;
     {

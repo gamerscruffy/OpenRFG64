@@ -29,20 +29,6 @@ data_hash_table<mat_key_wrapper, matlib_bucket*, &hash_mat_key_wrapper, MATLIB_H
 
 extern bool rl_is_locked();
 
-#ifdef OPENRFG_X64
-// OpenRFG: failure counters and pool usage for the RENDERDIAG log line (rl_visibility_manager.cpp).
-static int Matlib_add_failures;
-static int Matlib_register_failures;
-void openrfg_matlib_usage(int& buckets_used, int& entries_used, int& capacity, int& add_failures, int& register_failures)
-{
-    capacity = (int)Matlib_bucket_pool.get_capacity();
-    buckets_used = capacity - Matlib_bucket_pool.get_free();
-    entries_used = (int)Matlib_entry_server.get_capacity() - Matlib_entry_server.get_free();
-    add_failures = Matlib_add_failures;
-    register_failures = Matlib_register_failures;
-}
-#endif
-
 // 0x004D5D10 (:92)
 bool mat_key_wrapper::operator==(const mat_key_wrapper& other_mat) const
 {
@@ -86,9 +72,6 @@ void matlib_bucket::add_material(rl_material_base* mat_p)
     matlib_entry* entry_p = alloc(0);
     if (entry_p == nullptr)
     {
-#ifdef OPENRFG_X64
-        Matlib_add_failures++;
-#endif
         return;
     }
     entry_p->mat = mat_p;
@@ -215,9 +198,6 @@ unsigned int rl_material_library_register(rl_material_base* mat_p)
         if (bucket_p == nullptr)
         {
             keen::debug::nativePrintArgs("rl_material_library_register: alloc_bucket() failed. bucket_p->m_handle: %u , mat_p: 0x%x\n");
-#ifdef OPENRFG_X64
-            Matlib_register_failures++;
-#endif
             return 0xFFFFFFFF;
         }
     }
@@ -233,9 +213,6 @@ unsigned int rl_material_library_register(rl_material_base* mat_p)
     }
     keen::debug::nativePrintArgs("rl_material_library_register: this bucket has no valid material instance for some reason, time to kill it. bucket_p->m_handle: %u , mat_p: 0x%x\n");
     free_bucket(bucket_p);
-#ifdef OPENRFG_X64
-    Matlib_register_failures++;
-#endif
     return 0xFFFFFFFF;
 }
 

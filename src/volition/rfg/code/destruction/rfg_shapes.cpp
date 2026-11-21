@@ -531,7 +531,6 @@ bool rfg_dynamic_link::should_save(unsigned int handle) const
 void* rfg_destroyable_shape::operator new(size_t nbytes)
 {
     void* dbgp = hkContainerHeapAllocator::s_alloc.blockAlloc((int)nbytes);
-    { extern void openrfg_log(const char*); char b[128]; sprintf(b, "DBGSHNEW p=%p n=%d", dbgp, (int)nbytes); openrfg_log(b); }
     return dbgp;
 }
 
@@ -544,7 +543,6 @@ void rfg_destroyable_shape::operator delete(void* p, size_t nbytes)
     {
         nbytes = (unsigned int)dbg_memsize;
     }
-    { extern void openrfg_log(const char*); char b[128]; sprintf(b, "DBGSHDEL p=%p n=%d ms=%d rc=%d", p, (int)nbytes, dbg_memsize, ((const hkReferencedObject*)p)->getReferenceCount()); openrfg_log(b); }
     hkContainerHeapAllocator::s_alloc.blockFree(p, (int)nbytes);
 }
 

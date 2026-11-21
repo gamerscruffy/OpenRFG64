@@ -482,14 +482,6 @@ static void near_arena_register(const void* owner, unsigned char* base, unsigned
     }
 #endif
 }
-void openrfg_log(const char*);
-static void dbg_hex(const char* tag, const void* a, const void* b, const void* c)
-{
-    char m[160]; int n=0; const char* t=tag; while(*t) m[n++]=*t++;
-    const void* v[3]={a,b,c};
-    for(int k=0;k<3;k++){ m[n++]=' '; unsigned long long x=(unsigned long long)v[k]; for(int d=15;d>=0;d--){ m[n+d]="0123456789ABCDEF"[x&15]; x>>=4;} n+=16; }
-    m[n]=0; openrfg_log(m);
-}
 // 0x005C9250 (:710)
 void string_hash_table::create_empty(int hash_table_size, mempool_base* _mempool_to_use, int string_pool_size)
 {
@@ -562,8 +554,6 @@ char* string_hash_table::add_string(const char* str, short user_data)
     if (string_hash_bucket(bucket) == nullptr)
     {
         hash_entry* nb = (hash_entry*)near_alloc(this, mempool_to_use, STRING_HASH_BUCKET_RECORDS * sizeof(hash_entry), 1);
-        { static int dn=0; if(dn++<3) dbg_hex("DBGREAL pool newbucket table", (void*)mempool_to_use, nb, hash_table); }
-        { long long dd=(char*)nb-(char*)&bucket; static int fn=0; if((dd>0x40000000LL||dd<-0x40000000LL)&&fn++<2){ dbg_hex("DBGFAR pool base nb", (void*)mempool_to_use, mempool_to_use->get_base(), nb); openrfg_log(mempool_to_use->get_name()); } }
         bucket.from_pointer(nb);
         hash_entry* records = string_hash_bucket(bucket);
         if (records == nullptr)

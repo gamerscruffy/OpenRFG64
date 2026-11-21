@@ -38,7 +38,6 @@ void hkpConstraintData::getConstraintInfoUtil(const hkpConstraintAtom* atoms, in
         {
         case hkpConstraintAtom::TYPE_INVALID:
             { // x64: an already 16-aligned zero atom must still advance (else infinite loop)
-                extern void openrfg_log(const char*); static int dbgN = 0; if (dbgN++ < 5) { char b[160]; sprintf(b, "DBGCI type0 at off=%d of %d aligned=%d", (int)(atom - reinterpret_cast<const char*>(atoms)), sizeOfAllAtoms, (int)((reinterpret_cast<uintptr_t>(atom) & 0xF) == 0)); openrfg_log(b); }
                 atom = reinterpret_cast<const char*>((reinterpret_cast<uintptr_t>(atom) + 1 + 0xF) & ~(uintptr_t)0xF);
             }
             continue;

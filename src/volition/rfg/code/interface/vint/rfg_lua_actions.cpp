@@ -104,10 +104,6 @@ static int menu_tween_fade_in_end(lua_State* lua_state)
     {
         vint_doc_handle = doc->get_handle();
     }
-    {
-        void openrfg_log(const char*);
-        openrfg_log(doc != nullptr ? "DBGFADE lua menu_tween_fade_in_end called, doc ok" : "DBGFADE lua menu_tween_fade_in_end called, doc NULL");
-    }
     ui_menu_tween_fade_in_end(vint_doc_handle);
     return lua_add_return<int>(0, lua_state);
 }

@@ -434,14 +434,6 @@ static void draw_render_block(keen::GraphicsCommandWriter* pCommandWriter, const
 
 // Not in the binary: the material of a library handle (the matlib bucket lookup inlined in the chunk fills and
 // draws).
-#ifdef OPENRFG_X64
-// OpenRFG: road counters for the RENDERDIAG log line (rl_visibility_manager.cpp).
-int Openrfg_road_instances_drawn;
-int Openrfg_road_blocks_drawn;
-int Openrfg_road_blocks_no_material;
-int Openrfg_road_instances_not_flagged;
-#endif
-
 static rl_material* terrain_material(unsigned int mat_h)
 {
     return (rl_material*)rl_material_library_get_material(mat_h);
@@ -1484,10 +1476,8 @@ void roadMeshInstanceRender(keen::GraphicsCommandWriter* pCommandWriter, Terrain
         const rl_material* road_material_p = terrain_material(material_map_p->get_material(material_index));
         if (road_material_p == nullptr)
         {
-            Openrfg_road_blocks_no_material++;
             continue;
         }
-        Openrfg_road_blocks_drawn++;
         const rl_material_data* pMaterialData = road_material_p->get_material_data();
 #else
         const rl_material_data* pMaterialData = terrain_material(material_map_p->get_material(material_index))->get_material_data();
@@ -1516,9 +1506,6 @@ void rl_terrain_renderer::render_roads(keen::GraphicsCommandWriter* pCommandWrit
         }
         else
         {
-#ifdef OPENRFG_X64
-            Openrfg_road_instances_drawn++;
-#endif
             roadMeshInstanceRender(pCommandWriter, m_pContext, techType, instance_p, renderer);
         }
     }

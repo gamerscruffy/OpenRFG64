@@ -641,17 +641,6 @@ void vint_object_tween::update_priority()
 }
 
 // 0x00476A80 (:569)
-static void dbg_tween(int reason)
-{
-    void openrfg_log(const char*);
-    static int n[8];
-    if (reason >= 0 && reason < 8 && n[reason]++ < 3)
-    {
-        char m[] = "DBGTWEEN reason=0";
-        m[16] = (char)('0' + reason);
-        openrfg_log(m);
-    }
-}
 void vint_object_tween::process_internal()
 {
     if (get_handle() == 0 || m_state == VINT_TWEEN_STATE_DISABLED || m_state == VINT_TWEEN_STATE_PAUSED)
@@ -661,18 +650,15 @@ void vint_object_tween::process_internal()
     vint_variant_type type = m_start_value.get_type();
     if (type == VINT_PROP_TYPE_NONE || m_end_value.get_type() != type)
     {
-        dbg_tween(1);
         return;
     }
     vint_object_base* target = acquire_target();
     if (target == nullptr || m_target_prop_lookup == nullptr)
     {
-        dbg_tween(target == nullptr ? 2 : 3);
         return;
     }
     if (m_target_prop_lookup->type != type && m_target_prop_lookup->type != VINT_PROP_TYPE_VARIABLE)
     {
-        dbg_tween(4);
         return;
     }
     // the parent animation's clock, else the document's
@@ -842,10 +828,8 @@ void vint_object_tween::process_internal()
     {
         if (ended)
         {
-            dbg_tween(5);
             if (vint_callback* cb = (vint_callback*)m_end_callback)
             {
-                dbg_tween(6);
                 data.tween = this;
                 data.event_name = "end_event";
                 cb->trigger(get_parent_document()->get_handle(), VINT_EVENT_TWEEN, &data, sizeof(data));

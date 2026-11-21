@@ -189,50 +189,7 @@ static void openrfg_log_pool_exhausted(unsigned int bucket, const char* (*classn
 }
 
 #ifdef OPENRFG_X64
-// OpenRFG diagnostic: a zone-file building (rfg_mover) that never became a world object (ZONESKIP), and a building
-// destroyed after it was created (OBJDEL, with the functions that destroyed it).
-void openrfg_log_with_callers(const char* text); // crash_early.cpp
 void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
-static bool openrfg_is_rfg_mover(const zone_object* zobjp)
-{
-    static const unsigned int rfg_mover_hash = str_hash_string("rfg_mover");
-    return zobjp != nullptr && zobjp->classname_hash == rfg_mover_hash;
-}
-
-static void openrfg_log_zone_skip(const char* why, zone_object* zobjp)
-{
-    static int s_count = 0;
-    if (!openrfg_is_rfg_mover(zobjp) || s_count >= 400)
-    {
-        return;
-    }
-    s_count++;
-    char chunk_name[256];
-    memset(chunk_name, 0, sizeof(chunk_name));
-    obj_prop_block pblock;
-    rfg_zonex_load_object_pblock(pblock, zobjp);
-    pblock.get_optional(OM_PROP_CHUNK_NAME, &chunk_name[0]);
-    char text[512];
-    snprintf(text, sizeof(text), "ZONESKIP %s: handle 0x%08X flags 0x%04X chunk '%s' bounds <%.0f, %.0f, %.0f> to <%.0f, %.0f, %.0f>",
-             why, zobjp->handle, zobjp->flags, chunk_name, zobjp->bmin.x, zobjp->bmin.y, zobjp->bmin.z, zobjp->bmax.x, zobjp->bmax.y, zobjp->bmax.z);
-    openrfg_log(text);
-}
-
-static void openrfg_log_mover_destroyed(object* objp)
-{
-    static int s_count = 0;
-    if (objp->get_obj_type() != OT_MOVER || s_count >= 400)
-    {
-        return;
-    }
-    s_count++;
-    const char* container = objp->get_srid() != 0 ? stream2_get_container_name(objp->get_srid()) : nullptr;
-    char text[512];
-    snprintf(text, sizeof(text), "OBJDEL mover sub %d chunk '%s' pos <%.1f, %.1f, %.1f> streamed %d streaming %d",
-             (int)objp->get_sub_type(), container != nullptr ? container : "", objp->pos.x, objp->pos.y, objp->pos.z,
-             (int)objp->obj_flags.streamed, (int)objp->obj_flags.streaming);
-    openrfg_log_with_callers(text);
-}
 #endif
 
 // 0x0093B450 (:328)
@@ -567,9 +524,6 @@ bool world::destroy_object(object* objp, bool preserve_handle)
     }
     if (!objp->obj_flags.destroyed)
     {
-#ifdef OPENRFG_X64
-        openrfg_log_mover_destroyed(objp);
-#endif
         for (object* child = objp->child_ptr; child != nullptr;)
         {
             if (!child->obj_flags.destroyed && (Multiplayer != true || multi_is_server() || !child->remote_obj_flags.client_sync || child->remote_obj_flags.client_destroy_permission))
@@ -702,9 +656,6 @@ void world::serialize_stub_list(int num_stubs, object** stub_list, zone_object**
                     }
                     continue;
                 }
-#ifdef OPENRFG_X64
-                openrfg_log_zone_skip("create-failed", zobj_list[objp->all_index]);
-#endif
                 free_obj_handle(objp);
             }
             objp->obj_flags.stub = 0;
@@ -964,9 +915,6 @@ bool world::serialize_zone(world_zone* wz, zone_file* orig_zone, bool preload)
             object* stub = alloc_object_stub_preexisting(zobjp->classname_hash, zobjp->handle, zobjp->parent);
             if (stub == nullptr)
             {
-#ifdef OPENRFG_X64
-                openrfg_log_zone_skip("stub-alloc-failed (saved)", zobjp);
-#endif
                 continue;
             }
             apply_zone_object_flags(stub, zobjp);
@@ -1005,12 +953,6 @@ bool world::serialize_zone(world_zone* wz, zone_file* orig_zone, bool preload)
             const bool restore_missing = !saved_handles->exists(zobjp->handle) && should_restore_object_if_not_in_safe_file(zobjp);
             if (!restore_missing && !(sl_flags.reset_destruction && should_restore_object_if_resetting_destruction(zobjp)))
             {
-#ifdef OPENRFG_X64
-                if (!saved_handles->exists(zobjp->handle))
-                {
-                    openrfg_log_zone_skip("not-in-saved-zone-state", zobjp);
-                }
-#endif
                 continue;
             }
         }
@@ -1023,9 +965,6 @@ bool world::serialize_zone(world_zone* wz, zone_file* orig_zone, bool preload)
         object* stub = alloc_object_stub_preexisting(zobjp->classname_hash, zobjp->handle, zobjp->parent);
         if (stub == nullptr)
         {
-#ifdef OPENRFG_X64
-            openrfg_log_zone_skip("stub-alloc-failed", zobjp);
-#endif
             continue;
         }
         apply_zone_object_flags(stub, zobjp);
@@ -1035,18 +974,6 @@ bool world::serialize_zone(world_zone* wz, zone_file* orig_zone, bool preload)
         stub_list[num_stubs - 1] = stub;
     }
     cf_close(f);
-#ifdef OPENRFG_X64
-    if (!preload)
-    {
-        static int s_zones_logged = 0;
-        if (s_zones_logged++ < 600)
-        {
-            char text[256];
-            snprintf(text, sizeof(text), "ZONESER %s: %d objects in file, %d stubs, saved state %d bytes", wz->name, (int)orig_zone->header.num_objects, num_stubs, (int)wz->stored_zone_state.cur_size);
-            openrfg_log(text);
-        }
-    }
-#endif
     if (!preload)
     {
         serialize_stub_list(num_stubs, stub_list, zobj_list);

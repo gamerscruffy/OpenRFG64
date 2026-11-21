@@ -42,9 +42,6 @@
 #include "volition/rfg/code/destruction/rfg_mover.h"
 #ifdef OPENRFG_X64
 void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
-void openrfg_log(const char* text); // crash_early.cpp
-class rfg_mover;
-static void openrfg_log_mover_pieces(rfg_mover* rm, const char* what, int count, float damage);
 #endif
 
 #include "volition/rfg/code/ai/ai_building_logic.h"
@@ -1944,19 +1941,6 @@ bool rfg_mover::stream(bool load)
         mover_stream_in_event stream_event; // EVENT_MOVER_STREAM_IN
         stream_event.handle = get_handle();
         gem_post_event(stream_event);
-        {
-            // OpenRFG: see openrfg_log_mover_pieces
-            const char* log_name = chunk->name;
-            bool is_bridge = false;
-            for (const char* c = log_name; c != nullptr && *c != 0 && !is_bridge; c++)
-            {
-                is_bridge = _strnicmp(c, "bridge", 6) == 0;
-            }
-            if (is_bridge)
-            {
-                openrfg_log_mover_pieces(this, "stream in", 0, damage_pct);
-            }
-        }
         maybe_flag_restore();
         if (flags.run_stress_on_stream)
         {
@@ -2301,31 +2285,6 @@ bool rfg_mover::decompress_state(rfg_destroyable_shape* shape, unsigned int chun
             shape->set_shape_state(&shape->get_object_buffer()[i], true);
         }
         break;
-    }
-    // OpenRFG (not in the binary): a building that comes back with saved destruction state is logged with how many of
-    // its pieces that state leaves standing, so pieces missing from an undamaged building can be told apart from a
-    // drawing problem (first 400 restores with pieces missing).
-    if (state != nullptr)
-    {
-        static int s_logged = 0;
-        int num_present = 0;
-        for (int i = 0; i < base->num_objects; i++)
-        {
-            if (shape->get_shape_state(i))
-            {
-                num_present++;
-            }
-        }
-        if (num_present < base->num_objects && s_logged < 400)
-        {
-            s_logged++;
-            c_chunk_base* log_chunk = chunk_get_base_by_uid(chunk_uid);
-            char text[320];
-            snprintf(text, sizeof(text), "MOVERSTATE #%d %s at <%.0f, %.0f, %.0f>: saved state mode %u (%d entries, %d bytes) leaves %d of %d pieces, pristine %d, mover flags 0x%08X, damage %.2f",
-                s_logged, log_chunk != nullptr ? log_chunk->name : "?", pos.x, pos.y, pos.z, mode, num_entries, (int)get_data_buf_size(rfg_mover_temporary_data::SHAPE_STATE),
-                num_present, base->num_objects, (int)flags.pristine, mover_flags, damage_pct);
-            openrfg_log(text);
-        }
     }
     if (entries != nullptr)
     {
@@ -3781,264 +3740,6 @@ void rfg_mover::update_render_subpieces()
     }
 }
 
-// OpenRFG (not in the binary): PIECES lines name a building, its distance from the player and how many of its pieces
-// exist, when it loses pieces (first 600) and whenever a building with "bridge" in its chunk name streams in.
-static void openrfg_log_mover_pieces(rfg_mover* rm, const char* what, int count, float damage)
-{
-    static int s_logged = 0;
-    if (s_logged >= 600)
-    {
-        return;
-    }
-    s_logged++;
-    rfg_destroyable_shape* shape = rm->get_shape();
-    c_chunk_base* chunk = chunk_get_base_by_uid(rm->chunk_uid);
-    float dist = -1.0f;
-    player* local = player_get_local_player();
-    if (local != nullptr)
-    {
-        const vector d(rm->pos.x - local->pos.x, rm->pos.y - local->pos.y, rm->pos.z - local->pos.z);
-        dist = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
-    }
-    char text[320];
-    snprintf(text, sizeof(text), "PIECES #%d %s %d: %s at <%.0f, %.0f, %.0f> %.0f m from the player, %d of %d pieces exist, damage %.2f, mover flags 0x%08X, stress queued %d",
-        s_logged, what, count, chunk != nullptr ? chunk->name : "?", rm->pos.x, rm->pos.y, rm->pos.z, dist,
-        shape != nullptr ? shape->num_existing_child_shapes : -1, shape != nullptr && shape->parent != nullptr ? shape->parent->num_objects : -1,
-        damage, rm->mover_flags, (int)rm->flags.run_stress_on_stream);
-    openrfg_log(text);
-}
-
-// OpenRFG (not in the binary): once per building near the player (first 120 lines), a NEARSHAPE line that tells whether
-// its collision shape is really under the player. It casts a ray straight down (player + 3 m to - 40 m) through the
-// building's own destroyable shape in body space, compares the Havok body position with the mover position, checks
-// the body uses that shape, and counts the pieces in the shape's child list (in the list, shape state on) and the
-// pieces whose world position is within 8 m sideways of the player, with their lowest and highest height.
-static void openrfg_log_near_shape(rfg_mover* rm, rfg_destroyable_shape* shape, hkpRigidBody* rb, const vector& p, const char* name)
-{
-    static const rfg_mover* s_done[120];
-    static int s_count = 0;
-    if (s_count >= 120 || shape == nullptr || rb == nullptr)
-    {
-        return;
-    }
-    for (int i = 0; i < s_count; i++)
-    {
-        if (s_done[i] == rm)
-        {
-            return;
-        }
-    }
-    s_done[s_count++] = rm;
-
-    vector body_pos;
-    matrix body_orient;
-    havok_body_get_pos_orient(rb, body_pos, body_orient);
-    const vector body_off(body_pos.x - rm->pos.x, body_pos.y - rm->pos.y, body_pos.z - rm->pos.z);
-    const hkpShape* body_shape = rb->getCollidable()->getShape();
-
-    const vector from_w(p.x - body_pos.x, p.y + 3.0f - body_pos.y, p.z - body_pos.z);
-    const vector to_w(p.x - body_pos.x, p.y - 40.0f - body_pos.y, p.z - body_pos.z);
-    hkpShapeRayCastInput ray_in;
-    game_to_havok_vector(ray_in.m_from, from_w.copy_rotate(body_orient));
-    game_to_havok_vector(ray_in.m_to, to_w.copy_rotate(body_orient));
-    hkpShapeRayCastOutput ray_out;
-    const bool hit = shape->castRay(ray_in, ray_out).m_bool != 0;
-    const float hit_y = hit ? (p.y + 3.0f) - 43.0f * ray_out.m_hitFraction : 0.0f;
-
-    int in_list = 0;
-    int state_on = 0;
-    int near_side = 0;
-    float near_min_y = 1.0e9f;
-    float near_max_y = -1.0e9f;
-    rfg_subpiece* objects = shape->get_object_buffer();
-    const int total = shape->parent != nullptr ? shape->parent->num_objects : 0;
-    if (shape->child_obj_list != 0xFFFF && objects != nullptr)
-    {
-        rfg_subpiece* sp = &objects[shape->child_obj_list];
-        for (int guard = 0; guard <= total; guard++)
-        {
-            in_list++;
-            if (shape->get_shape_state(sp))
-            {
-                state_on++;
-            }
-            vector sp_pos;
-            matrix sp_orient;
-            shape->get_subpiece_pos_orient_uncached(sp, sp_pos, sp_orient);
-            const float sx = sp_pos.x - p.x;
-            const float sz = sp_pos.z - p.z;
-            if (sx * sx + sz * sz < 64.0f)
-            {
-                near_side++;
-                near_min_y = sp_pos.y < near_min_y ? sp_pos.y : near_min_y;
-                near_max_y = sp_pos.y > near_max_y ? sp_pos.y : near_max_y;
-            }
-            if (sp->next == shape->child_obj_list)
-            {
-                break;
-            }
-            sp = &objects[sp->next];
-        }
-    }
-
-    char text[480];
-    snprintf(text, sizeof(text), "NEARSHAPE %s mover <%.1f, %.1f, %.1f> body offset <%.2f, %.2f, %.2f>, body uses this shape %d (shape type %d), "
-        "ray down from %.1f: %s %.1f | pieces in list %d, state on %d, existing %d of %d, within 8 m sideways %d (y %.1f to %.1f) | "
-        "local bounds <%.0f, %.0f, %.0f> to <%.0f, %.0f, %.0f>, tree %d",
-        name, rm->pos.x, rm->pos.y, rm->pos.z, body_off.x, body_off.y, body_off.z, (int)(body_shape == (const hkpShape*)shape),
-        body_shape != nullptr ? (int)body_shape->m_type.m_storage : -1, p.y + 3.0f, hit ? "hit at y" : "MISS", hit_y,
-        in_list, state_on, shape->num_existing_child_shapes, total, near_side, near_side ? near_min_y : 0.0f, near_side ? near_max_y : 0.0f,
-        shape->local_bmin.x, shape->local_bmin.y, shape->local_bmin.z, shape->local_bmax.x, shape->local_bmax.y, shape->local_bmax.z,
-        (int)(shape->aabb_tree != nullptr));
-    openrfg_log(text);
-}
-
-// OpenRFG (not in the binary): every ~5 s, NEAROBJ lines for objects of any type whose bounds or position are within
-// 40 m of the player, once per object (first 400 lines), and a NEARALL count by type. Finds a bridge deck or building
-// that is a different object type, or exists but is not streamed in.
-void openrfg_log_all_objects_near(const vector& p)
-{
-    static const object* s_done[400];
-    static int s_count = 0;
-    int counts[8] = {};
-    int total = 0;
-    int not_streamed = 0;
-    for (int i = 0; i < World.all_objects.size(); i++)
-    {
-        object* objp = World.all_objects[i];
-        if (objp == nullptr)
-        {
-            continue;
-        }
-        const float dx = p.x < objp->last_known_bmin.x ? objp->last_known_bmin.x - p.x : (p.x > objp->last_known_bmax.x ? p.x - objp->last_known_bmax.x : 0.0f);
-        const float dy = p.y < objp->last_known_bmin.y ? objp->last_known_bmin.y - p.y : (p.y > objp->last_known_bmax.y ? p.y - objp->last_known_bmax.y : 0.0f);
-        const float dz = p.z < objp->last_known_bmin.z ? objp->last_known_bmin.z - p.z : (p.z > objp->last_known_bmax.z ? p.z - objp->last_known_bmax.z : 0.0f);
-        const float box_dist = sqrtf(dx * dx + dy * dy + dz * dz);
-        const float px = objp->pos.x - p.x;
-        const float py = objp->pos.y - p.y;
-        const float pz = objp->pos.z - p.z;
-        const float pos_dist = sqrtf(px * px + py * py + pz * pz);
-        if (box_dist > 40.0f && pos_dist > 40.0f)
-        {
-            continue;
-        }
-        const int type = (int)objp->get_obj_type();
-        total++;
-        counts[type >= 0 && type < 7 ? type : 7]++;
-        if (!objp->obj_flags.streamed)
-        {
-            not_streamed++;
-        }
-        bool done = s_count >= 400;
-        for (int k = 0; k < s_count && !done; k++)
-        {
-            done = s_done[k] == objp;
-        }
-        if (done)
-        {
-            continue;
-        }
-        s_done[s_count++] = objp;
-        hkpRigidBody* rb = havok_get_pointer_from_rigid_body_handle(objp->havok_handle);
-        const char* name = objp->get_name();
-        const char* chunk_name = "";
-        if (type == OT_MOVER && (int)objp->get_sub_type() == OT_SUB_MOVER_RFG)
-        {
-            c_chunk_base* chunk = chunk_get_base_by_uid(((rfg_mover*)objp)->chunk_uid);
-            chunk_name = chunk != nullptr ? chunk->name : "(chunk not loaded)";
-        }
-        char text[400];
-        snprintf(text, sizeof(text), "NEAROBJ type %d sub %d name '%s' chunk '%s' pos <%.1f, %.1f, %.1f> (%.0f m, box %.0f m) bounds <%.0f, %.0f, %.0f> to <%.0f, %.0f, %.0f> | "
-            "streamed %d streaming %d destroyed %d stub %d srid 0x%X | body %d in world %d",
-            type, (int)objp->get_sub_type(), name != nullptr ? name : "", chunk_name, objp->pos.x, objp->pos.y, objp->pos.z, pos_dist, box_dist,
-            objp->last_known_bmin.x, objp->last_known_bmin.y, objp->last_known_bmin.z, objp->last_known_bmax.x, objp->last_known_bmax.y, objp->last_known_bmax.z,
-            (int)objp->obj_flags.streamed, (int)objp->obj_flags.streaming, (int)objp->obj_flags.destroyed, (int)objp->obj_flags.stub, objp->get_srid(),
-            (int)(rb != nullptr), (int)(rb != nullptr && rb->getWorld() != nullptr));
-        openrfg_log(text);
-    }
-    char text[240];
-    snprintf(text, sizeof(text), "NEARALL player at <%.0f, %.0f, %.0f>: %d objects within 40 m (%d not streamed) | by type 0-6: %d %d %d %d %d %d %d, other %d (of %d objects)",
-        p.x, p.y, p.z, total, not_streamed, counts[0], counts[1], counts[2], counts[3], counts[4], counts[5], counts[6], counts[7], World.all_objects.size());
-    openrfg_log(text);
-}
-
-// OpenRFG (not in the binary): every ~5 s, a NEAR summary of the buildings whose bounds are within 40 m of the player,
-// and a NEARBAD line for each one that is not streamed, has no render instance, no Havok body, or a body outside the
-// Havok world (first 1500 lines). Finds pieces you can see through or fall through.
-static void openrfg_log_movers_near_player()
-{
-    static int s_frame = 0;
-    static int s_logged = 0;
-    if (++s_frame < 300 || s_logged >= 1500)
-    {
-        return;
-    }
-    s_frame = 0;
-    player* local = player_get_local_player();
-    if (local == nullptr)
-    {
-        return;
-    }
-    const vector p = local->pos;
-    openrfg_log_all_objects_near(p);
-    int near_count = 0;
-    int bad_count = 0;
-    const int num = World.get_num_objects<rfg_mover>();
-    for (int i = 0; i < num; i++)
-    {
-        rfg_mover* rm = World.get_object<rfg_mover>(i);
-        if (rm == nullptr)
-        {
-            continue;
-        }
-        const float dx = p.x < rm->last_known_bmin.x ? rm->last_known_bmin.x - p.x : (p.x > rm->last_known_bmax.x ? p.x - rm->last_known_bmax.x : 0.0f);
-        const float dy = p.y < rm->last_known_bmin.y ? rm->last_known_bmin.y - p.y : (p.y > rm->last_known_bmax.y ? p.y - rm->last_known_bmax.y : 0.0f);
-        const float dz = p.z < rm->last_known_bmin.z ? rm->last_known_bmin.z - p.z : (p.z > rm->last_known_bmax.z ? p.z - rm->last_known_bmax.z : 0.0f);
-        const float dist = sqrtf(dx * dx + dy * dy + dz * dz);
-        if (dist > 40.0f)
-        {
-            continue;
-        }
-        near_count++;
-        const bool streamed = rm->obj_flags.streamed != 0;
-        const bool loaded = rm->rdd.is_loaded();
-        const auto* data = loaded ? rm->rdd.get_data() : nullptr;
-        const bool has_instance = data != nullptr && data->model_instance_p != nullptr;
-        hkpRigidBody* rb = havok_get_pointer_from_rigid_body_handle(rm->havok_handle);
-        const bool in_world = rb != nullptr && rb->getWorld() != nullptr;
-        if (data != nullptr && data->shape != nullptr)
-        {
-            c_chunk_base* shape_chunk = chunk_get_base_by_uid(rm->chunk_uid);
-            openrfg_log_near_shape(rm, data->shape, rb, p, shape_chunk != nullptr ? shape_chunk->name : "(chunk not loaded)");
-        }
-        if (streamed && loaded && has_instance && in_world)
-        {
-            continue;
-        }
-        bad_count++;
-        if (s_logged >= 1500)
-        {
-            continue;
-        }
-        s_logged++;
-        c_chunk_base* chunk = chunk_get_base_by_uid(rm->chunk_uid);
-        rfg_destroyable_shape* shape = loaded && data != nullptr ? data->shape : nullptr;
-        char text[360];
-        snprintf(text, sizeof(text), "NEARBAD %s at <%.0f, %.0f, %.0f> %.0f m: streamed %d, loaded %d, render instance %d, havok handle 0x%08X, body %d, in havok world %d, pieces %d of %d, mover flags 0x%08X, destroyed %d",
-            chunk != nullptr ? chunk->name : "(chunk not loaded)", rm->pos.x, rm->pos.y, rm->pos.z, dist, (int)streamed, (int)loaded,
-            (int)has_instance, rm->havok_handle, (int)(rb != nullptr), (int)in_world, shape != nullptr ? shape->num_existing_child_shapes : -1,
-            shape != nullptr && shape->parent != nullptr ? shape->parent->num_objects : -1, rm->mover_flags, (int)rm->obj_flags.destroyed);
-        openrfg_log(text);
-    }
-    if (s_logged < 1500)
-    {
-        s_logged++;
-        char text[200];
-        snprintf(text, sizeof(text), "NEAR player at <%.0f, %.0f, %.0f>: %d buildings within 40 m, %d missing a part (of %d loaded movers)", p.x, p.y, p.z, near_count, bad_count, num);
-        openrfg_log(text);
-    }
-}
-
 // 0x0072F0B0 (:4456)
 // Removes deleted pieces from the instance: they fade out through a mover fader (unless no-fade, 0x80000000, or
 // script point hosts, 0x400000; nano pieces use the nano effect), their dlods are re-checked, and owned whole-mesh sub
@@ -4057,7 +3758,6 @@ void rfg_mover::delete_subpieces(unsigned short subpieces, int num_subpieces)
     {
         return;
     }
-    openrfg_log_mover_pieces(this, "deleting pieces", num_subpieces, damage_pct); // OpenRFG
     rl_destroyable_model_instance* ri = data->model_instance_p;
     short* unclaim = (short*)pool->alloc(num_subpieces * 4, 0);
     int num_unclaim = 0;
@@ -4693,7 +4393,6 @@ void rfg_mover_set_thread_ownership()
 // Retries the live links (category 1), for movers that streamed in since.
 void rfg_mover_do_frame_pre_sim()
 {
-    openrfg_log_movers_near_player(); // OpenRFG
     csspinlock_scope lock(RFG_dynamic_link_pool.thread_access);
     rfg_dynamic_link* rdl = RFG_dynamic_link_pool.get_first(1);
     while (rdl != nullptr)

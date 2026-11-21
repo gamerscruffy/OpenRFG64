@@ -215,9 +215,6 @@ static void relayoutAllClasses()
         int sz, al;
         relayoutClass(c, sz, al);
         count++;
-        { const char* nm=c->getName(); if(nm && (!strcmp(nm,"hkpEntity")||!strcmp(nm,"hkpWorldObject")||!strcmp(nm,"hkpRigidBody")||!strcmp(nm,"hkpMotion"))) {
-            char b2[200]; sprintf(b2,"DBGOFF class %s size %d",nm,sz); openrfg_log(b2);
-            for(int k=0;k<c->getNumDeclaredMembers();k++){ const hkClassMember& mm=c->getDeclaredMember(k); sprintf(b2,"DBGOFF  %s.%s off=%d",nm,mm.getName(),(int)mm.getOffset()); openrfg_log(b2);} } }
         std::unordered_map<std::string, int>::iterator r = realSize.find(c->getName());
         if (r != realSize.end() && r->second != sz)
         {
