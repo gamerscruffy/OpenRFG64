@@ -166,7 +166,7 @@ public:
     {
         Edge() {} // 0x00FDEB20
         Edge(Triangle* t, int i) : hkgpTopology::Edge<Edge, Vertex, Triangle, Vertex*>(t, (unsigned int)i) {} // 0x00FDEB30
-        Edge(unsigned long id) : hkgpTopology::Edge<Edge, Vertex, Triangle, Vertex*>(id) {} // 0x00FE3C30
+        Edge(hkUlong id) : hkgpTopology::Edge<Edge, Vertex, Triangle, Vertex*>(id) {} // 0x00FE3C30
     };
 
     // size 0x8: sorts by decreasing value

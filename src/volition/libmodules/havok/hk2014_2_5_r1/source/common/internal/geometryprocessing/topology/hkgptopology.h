@@ -11,7 +11,9 @@ class hkgpTopology
 {
 public:
     // A triangle / edge index pair packed in one word.
-    typedef unsigned long Uid;
+    // Pointer-sized: the triangle pointer lives in it (Windows x64 'long' is 32 bits and cut the pointer, which crashed
+    // the convex hull build in clearHorizon).
+    typedef hkUlong Uid;
 
     static Uid nullUid() { return 0; }
     static Uid packUid(void* t, unsigned int i) { return (Uid)t + (Uid)i; }

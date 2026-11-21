@@ -147,7 +147,7 @@ void hkgpConvexHullImpl::buildIndices()
         return;
     }
     hkArray<SortedTriangle, hkContainerHeapAllocator> sorted;
-    hkMap<unsigned long, unsigned long> planeOfTriangle;
+    hkMap<hkUlong, hkUlong> planeOfTriangle;
     hkArray<hkVector4f, hkContainerHeapAllocator> trianglePlanes;
     const int numTriangles = m_mesh.m_triangles.getSize();
     if (numTriangles != 0)
@@ -173,7 +173,7 @@ void hkgpConvexHullImpl::buildIndices()
         int index = 0;
         for (Triangle* t = m_mesh.m_triangles.getFirst(); t; t = t->next(), ++index)
         {
-            planeOfTriangle.insert((unsigned long)t, (unsigned long)index);
+            planeOfTriangle.insert((hkUlong)t, (hkUlong)index);
             trianglePlanes[index].m_quad = planeFromTriangle(transform(*t->m_vertices[0]), transform(*t->m_vertices[1]), transform(*t->m_vertices[2]));
             t->m_index = index;
             t->m_plane.m_index = -1;
@@ -197,7 +197,7 @@ void hkgpConvexHullImpl::buildIndices()
             {
                 continue;
             }
-            const __m128 reference = trianglePlanes[(int)planeOfTriangle.getWithDefault((unsigned long)seed, (unsigned long)-1)].m_quad;
+            const __m128 reference = trianglePlanes[(int)planeOfTriangle.getWithDefault((hkUlong)seed, (hkUlong)-1)].m_quad;
             seed->m_plane.m_index = m_planes.getSize();
             hkVector4f plane;
             plane.m_quad = reference;
@@ -215,7 +215,7 @@ void hkgpConvexHullImpl::buildIndices()
                 {
                     continue;
                 }
-                const __m128 p = trianglePlanes[(int)planeOfTriangle.getWithDefault((unsigned long)t, (unsigned long)-1)].m_quad;
+                const __m128 p = trianglePlanes[(int)planeOfTriangle.getWithDefault((hkUlong)t, (hkUlong)-1)].m_quad;
                 // a degenerate (invalid) plane always merges
                 bool merge = true;
                 if ((_mm_movemask_ps(_mm_cmpord_ps(p, p)) & 7) == 7 && !(first(absolute(_mm_sub_ps(dot3(p, p), constant(HK_QUADREAL_1)))) >= 1e-4f)) // 0x38D1B717
