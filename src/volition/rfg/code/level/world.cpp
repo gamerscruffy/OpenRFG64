@@ -380,9 +380,10 @@ void world::system_init()
 
     // Broadphase object counts per bpo index.
 #ifdef OPENRFG_X64
-    // OpenRFG: x3 for Terrain / World Detail Distance up to 15x15 (the 5x5+ settings filled them). The total (54792)
-    // must stay under 0xFFFF: havok_bp.cpp links objects and islands by 16-bit indices.
-    int max_bpo_objects[4] = { 0x1EC0 * 3, 2000 * 3, 0xCC8 * 3, 0x1400 * 3 };
+    // OpenRFG: larger for Terrain / World Detail Distance up to 15x15 (x3 overflowed once every building loaded: 61640
+    // objects). havok_bp.cpp links objects by 32-bit indices on x64, but each broadphase's hkp3AxisSweep stores
+    // endpoint positions in 16 bits (two per object), so one broadphase must stay under about 32700 objects.
+    int max_bpo_objects[4] = { 0x1EC0 * 4, 2000 * 6, 0xCC8 * 6, 0x1400 * 6 };
 #else
     int max_bpo_objects[4] = { 0x1EC0, 2000, 0xCC8, 0x1400 };
 #endif

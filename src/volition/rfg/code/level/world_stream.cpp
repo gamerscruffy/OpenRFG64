@@ -240,7 +240,7 @@ void world::collect_sorted_list(base_array<object*>& list, havok_bpi* island)
     // The hierarchies of the island's objects (from their roots), constraints last.
     farray<object*,512> constraints;
     list.remove_all();
-    if (island->obj_list != 0xFFFF)
+    if (island->obj_list != HAVOK_BP_INDEX_NONE)
     {
         for (havok_bpo* bpo = &Object_buf[island->obj_list]; bpo != nullptr; bpo = &Object_buf[bpo->next])
         {
@@ -462,25 +462,25 @@ void world::monitor_entering_zones()
 // objects stream in only inside the level radius (a circle), so islands in the square's corners stay ENTERING for
 // good. With the wider World Detail Distance there are enough of them to use the whole 5 ms every frame, and the
 // islands behind them, buildings streaming in as the player moves, never got their turn.
-static unsigned short Stream_resume_island[havok_bpi::NUM_ISLAND_STATES] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
+static havok_bp_index Stream_resume_island[havok_bpi::NUM_ISLAND_STATES] = { HAVOK_BP_INDEX_NONE, HAVOK_BP_INDEX_NONE, HAVOK_BP_INDEX_NONE, HAVOK_BP_INDEX_NONE, HAVOK_BP_INDEX_NONE };
 
 // The island to start the pass at; count is the number of islands in the list (each is visited at most once).
 static havok_bpi* stream_first_island(havok_bpi::bpi_state state, int& count)
 {
     count = 0;
-    const unsigned short head = Island_list[state];
-    if (head == 0xFFFF)
+    const havok_bp_index head = Island_list[state];
+    if (head == HAVOK_BP_INDEX_NONE)
     {
         return nullptr;
     }
-    unsigned short index = head;
+    havok_bp_index index = head;
     do
     {
         count++;
         index = Island_buf[index].next;
     } while (index != head && count < Total_objects);
-    const unsigned short resume = Stream_resume_island[state];
-    if (resume != 0xFFFF && (int)resume < Total_objects && Island_buf[resume].state == state)
+    const havok_bp_index resume = Stream_resume_island[state];
+    if (resume != HAVOK_BP_INDEX_NONE && (int)resume < Total_objects && Island_buf[resume].state == state)
     {
         return &Island_buf[resume];
     }
@@ -497,7 +497,7 @@ static havok_bpi* stream_next_island(havok_bpi* island, int& remaining)
 // Remembers where the pass stopped (nothing when it visited every island).
 static void stream_save_island(havok_bpi::bpi_state state, havok_bpi* island)
 {
-    Stream_resume_island[state] = island != nullptr && island->state == state ? (unsigned short)(island - Island_buf) : 0xFFFF;
+    Stream_resume_island[state] = island != nullptr && island->state == state ? (havok_bp_index)(island - Island_buf) : HAVOK_BP_INDEX_NONE;
 }
 
 // OpenRFG: an OBJSTREAM log line every 3 s: how many islands wait to stream in or out, how many the passes got

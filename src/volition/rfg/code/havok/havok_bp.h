@@ -18,6 +18,15 @@ class hkpBroadPhase;
 class hkpBroadPhaseHandlePair;
 class vector;
 
+// OpenRFG: objects and islands are linked by index. The original uses 16 bits, which caps the whole broadphase at
+// 65535 objects; 15x15 Terrain / World Detail Distance loads more, so x64 links them with 32-bit indices.
+#ifdef OPENRFG_X64
+typedef unsigned int havok_bp_index;
+#else
+typedef unsigned short havok_bp_index;
+#endif
+static const havok_bp_index HAVOK_BP_INDEX_NONE = (havok_bp_index)~0u;
+
 // size 0x14
 class havok_bpo : public hkpBroadPhaseHandle
 {
@@ -37,9 +46,9 @@ public:
     unsigned char state; // 0x05
     short bpo_index; // 0x06
     short state_index; // 0x08
-    unsigned short owner; // 0x0A
-    unsigned short next; // 0x0C
-    unsigned short prev; // 0x0E
+    havok_bp_index owner; // 0x0A
+    havok_bp_index next; // 0x0C
+    havok_bp_index prev; // 0x0E
     void* user_data; // 0x10
 };
 
@@ -62,13 +71,13 @@ struct havok_bpi
 
     unsigned char state; // 0x00
     signed char bpo_index; // 0x01
-    unsigned short next; // 0x02
-    unsigned short prev; // 0x04
-    unsigned short rebuild_next; // 0x06
-    unsigned short rebuild_prev; // 0x08
-    unsigned short inside_count; // 0x0A
-    unsigned short obj_list; // 0x0C
-    unsigned short obj_count; // 0x0E
+    havok_bp_index next; // 0x02
+    havok_bp_index prev; // 0x04
+    havok_bp_index rebuild_next; // 0x06
+    havok_bp_index rebuild_prev; // 0x08
+    havok_bp_index inside_count; // 0x0A
+    havok_bp_index obj_list; // 0x0C
+    havok_bp_index obj_count; // 0x0E
 };
 
 // size 0x5C
@@ -103,9 +112,9 @@ public:
 
 extern havok_bpo* Object_buf; // 0x02B82200, every broadphase object (indexed by havok_bpo::next/prev, havok_bpi::obj_list)
 extern havok_bpi* Island_buf; // 0x0276D2B4, every island (one per broadphase object at most)
-extern unsigned short Island_list[havok_bpi::NUM_ISLAND_STATES]; // 0x02622710, head of each state's island list
+extern havok_bp_index Island_list[havok_bpi::NUM_ISLAND_STATES]; // 0x02622710, head of each state's island list
 extern int Total_objects; // 0x02622724
-extern unsigned short Object_free_list; // 0x02642728
+extern havok_bp_index Object_free_list; // 0x02642728
 extern int Object_free_list_size; // 0x02642724
 extern int Object_free_list_size_low_water; // 0x0262270C
 extern hkp3AxisSweep* Miniphase; // 0x02B82258, scratch broadphase of rfg_object_broadphase::rebuild_island

@@ -40,9 +40,9 @@
 // ---- globals
 havok_bpo* Object_buf; // 0x02B82200
 havok_bpi* Island_buf; // 0x0276D2B4
-unsigned short Island_list[havok_bpi::NUM_ISLAND_STATES]; // 0x02622710, head of each state's island list
+havok_bp_index Island_list[havok_bpi::NUM_ISLAND_STATES]; // 0x02622710, head of each state's island list
 int Total_objects; // 0x02622724
-unsigned short Object_free_list; // 0x02642728
+havok_bp_index Object_free_list; // 0x02642728
 int Object_free_list_size; // 0x02642724
 int Object_free_list_size_low_water; // 0x0262270C
 hkp3AxisSweep* Miniphase; // 0x02B82258, rebuild_island's scratch broadphase
@@ -58,7 +58,13 @@ static int Object_update_pairs; // 0x0264306C
 static int Objects_added; // 0x02666054
 static int Object_added_pairs; // 0x0276D2B8
 
-static const unsigned short INDEX_NONE = 0xFFFF;
+static const havok_bp_index INDEX_NONE = HAVOK_BP_INDEX_NONE;
+
+#ifdef OPENRFG_X64
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+static int Bpo_live_objects[8]; // objects allocated per broadphase
+static const int BPO_MAX_PER_SWEEP = 32000;
+#endif
 
 // havok_bpo::flags
 static const unsigned char BPO_FLAG_ISLAND = 0x01; // joins islands with other island objects
@@ -70,11 +76,11 @@ static const unsigned char BPO_FLAG_INSIDE_REGION = 0x20;
 static const unsigned char BPO_FLAG_FORCE_OUTSIDE_REGION = 0x40;
 static const unsigned char BPO_FLAG_FORCED_OUTSIDE = 0x80;
 
-// ---- index lists (circular, linked by 16-bit indices; inlined everywhere in the original)
-template<typename T, unsigned short T::*NEXT, unsigned short T::*PREV>
-static void index_list_remove(unsigned short& head, T* buf, T* elem)
+// ---- index lists (circular, linked by havok_bp_index, 16-bit in the original; inlined everywhere in the original)
+template<typename T, havok_bp_index T::*NEXT, havok_bp_index T::*PREV>
+static void index_list_remove(havok_bp_index& head, T* buf, T* elem)
 {
-    const unsigned short index = (unsigned short)(elem - buf);
+    const havok_bp_index index = (havok_bp_index)(elem - buf);
     if (head == index)
     {
         if (elem->*NEXT == index)
@@ -93,10 +99,10 @@ static void index_list_remove(unsigned short& head, T* buf, T* elem)
 }
 
 // Appends at the tail (before the head).
-template<typename T, unsigned short T::*NEXT, unsigned short T::*PREV>
-static void index_list_add(unsigned short& head, T* buf, T* elem)
+template<typename T, havok_bp_index T::*NEXT, havok_bp_index T::*PREV>
+static void index_list_add(havok_bp_index& head, T* buf, T* elem)
 {
-    const unsigned short index = (unsigned short)(elem - buf);
+    const havok_bp_index index = (havok_bp_index)(elem - buf);
     if (head == INDEX_NONE)
     {
         elem->*NEXT = index;
@@ -208,11 +214,25 @@ havok_bpo* object_alloc(int bpo_index, unsigned char flags, void* user_data, hav
     {
         return nullptr;
     }
+#ifdef OPENRFG_X64
+    // Each broadphase's hkp3AxisSweep stores endpoint positions in 16 bits (two per object plus sentinels).
+    if (bpo_index >= 0 && bpo_index < 8 && Bpo_live_objects[bpo_index] >= BPO_MAX_PER_SWEEP)
+    {
+        openrfg_fail_log("bpo-sweep-full", "broadphase %d has %d objects, its sweep holds no more", bpo_index, Bpo_live_objects[bpo_index]);
+        return nullptr;
+    }
+#endif
     havok_bpo* objp = &Object_buf[Object_free_list];
     OBJECT_LIST_REMOVE(Object_free_list, objp);
     Object_free_list_size--;
     objp->init(flags, user_data); // inlined
     objp->bpo_index = (short)bpo_index;
+#ifdef OPENRFG_X64
+    if (bpo_index >= 0 && bpo_index < 8)
+    {
+        Bpo_live_objects[bpo_index]++;
+    }
+#endif
     if (island != nullptr)
     {
         island->add_object(objp);
@@ -234,6 +254,12 @@ void object_free(havok_bpo* objp)
         }
     }
     objp->state = havok_bpo::BPO_NONE;
+#ifdef OPENRFG_X64
+    if (objp->bpo_index >= 0 && objp->bpo_index < 8)
+    {
+        Bpo_live_objects[objp->bpo_index]--;
+    }
+#endif
     objp->bpo_index = -1;
     OBJECT_LIST_ADD(Object_free_list, objp);
     Object_free_list_size++;
@@ -244,6 +270,9 @@ void object_free(havok_bpo* objp)
 static void havok_bpo_init_objects_and_islands()
 {
     Object_free_list = INDEX_NONE;
+#ifdef OPENRFG_X64
+    memset(Bpo_live_objects, 0, sizeof(Bpo_live_objects));
+#endif
     for (int i = 0; i < Total_objects; i++)
     {
         Object_buf[i].init(0, nullptr); // inlined
@@ -472,6 +501,9 @@ havok_bpo* rfg_object_broadphase::bpo_create(const vector& bmin, const vector& b
         island = island_alloc(my_bpo_index);
         if (island == nullptr)
         {
+#ifdef OPENRFG_X64
+            openrfg_fail_log("bpo-islands-full", "broadphase %d: all %d islands in use", my_bpo_index, Total_objects);
+#endif
             keen::debug::nativePrintArgs("Int3 critical function at %s(%d)\n", __FILE__, __LINE__);
             return nullptr;
         }
@@ -479,6 +511,9 @@ havok_bpo* rfg_object_broadphase::bpo_create(const vector& bmin, const vector& b
     havok_bpo* objp = object_alloc(my_bpo_index, flags, user_data, island);
     if (objp == nullptr)
     {
+#ifdef OPENRFG_X64
+        openrfg_fail_log("bpo-objects-full", "broadphase %d: all %d broadphase objects in use, an object gets no broadphase entry", my_bpo_index, Total_objects);
+#endif
         keen::debug::nativePrintArgs("Int3 critical function at %s(%d)\n", __FILE__, __LINE__);
         if (island != nullptr)
         {
@@ -667,7 +702,7 @@ bool rfg_object_broadphase::merge_islands(havok_bpo* obj_a, havok_bpo* obj_b)
     {
         for (havok_bpo* objp = &Object_buf[isl->obj_list];; objp = &Object_buf[objp->next])
         {
-            objp->owner = (unsigned short)(island - Island_buf);
+            objp->owner = (havok_bp_index)(island - Island_buf);
             if (objp->next == isl->obj_list)
             {
                 break;
@@ -685,7 +720,7 @@ bool rfg_object_broadphase::merge_islands(havok_bpo* obj_a, havok_bpo* obj_b)
         havok_bpo& head_b = Object_buf[isl->obj_list];
         Object_buf[head_a.prev].next = isl->obj_list;
         Object_buf[head_b.prev].next = island->obj_list;
-        const unsigned short tail_b = head_b.prev;
+        const havok_bp_index tail_b = head_b.prev;
         head_b.prev = head_a.prev;
         head_a.prev = tail_b;
     }
@@ -850,7 +885,7 @@ void rfg_object_broadphase::process_deleted_pairs(hkArray<hkpBroadPhaseHandlePai
     {
         return;
     }
-    unsigned short rebuild_list = INDEX_NONE;
+    havok_bp_index rebuild_list = INDEX_NONE;
     for (int i = 0; i < num_pairs; i++)
     {
         havok_bpo* obj_a = (havok_bpo*)del_pairs[i].m_a;
@@ -953,7 +988,7 @@ void havok_bpi::add_object(havok_bpo* objp)
         return;
     }
     OBJECT_LIST_ADD(obj_list, objp);
-    objp->owner = (unsigned short)(this - Island_buf);
+    objp->owner = (havok_bp_index)(this - Island_buf);
     obj_count++;
     if ((objp->flags & BPO_FLAG_INSIDE_REGION) != 0 && (objp->flags & BPO_FLAG_STREAMED) != 0 && (objp->flags & BPO_FLAG_FORCED_OUTSIDE) == 0)
     {
