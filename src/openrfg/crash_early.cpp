@@ -32,6 +32,9 @@ namespace
     // (the process ended with 0x80000004).
     thread_local bool Watch_rearm = false;
 
+    // Set while reporting from the loader's process detach: dbghelp may load modules, which would deadlock there.
+    bool Report_raw_only = false;
+
     void report(EXCEPTION_POINTERS* info, const char* title)
     {
         HANDLE file = CreateFileA("openrfg_crash.txt", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -76,6 +79,7 @@ namespace
             {
             }
         }
+        if (!Report_raw_only)
         __try
         {
         HANDLE process = GetCurrentProcess();
@@ -231,6 +235,62 @@ namespace
     void invalid_handler(const wchar_t*,const wchar_t*,const wchar_t*,unsigned,uintptr_t){ logline("=== invalid CRT parameter"); TerminateProcess(GetCurrentProcess(),3); }
     void exit_handler(){ logline("=== process exiting (exit() called)"); }
 
+#ifdef _M_X64
+    // ---- process end log (debug aid): a TLS callback sees ExitProcess (also reached by exit and _exit), a patch on
+    // KERNELBASE!TerminateProcess sees a self-terminate. Each writes the caller's stack, so a quit with no crash
+    // report still names who ended the process.
+    typedef LONG(NTAPI* nt_terminate_process_fn)(HANDLE, LONG);
+    nt_terminate_process_fn Nt_terminate_process = nullptr;
+    volatile LONG Exit_reported = 0;
+
+    void report_here(const char* title, bool raw_only)
+    {
+        CONTEXT context = {};
+        RtlCaptureContext(&context);
+        EXCEPTION_RECORD record = {};
+        record.ExceptionAddress = (void*)context.Rip;
+        EXCEPTION_POINTERS pointers = { &record, &context };
+        const bool old_raw_only = Report_raw_only;
+        Report_raw_only = raw_only;
+        report(&pointers, title);
+        Report_raw_only = old_raw_only;
+    }
+
+    BOOL WINAPI terminate_process_hook(HANDLE process, UINT exit_code)
+    {
+        if (GetProcessId(process) == GetCurrentProcessId() && InterlockedIncrement(&Exit_reported) == 1)
+        {
+            char line[96];
+            snprintf(line, sizeof(line), "=== TerminateProcess(self, %u) called", exit_code);
+            logline(line);
+            report_here("TerminateProcess caller", false);
+        }
+        return Nt_terminate_process(process, (LONG)exit_code) >= 0;
+    }
+
+    void install_terminate_process_hook()
+    {
+        Nt_terminate_process = (nt_terminate_process_fn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtTerminateProcess");
+        HMODULE kernelbase = GetModuleHandleA("kernelbase.dll");
+        unsigned char* target = kernelbase != nullptr ? (unsigned char*)GetProcAddress(kernelbase, "TerminateProcess") : nullptr;
+        if (Nt_terminate_process == nullptr || target == nullptr)
+        {
+            return;
+        }
+        // jmp qword ptr [rip+0] followed by the absolute address (14 bytes).
+        unsigned char patch[14] = { 0xFF, 0x25, 0, 0, 0, 0 };
+        const unsigned long long hook = (unsigned long long)&terminate_process_hook;
+        memcpy(patch + 6, &hook, 8);
+        DWORD old_protect;
+        if (VirtualProtect(target, sizeof(patch), PAGE_EXECUTE_READWRITE, &old_protect))
+        {
+            memcpy(target, patch, sizeof(patch));
+            VirtualProtect(target, sizeof(patch), old_protect, &old_protect);
+            FlushInstructionCache(GetCurrentProcess(), target, sizeof(patch));
+        }
+    }
+#endif
+
     struct early_crash_setup
     {
         early_crash_setup()
@@ -245,10 +305,29 @@ namespace
             set_terminate(terminate_handler);
             _set_invalid_parameter_handler(invalid_handler);
             atexit(exit_handler);
+#ifdef _M_X64
+            install_terminate_process_hook();
+#endif
         }
     };
     early_crash_setup Early_crash_setup;
 }
+
+#ifdef _M_X64
+static void NTAPI openrfg_exit_tls_callback(PVOID, DWORD reason, PVOID)
+{
+    if (reason == DLL_PROCESS_DETACH && InterlockedIncrement(&Exit_reported) == 1)
+    {
+        logline("=== process ending through ExitProcess (exit, _exit or ExitProcess); raw frames below name the caller");
+        report_here("ExitProcess caller", true);
+    }
+}
+#pragma comment(linker, "/INCLUDE:_tls_used")
+#pragma comment(linker, "/INCLUDE:openrfg_exit_tls_callback_entry")
+#pragma const_seg(".CRT$XLB")
+extern "C" const PIMAGE_TLS_CALLBACK openrfg_exit_tls_callback_entry = openrfg_exit_tls_callback;
+#pragma const_seg()
+#endif
 
 void openrfg_watch(void* p, size_t n)
 {
