@@ -22,7 +22,10 @@
 // ---- statics
 const int vfx_effect_manager::max_effects_default = 512; // 0x012C709C
 const int vfx_effect_manager::max_effect_templates_default = 400; // 0x012C70A0
-int vfx_effect_manager::max_effects = 512; // 0x016F0A04
+// OpenRFG: on x64 the effects of up to 225 loaded zones (Terrain Distance 15x15) have to fit: every placed
+// object_effect with a visual takes one here, and that pool is OPENRFG_ZONE_POOL(512). With 512, loading a campaign
+// save at 15x15 ran out and vfx_effect::create dereferenced the null effect.
+int vfx_effect_manager::max_effects = OPENRFG_ZONE_POOL(512); // 0x016F0A04
 int vfx_effect_manager::max_effect_templates = 400; // 0x016F0A08
 
 // 0x00CAEB80

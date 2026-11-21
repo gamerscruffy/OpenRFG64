@@ -29,6 +29,7 @@ void openrfg_log(const char* text); // crash_early.cpp
 #include "volition/vfxlib/code/vfx_animation.h"
 #include "volition/vfxlib/code/vfx_effect_manager.h"
 #include "volition/vfxlib/code/vfx_effect_template.h"
+#include "keen/base/trace.hpp"
 #include "volition/vfxlib/code/vfx_particle.h"
 #include "volition/vfxlib/code/vfx_particle_system_emitter.h"
 #include "volition/vfxlib/code/vfx_particle_system_filter.h"
@@ -182,6 +183,15 @@ vfx_effect* vfx_effect::create(vfx_effect_template* template_p)
     {
         effect_p = new (effect_p) vfx_effect();
     }
+#ifdef OPENRFG_X64
+    else
+    {
+        // OpenRFG: the callers (object_effect::visual_create, the hammer hit) handle a null effect; the original
+        // dereferences it. Logged as a failure (openrfg_crash.txt).
+        keen::debug::nativePrintArgs("vfx_effect::create failed: every effect of the pool is in use\n");
+        return nullptr;
+    }
+#endif
     effect_p->m_instance_handle = manager_p->register_effect(effect_p);
     effect_p->m_effect_template_p = template_p;
     effect_p->init();
