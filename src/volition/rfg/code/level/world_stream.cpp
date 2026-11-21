@@ -499,6 +499,79 @@ static void stream_save_island(havok_bpi::bpi_state state, havok_bpi* island)
 {
     Stream_resume_island[state] = island != nullptr && island->state == state ? (unsigned short)(island - Island_buf) : 0xFFFF;
 }
+
+// OpenRFG: an OBJSTREAM log line every 3 s: how many islands wait to stream in or out, how many the passes got
+// through, and why objects were not ready (with the nearest such object's distance), to find what holds buildings
+// back at the wider World Detail Distance.
+enum stream_dbg_reason
+{
+    SDR_ZONE,
+    SDR_RADIUS,
+    SDR_PENDING,
+    SDR_REFUSED,
+    SDR_ERROR,
+    SDR_COUNT,
+};
+static int Stream_dbg_count[SDR_COUNT];
+static float Stream_dbg_nearest[SDR_COUNT] = { 1e30f, 1e30f, 1e30f, 1e30f, 1e30f };
+static int Stream_dbg_visited;
+static int Stream_dbg_popped;
+static int Stream_dbg_frames;
+static int Stream_dbg_last_ms;
+int openrfg_stream2_queue_length(); // stream2.cpp
+void openrfg_log(const char* text); // crash_early.cpp
+
+static void stream_dbg_not_ready(const vector& stream_pos, const object* objp, stream_dbg_reason reason)
+{
+    Stream_dbg_count[reason]++;
+    const float dx = objp->pos.x - stream_pos.x;
+    const float dz = objp->pos.z - stream_pos.z;
+    const float dist = sqrtf(dx * dx + dz * dz);
+    if (dist < Stream_dbg_nearest[reason])
+    {
+        Stream_dbg_nearest[reason] = dist;
+    }
+}
+
+static int stream_dbg_list_length(havok_bpi::bpi_state state)
+{
+    int count;
+    stream_first_island(state, count);
+    return count;
+}
+
+static void stream_dbg_report(float radius, int num_streaming_objects)
+{
+    Stream_dbg_frames++;
+    const int now = timer_get(TIMER_MILLISECONDS);
+    if (now - Stream_dbg_last_ms < 3000)
+    {
+        return;
+    }
+    Stream_dbg_last_ms = now;
+    char text[512];
+    snprintf(text, sizeof(text),
+             "OBJSTREAM radius %.0f, islands entering %d leaving %d, last %d frames visited %d streamed in %d | not ready: zone %d (%.0f m), "
+             "radius %d (%.0f m), pending %d (%.0f m), refused %d (%.0f m), error %d (%.0f m) | stream queue %d, streaming objects %d",
+             radius, stream_dbg_list_length(havok_bpi::ENTERING), stream_dbg_list_length(havok_bpi::LEAVING), Stream_dbg_frames,
+             Stream_dbg_visited, Stream_dbg_popped, Stream_dbg_count[SDR_ZONE], Stream_dbg_nearest[SDR_ZONE] < 1e29f ? Stream_dbg_nearest[SDR_ZONE] : -1.0f,
+             Stream_dbg_count[SDR_RADIUS], Stream_dbg_nearest[SDR_RADIUS] < 1e29f ? Stream_dbg_nearest[SDR_RADIUS] : -1.0f, Stream_dbg_count[SDR_PENDING],
+             Stream_dbg_nearest[SDR_PENDING] < 1e29f ? Stream_dbg_nearest[SDR_PENDING] : -1.0f, Stream_dbg_count[SDR_REFUSED],
+             Stream_dbg_nearest[SDR_REFUSED] < 1e29f ? Stream_dbg_nearest[SDR_REFUSED] : -1.0f, Stream_dbg_count[SDR_ERROR],
+             Stream_dbg_nearest[SDR_ERROR] < 1e29f ? Stream_dbg_nearest[SDR_ERROR] : -1.0f, openrfg_stream2_queue_length(), num_streaming_objects);
+    openrfg_log(text);
+    for (int i = 0; i < SDR_COUNT; i++)
+    {
+        Stream_dbg_count[i] = 0;
+        Stream_dbg_nearest[i] = 1e30f;
+    }
+    Stream_dbg_visited = 0;
+    Stream_dbg_popped = 0;
+    Stream_dbg_frames = 0;
+}
+#define STREAM_DBG_NOT_READY(reason) stream_dbg_not_ready(stream_pos, objp, reason)
+#else
+#define STREAM_DBG_NOT_READY(reason) ((void)0)
 #endif
 
 // 0x0093FB40 (:654)
@@ -518,6 +591,7 @@ bool world::process_streaming_objects(bool hard_load)
     for (; island != nullptr && island->state == havok_bpi::ENTERING && (hard_load || timer_get(TIMER_MICROSECONDS) - start < 5000);)
     {
         havok_bpi* next = stream_next_island(island, remaining);
+        Stream_dbg_visited++;
 #else
     for (havok_bpi* island = havok_bpo_get_first_entering(); island != nullptr && (hard_load || timer_get(TIMER_MICROSECONDS) - start < 5000);)
     {
@@ -541,11 +615,18 @@ bool world::process_streaming_objects(bool hard_load)
                 stream_object(hierarchy_list[i]);
             }
             havok_bpo_pop_entering(island);
+#ifdef OPENRFG_X64
+            Stream_dbg_popped++;
+#endif
         }
         island = next;
     }
 #ifdef OPENRFG_X64
     stream_save_island(havok_bpi::ENTERING, island);
+    if (!hard_load)
+    {
+        stream_dbg_report(grid->layers[LAYER_LEVEL].stream_radius, num_streaming_objects);
+    }
 #endif
     if (Multiplayer || wrecking_crew_is_active())
     {
@@ -628,10 +709,12 @@ bool world::process_streaming_object(object* objp)
     const unsigned int index = pos_zone_index(objp->pos);
     if (index < 257 && global_zone_grid[index] != nullptr && global_zone_grid[index]->state != WZS_LOADED)
     {
+        STREAM_DBG_NOT_READY(SDR_ZONE);
         return false;
     }
     if (!Multiplayer && !wrecking_crew_is_active() && !ix_box_cylinder_xz(objp->last_known_bmin, objp->last_known_bmax, stream_pos, grid->layers[LAYER_LEVEL].stream_radius))
     {
+        STREAM_DBG_NOT_READY(SDR_RADIUS);
         return false;
     }
     if (objp->srid == 0 || objp->obj_flags.streamed)
@@ -648,8 +731,17 @@ bool world::process_streaming_object(object* objp)
         const stream2_status_val status = stream2_get_status(objp->srid);
         if (status != ST_ERROR)
         {
+            if (status != ST_LOADED)
+            {
+                STREAM_DBG_NOT_READY(SDR_PENDING);
+            }
             return status == ST_LOADED;
         }
+        STREAM_DBG_NOT_READY(SDR_ERROR);
+    }
+    else
+    {
+        STREAM_DBG_NOT_READY(SDR_REFUSED);
     }
     if (objp->get_obj_type() != OT_MOVER)
     {

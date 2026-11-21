@@ -679,6 +679,25 @@ bool stream2_do_frame(bool do_passive)
     return Stream_q != nullptr || (do_passive && Stream_q_passive != nullptr);
 }
 
+#ifdef OPENRFG_X64
+// OpenRFG: containers waiting in the load queue (for the OBJSTREAM log line in world_stream.cpp).
+int openrfg_stream2_queue_length()
+{
+    int count = 0;
+    stream2_container* const head = Stream_q;
+    if (head != nullptr)
+    {
+        stream2_container* sc = head;
+        do
+        {
+            count++;
+            sc = sc->q_next;
+        } while (sc != nullptr && sc != head && count < 100000);
+    }
+    return count;
+}
+#endif
+
 // 0x004A9E50 (:1235)
 void stream2_set_thread_ownership()
 {
