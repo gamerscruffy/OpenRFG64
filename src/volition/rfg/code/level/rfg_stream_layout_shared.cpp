@@ -33,6 +33,8 @@
 #include "volition/rfg/code/level/territory_shared.h"
 #include "volition/rfg/code/rfg.h"
 #include "volition/rfg/code/util/special_allocators.h"
+#include "volition/render_lib/code/rl_render_lib.h"
+#include "volition/render_lib/code/rl_screen_info.h"
 #include "volition/stream2/code/stream2.h"
 #include "volition/stream2/code/stream2_allocator.h"
 #include "volition/vlib/code/cfile/cfile.h"
@@ -59,6 +61,31 @@ static char Layout_territory_name[64]; // 0x02CEC150
 static char Layout_territory_start_zone[64]; // 0x02CEC190
 static stream_grid* Layout_grid; // 0x02CEC1D0, stream_layout_get_grid
 static mempool_base* Layout_pool; // 0x02CEC1D4
+
+// OpenRFG: the World Detail Distance level the level layer streams with (rl_lod_get_world_detail_level).
+static int s_world_detail_level = 0;
+
+void openrfg_log(const char* text); // crash_early.cpp
+
+// Magic numbers: the level cells are 170.33 m. 340 is the original radius (a box of up to 5x5 cells); 425 reaches up to
+// 6x6; 510 up to 7x7 (just under three cells, as the original stays just under two). The 32-bit build keeps 340: its
+// cell arrays hold 25.
+float stream_world_detail_level_radius(int level)
+{
+#ifdef OPENRFG_X64
+    if (level >= 2)
+    {
+        return 510.0f;
+    }
+    if (level == 1)
+    {
+        return 425.0f;
+    }
+#else
+    (void)level;
+#endif
+    return 340.0f;
+}
 static mempool_base* Layout_tmp_pool; // 0x02CEC1D8
 static mempool_base* zonescript_preload_pool_ptr; // 0x02CEC1DC
 // File extensions per vlib_platform; every platform entry holds the PC extension in this build.
@@ -466,6 +493,14 @@ static int stream_mask_bit(const stream_layer& layer, const stream_grid_cell* sr
 // 0x0091ADF0 (:1492)
 bool stream_layer::is_masked(const stream_grid_cell* src, const stream_grid_cell* chk)
 {
+    // OpenRFG: the mask only covers the (2 * load distance + 1)^2 cells around src. Cells past that (the larger World
+    // Detail Distance radii) have no mask bit and always stream; the original wrapped the bit index instead.
+    const int dx = (int)chk->grid_x - (int)src->grid_x;
+    const int dz = (int)chk->grid_z - (int)src->grid_z;
+    if (dx < -cell_load_distance || dx > cell_load_distance || dz < -cell_load_distance || dz > cell_load_distance)
+    {
+        return false;
+    }
     return ((1u << (stream_mask_bit(*this, src, chk) & 0x1F)) & src->stream_mask) == 0;
 }
 
@@ -542,7 +577,7 @@ void stream_layer::delete_cell_mask_region(stream_grid_cell* gc)
 }
 
 // 0x00921C50 (:1585)
-void stream_layer::stream_new_cells(farray<stream_grid_cell*,25>& cellsp, unsigned char priority)
+void stream_layer::stream_new_cells(farray<stream_grid_cell*,STREAM_MAX_ACTIVE_CELLS>& cellsp, unsigned char priority)
 {
     // The base and precache containers of every new cell; with packfiles also the h/v containers, which cover a row
     // or a column of cells each: per new cell, whichever direction has more h or v containers is requested.
@@ -658,7 +693,7 @@ void stream_layer::stream_new_cells(farray<stream_grid_cell*,25>& cellsp, unsign
 }
 
 // 0x00921F00 (:1704)
-void stream_layer::release_old_cells(farray<stream_grid_cell*,25>& cellsp)
+void stream_layer::release_old_cells(farray<stream_grid_cell*,STREAM_MAX_ACTIVE_CELLS>& cellsp)
 {
     for (int i = 0; i < cellsp.size(); i++)
     {
@@ -726,6 +761,29 @@ void stream_grid::clear()
 // 0x00930FB0 (:3790)
 void stream_grid::do_frame(const vector& stream_pos, bool single_zone_mode)
 {
+    // OpenRFG: the World Detail Distance option. A change takes effect here, unless the fragmentation handling has
+    // the radii shrunk (it restores them to the option's radius when it is done).
+    {
+        const int level = rl_lod_get_world_detail_level(rl_render_lib::get_instance()->get_level_of_detail());
+        if (level != s_world_detail_level)
+        {
+            s_world_detail_level = level;
+            if (!compact_ts.valid())
+            {
+                set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(level));
+            }
+            char text[200];
+            snprintf(text, sizeof(text), "STREAM world detail distance %d: level radius %.1f, level memory %u / %u KB used", level, stream_world_detail_level_radius(level), Level_memmgr.space_used() / 1024, Level_memmgr.space_max() / 1024);
+            openrfg_log(text);
+        }
+        static unsigned int s_frames = 0;
+        if (level > 0 && s_frames++ % 600 == 0)
+        {
+            char text[200];
+            snprintf(text, sizeof(text), "STREAM level cells %d, terrain cells %d, level memory %u / %u KB used, largest free %u KB", layers[LAYER_LEVEL].active_cells.size(), layers[LAYER_TERRAIN].active_cells.size(), Level_memmgr.space_used() / 1024, Level_memmgr.space_max() / 1024, Level_memmgr.largest_allocation_possible() / 1024);
+            openrfg_log(text);
+        }
+    }
     // The level cell under the stream position masks level cells (stream_mask).
     stream_grid_cell* current = nullptr;
     int current_index;
@@ -738,10 +796,10 @@ void stream_grid::do_frame(const vector& stream_pos, bool single_zone_mode)
     {
         stream_layer& layer = layers[l];
         const unsigned char priority = (unsigned char)(l == LAYER_TERRAIN ? STREAM_PRIORITY_TERRAIN : STREAM_PRIORITY_NORMAL);
-        farray<stream_grid_cell*,25> in_range;
-        farray<stream_grid_cell*,25> masked;
-        farray<stream_grid_cell*,25> new_cells;
-        farray<stream_grid_cell*,25> old_cells;
+        farray<stream_grid_cell*,STREAM_MAX_ACTIVE_CELLS> in_range;
+        farray<stream_grid_cell*,STREAM_MAX_ACTIVE_CELLS> masked;
+        farray<stream_grid_cell*,STREAM_MAX_ACTIVE_CELLS> new_cells;
+        farray<stream_grid_cell*,STREAM_MAX_ACTIVE_CELLS> old_cells;
         layer.calc_stream_box(layer.stream_bmin, layer.stream_bmax, stream_pos);
         int indices[256];
         bbox boxes[256];
@@ -826,7 +884,7 @@ void stream_grid::do_fragmentation_handling()
         {
             return;
         }
-        set_stream_radius(LAYER_LEVEL, 340.0f);
+        set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(s_world_detail_level));
         set_stream_radius(LAYER_TERRAIN, 510.0f);
         for (int l = LAYER_TERRAIN; l >= LAYER_LEVEL; l--)
         {
@@ -874,14 +932,14 @@ void stream_grid::do_fragmentation_handling()
     }
     if (!compact_super_emergency)
     {
-        set_stream_radius(LAYER_LEVEL, 170.0f);
+        set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(s_world_detail_level) * 0.5f);
         set_stream_radius(LAYER_TERRAIN, 336.6f);
         compact_super_emergency = true;
         compact_wait_ts.set(15000);
         compact_ts.set(5000);
         return;
     }
-    set_stream_radius(LAYER_LEVEL, 102.00001f);
+    set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(s_world_detail_level) * 0.3f);
     set_stream_radius(LAYER_TERRAIN, 168.3f);
     compact_super_emergency = false;
     compact_wait_ts.set(20000);
@@ -1171,7 +1229,7 @@ stream_grid* stream_layout_level_load(mempool_base* pool, mempool_base* tmp_pool
         salloc_pregame_split_unlock((rfg_split_mempool*)zonescript_preload_pool_ptr);
         zonescript_preload_pool_ptr = nullptr;
     }
-    grid->set_stream_radius(LAYER_LEVEL, 340.0f);
+    grid->set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(s_world_detail_level));
     grid->set_stream_radius(LAYER_TERRAIN, 510.0f);
     Layout_inited = true;
     return grid;

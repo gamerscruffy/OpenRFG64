@@ -77,6 +77,14 @@ static unsigned int pos_zone_index(const vector& pos)
 // of the (2 * cell_load_distance + 1)^2 square around it; inlined in monitor_grid and monitor_entering_zones).
 static bool cell_is_masked_in(const stream_layer& layer, const stream_grid_cell* center, const stream_grid_cell* cell)
 {
+    // OpenRFG: cells past the mask's neighbourhood (the larger World Detail Distance radii) count as streamed
+    // (stream_layer::is_masked).
+    const int dx = (int)cell->grid_x - (int)center->grid_x;
+    const int dz = (int)cell->grid_z - (int)center->grid_z;
+    if (dx < -layer.cell_load_distance || dx > layer.cell_load_distance || dz < -layer.cell_load_distance || dz > layer.cell_load_distance)
+    {
+        return true;
+    }
     const int width = layer.cell_load_distance * 2 + 1;
     const int bit = ((center->grid_z - cell->grid_z) * width + (width * width) / 2 - center->grid_x + cell->grid_x) & 0x1F;
     return (center->stream_mask & (1u << bit)) != 0;

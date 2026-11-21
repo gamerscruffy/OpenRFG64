@@ -19,7 +19,13 @@ namespace keen
         { 300000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_GpuScratchMem" }, // 3
         { 0u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_Graphics" }, // 4
         { 0u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_Framebuffers" }, // 5
+#ifdef OPENRFG_X64
+        // OpenRFG: 4x the original 220 MB for the World Detail Distance option (up to twice the building cells, with
+        // room for fragmentation); the level memory manager logs its use (STREAM lines).
+        { 880000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_Level" }, // 6
+#else
         { 220000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_Level" }, // 6
+#endif
         { 500000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_D3Dscratch" }, // 7
         { 190000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_Audio_Bank" }, // 8
         { 20000000u, 0x400u, MemoryType_MainMemory, 0u, 0x13u, "RFG_Audio" }, // 9

@@ -108,7 +108,10 @@ struct rl_level_of_detail
     // OpenRFG: the Dynamic Lights level plus one (0 = never set, counts as medium), the second padding byte. Read it
     // through rl_lod_get_dynamic_lights_level.
     unsigned char m_dynamic_lights; // 0x1D
-    unsigned char padding[118]; // 0x1E
+    // OpenRFG: the World Detail Distance level plus one (0 = never set, counts as normal), the third padding byte.
+    // Read it through rl_lod_get_world_detail_level.
+    unsigned char m_world_detail; // 0x1E
+    unsigned char padding[117]; // 0x1F
 };
 
 // OpenRFG: the SSAO level of the options menu: 0 off, 1 low (the original game's SSAO), 2 medium, 3 high, 4 very
@@ -147,6 +150,23 @@ inline void rl_lod_set_dynamic_lights_level(rl_level_of_detail& lod, int level)
         level = 2;
     }
     lod.m_dynamic_lights = (unsigned char)(level + 1);
+}
+
+// OpenRFG: the World Detail Distance level of the options menu: 0 normal (the original 5x5 building cells), 1 high,
+// 2 ultra (7x7; stream_world_detail_level_radius). An unset or out of range byte counts as normal.
+inline int rl_lod_get_world_detail_level(const rl_level_of_detail& lod)
+{
+    const int stored = lod.m_world_detail;
+    return (stored < 1 || stored > 3) ? 0 : stored - 1;
+}
+
+inline void rl_lod_set_world_detail_level(rl_level_of_detail& lod, int level)
+{
+    if (level < 0 || level > 2)
+    {
+        level = 0;
+    }
+    lod.m_world_detail = (unsigned char)(level + 1);
 }
 
 // ---- inline members (no .cpp home)

@@ -1873,11 +1873,14 @@ static void boot_stage_1_pools()
     tiny_buckets[1].num_hash_entries = 0x800;
 #ifdef OPENRFG_X64
     // 64-bit hash entries/pointers are larger than the 32-bit ones the 0x95010 size was made for.
-    Level_memmgr_header_pool.init(mempool_init_alloc(0x95010 * 3), 0x95010 * 3, "Level memmgr headers", 4, 8);
+    // OpenRFG: 4x the large allocation headers and hash entries (and 4x the header pool for them) for the World Detail
+    // Distance option's extra building cells.
+    Level_memmgr_header_pool.init(mempool_init_alloc(0x95010 * 12), 0x95010 * 12, "Level memmgr headers", 4, 8);
+    Level_memmgr.init(s_levelMemoryBlock.pStart, (unsigned int)s_levelMemoryBlock.size, 2, tiny_buckets, Level_memmgr_header_pool, 0x2000, Level_memmgr_header_pool, 0x3000);
 #else
     Level_memmgr_header_pool.init(mempool_init_alloc(0x95010), 0x95010, "Level memmgr headers", 4, 8);
-#endif
     Level_memmgr.init(s_levelMemoryBlock.pStart, (unsigned int)s_levelMemoryBlock.size, 2, tiny_buckets, Level_memmgr_header_pool, 0x800, Level_memmgr_header_pool, 0xC00);
+#endif
     Stream_world_allocator.init(&Level_memmgr, &Level_memmgr);
     RFG_scratch_pool.init(mempool_init_alloc(0x130000), 0x130000, "thread scratch space", 4, 8);
     Special_reserve.init_rfg_split_mempool("special reserve mempool", mempool_init_alloc(4), 4, 4, nullptr, 0, 4, 8);

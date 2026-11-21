@@ -95,6 +95,12 @@ static const char* cDisplay_settings_dynamic_lights[5] = {"MENU_OFF", "MENU_LOW"
 static const char* kDynamic_lights_caption_key = "OPENRFG_DYNAMIC_LIGHTS";
 static wchar_t kDynamic_lights_caption[] = L"Dynamic Lights";
 static const int DOPTIONS_ADVANCED_ROW_DYNAMIC_LIGHTS = 9;
+// OpenRFG: the World Detail Distance row after it (rl_lod_get_world_detail_level), 64-bit only: how far buildings
+// stream at full detail.
+static const char* cDisplay_settings_world_detail[3] = {"MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH"};
+static const char* kWorld_detail_caption_key = "OPENRFG_WORLD_DETAIL_DISTANCE";
+static wchar_t kWorld_detail_caption[] = L"World Detail Distance";
+static const int DOPTIONS_ADVANCED_ROW_WORLD_DETAIL = 10;
 static const char* cAnti_alias_lod_names[7] = {"MENU_OFF", "MENU_AA_LOD_MODE_2X", "MENU_AA_LOD_MODE_4X", "MENU_AA_LOD_MODE_8X", "MENU_AA_LOD_MODE_16X", "MENU_AA_LOD_MODE_8XQ", "MENU_AA_LOD_MODE_16XQ"}; // 0x016641B0
 static const char* cDisplay_default_lod_setting_names[5] = {"MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH", "MENU_CUSTOM"}; // 0x016641CC
 static const char* cDisplay_window_mode_names[3] = {"MENU_WINDOW_MODE_WINDOWED", "MENU_WINDOW_MODE_BORDERLESS", "MENU_WINDOW_MODE_FULLSCREEN"}; // 0x016641E0
@@ -255,7 +261,12 @@ static void display_info_set_to_default_lod_settings(display_default_settings de
     {
         return;
     }
-    Pending_lod = Default_lods[default_setting];
+    {
+        // OpenRFG: the presets leave World Detail Distance as it is (it is not part of them).
+        const int world_detail = rl_lod_get_world_detail_level(Pending_lod);
+        Pending_lod = Default_lods[default_setting];
+        rl_lod_set_world_detail_level(Pending_lod, world_detail);
+    }
     display_info_read_aa_modes();
     // Original: a level beyond the supported count (the level, not its index) clamps to the last mode.
     if ((int)Pending_lod.m_aa_lod > Num_supported_aa_modes)
@@ -430,7 +441,8 @@ static bool screen_info_changed()
 // 0x00892730 (:984)
 static bool lod_info_changed()
 {
-    return !lods_equal(Pending_lod, Old_lod);
+    // OpenRFG: World Detail Distance is not part of the presets (lods_equal), but changing it is a change.
+    return !lods_equal(Pending_lod, Old_lod) || rl_lod_get_world_detail_level(Pending_lod) != rl_lod_get_world_detail_level(Old_lod);
 }
 
 // 0x008AFA80 (:989)
@@ -575,6 +587,10 @@ static void option_change_occurred_doptions(int choice, void* new_value)
         case DOPTIONS_ADVANCED_ROW_DYNAMIC_LIGHTS:
             // OpenRFG: Dynamic Lights off, low, medium, high, very high.
             rl_lod_set_dynamic_lights_level(Pending_lod, value);
+            return;
+        case DOPTIONS_ADVANCED_ROW_WORLD_DETAIL:
+            // OpenRFG: World Detail Distance normal (medium), high, ultra (very high).
+            rl_lod_set_world_detail_level(Pending_lod, value);
             return;
         default:
             return;
@@ -1261,6 +1277,19 @@ void set_detail_page(detail_option_pages page)
             }
         }
         ui_menu_add_char_list_item(Menu_handle_doptions, kDynamic_lights_caption_key, cDisplay_settings_dynamic_lights, 5, option_change_occurred_doptions, rl_lod_get_dynamic_lights_level(Pending_lod), true);
+#ifdef OPENRFG_X64
+        // OpenRFG: row 10, World Detail Distance (64-bit only: the 32-bit cell arrays hold the original 5x5).
+        {
+            const unsigned int caption_hash = keen::getCrc32LwrValue(kWorld_detail_caption_key);
+            wchar_t* existing = nullptr;
+            Localization_hash.get(caption_hash, existing);
+            if (existing == nullptr)
+            {
+                Localization_hash.insert_key_data(caption_hash, kWorld_detail_caption);
+            }
+        }
+        ui_menu_add_char_list_item(Menu_handle_doptions, kWorld_detail_caption_key, cDisplay_settings_world_detail, 3, option_change_occurred_doptions, rl_lod_get_world_detail_level(Pending_lod), true);
+#endif
         // Magic number: row 1, soft shadows.
         ui_menu_enable_menu_item(Menu_handle_doptions, 1, false);
         ui_menu_show_menu_item(Menu_handle_doptions, 1, false);

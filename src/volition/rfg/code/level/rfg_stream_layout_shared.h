@@ -52,6 +52,18 @@ enum layout_layer
     NUM_LAYERS = 2,
 };
 
+// OpenRFG: the most cells a layer streams at once. The original is 25 (5x5); the 64-bit build allows 7x7 for the
+// World Detail Distance option (stream_world_detail_level_radius).
+#ifdef OPENRFG_X64
+#define STREAM_MAX_ACTIVE_CELLS 49
+#else
+#define STREAM_MAX_ACTIVE_CELLS 25
+#endif
+
+// OpenRFG: the level layer's stream radius for a World Detail Distance level (0 normal = 5x5 cells, 1 high = up to
+// 6x6, 2 ultra = 7x7; levels above 0 only on 64-bit).
+float stream_world_detail_level_radius(int level);
+
 // size 0x18
 class stream_grid_cell
 {
@@ -92,8 +104,8 @@ public:
     void calc_stream_box(vector& _bmin, vector& _bmax, const vector& pos); // 0x0091AD50 (:1482)
     bool is_masked(const stream_grid_cell* src, const stream_grid_cell* chk); // 0x0091ADF0 (:1492)
     bool toggle_mask(stream_grid_cell* src, const stream_grid_cell* chk); // 0x0091AE40 (:1500)
-    void stream_new_cells(farray<stream_grid_cell*,25>& cellsp, unsigned char priority); // 0x00921C50 (:1585)
-    void release_old_cells(farray<stream_grid_cell*,25>& cellsp); // 0x00921F00 (:1704)
+    void stream_new_cells(farray<stream_grid_cell*,STREAM_MAX_ACTIVE_CELLS>& cellsp, unsigned char priority); // 0x00921C50 (:1585)
+    void release_old_cells(farray<stream_grid_cell*,STREAM_MAX_ACTIVE_CELLS>& cellsp); // 0x00921F00 (:1704)
     void create_cell_mask_region(stream_grid_cell* gc); // 0x00929920 (:1517)
     void delete_cell_mask_region(stream_grid_cell* gc); // 0x00921B80 (:1549)
 
@@ -107,7 +119,7 @@ public:
     vector bmax; // 0x24
     vector stream_bmin; // 0x30
     vector stream_bmax; // 0x3C
-    farray<stream_grid_cell*,25> active_cells; // 0x48
+    farray<stream_grid_cell*,STREAM_MAX_ACTIVE_CELLS> active_cells; // 0x48
     farray<masked_cell,50> masked_cells; // 0xBC
     vector cell_dim; // 0x4B4
 };
