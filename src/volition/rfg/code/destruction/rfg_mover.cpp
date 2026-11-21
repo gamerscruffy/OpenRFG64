@@ -3815,7 +3815,7 @@ static void openrfg_log_mover_pieces(rfg_mover* rm, const char* what, int count,
 // pieces whose world position is within 8 m sideways of the player, with their lowest and highest height.
 static void openrfg_log_near_shape(rfg_mover* rm, rfg_destroyable_shape* shape, hkpRigidBody* rb, const vector& p, const char* name)
 {
-    static unsigned int s_done[120];
+    static const rfg_mover* s_done[120];
     static int s_count = 0;
     if (s_count >= 120 || shape == nullptr || rb == nullptr)
     {
@@ -3823,12 +3823,12 @@ static void openrfg_log_near_shape(rfg_mover* rm, rfg_destroyable_shape* shape, 
     }
     for (int i = 0; i < s_count; i++)
     {
-        if (s_done[i] == rm->handle)
+        if (s_done[i] == rm)
         {
             return;
         }
     }
-    s_done[s_count++] = rm->handle;
+    s_done[s_count++] = rm;
 
     vector body_pos;
     matrix body_orient;
