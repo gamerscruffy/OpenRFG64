@@ -293,6 +293,19 @@ T& base_array<T>::operator[](int i)
     return elt[i];
 }
 
+// OpenRFG: the unsigned overloads, used on 64-bit where object indices (OPENRFG_OBJECT_INDEX) are unsigned int.
+template<typename T>
+const T& base_array<T>::operator[](unsigned int i) const
+{
+    return elt[i];
+}
+
+template<typename T>
+T& base_array<T>::operator[](unsigned int i)
+{
+    return elt[i];
+}
+
 // <int,16> 0x00778DC0 (.h:512)
 template<typename T, int N>
 farray<T, N>::farray()
@@ -381,6 +394,13 @@ T& farray<T, N>::operator[](int i)
 // <int,16> 0x008A26D0 (.h:558)
 template<typename T, int N>
 T& farray<T, N>::operator[](unsigned int i)
+{
+    return this->elt[i];
+}
+
+// OpenRFG
+template<typename T, int N>
+const T& farray<T, N>::operator[](unsigned int i) const
 {
     return this->elt[i];
 }
