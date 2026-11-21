@@ -103,6 +103,7 @@ bool g_fxaaEnabled = true; // 0x014FA47C
 bool g_ssaoVisEnabled = false; // 0x01B7BD1E
 extern bool g_spotShadowVisEnabled; // rl_scene_shadows.cpp (OpenRFG)
 extern bool g_spotShadowUseLightPass; // rl_scene_shadows.cpp (OpenRFG)
+void rl_spot_shadow_tag_casters(pool_list<rl_light*>& lights, pool_list<rl_renderable_instance*>& instances); // rl_scene_shadows.cpp (OpenRFG)
 const keen::TextureData* rl_spot_shadow_map_texture(); // rl_scene_shadows.cpp (OpenRFG)
 void openrfg_log(const char* text); // crash_early.cpp
 bool Rl_landmarks_enabled = true; // 0x014FA47D
@@ -418,6 +419,8 @@ void rl_scene_renderer::render(rl_renderer& mainRenderer, rl_renderer& deferredR
             visibility_manager->m_landmark_lod_view_frustum = landmark_frustum;
             visibility_manager->m_viewer_p = &camera;
             visibility_manager->perform_visibility_pass(mainRenderer, camera, &scene);
+            // OpenRFG: each spot light's shadow casters (its own pass, less its owner), before the instances are batched.
+            rl_spot_shadow_tag_casters(m_visible_lights, m_visible_renderable_instances);
             m_num_transparent_shadow_objects = 0;
             m_terrain_renderer_p->prerender(&camera, mainRenderer);
             const vector& render_offset = m_scene_p->m_render_offset;
@@ -676,13 +679,13 @@ void rl_scene_renderer::render_scene_part2(rl_renderer& deferredRenderer, rl_cam
             openrfg_log(g_spotShadowVisEnabled ? "DYNLIGHTS spot shadow debug view on" : "DYNLIGHTS spot shadow debug view off");
         }
         s_spot_vis_key_was_down = down;
-        // Ctrl+Shift+J: the map's casters from the light's sphere pass instead of its shadow pass (diagnostic).
+        // Ctrl+Shift+J: the map's casters from the light's own pass as is, owner included (diagnostic).
         static bool s_spot_pass_key_was_down = false;
         const bool pass_down = (GetAsyncKeyState(0x11) & 0x8000) != 0 && (GetAsyncKeyState(0x10) & 0x8000) != 0 && (GetAsyncKeyState('J') & 0x8000) != 0;
         if (pass_down && !s_spot_pass_key_was_down)
         {
             g_spotShadowUseLightPass = !g_spotShadowUseLightPass;
-            openrfg_log(g_spotShadowUseLightPass ? "DYNLIGHTS spot shadow casters: light sphere pass" : "DYNLIGHTS spot shadow casters: shadow pass");
+            openrfg_log(g_spotShadowUseLightPass ? "DYNLIGHTS spot shadow casters: light pass (owner included)" : "DYNLIGHTS spot shadow casters: tagged (owner excluded)");
         }
         s_spot_pass_key_was_down = pass_down;
     }
