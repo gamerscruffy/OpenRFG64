@@ -12,6 +12,7 @@
 #include "volition/render_lib/code/rl_camera.h"
 #include "volition/render_lib/code/rl_clb_projector.h"
 #include "volition/render_lib/code/rl_dyn_texture.h"
+#include "volition/render_lib/code/rl_light.h"
 #include "volition/render_lib/code/rl_material_library.h"
 #include "volition/render_lib/code/rl_render_texture.h"
 #include "volition/render_lib/code/rl_renderable_instance.h"
@@ -43,6 +44,76 @@ float g_terrainShadowsMaxDist = 240.0f; // 0x014FA550
 float wrapMax(float x, float max); // 0x004C79C0 (:247)
 float wrapMinMax(float x, float min, float max); // 0x004C7A00 (:252)
 void buildShadowParamsProjectionTexture(rl_shadow_render_parameters* pParams, rl_camera* camera, keen::TextureData* pTexture, float scrollX, float scrollY); // 0x004C7A60 (:303)
+
+// OpenRFG, dynamic light shadows stage 1: the spot light shadow map and its debug view (Ctrl+Shift+K shows the map
+// full screen, and only then is it drawn). Later stages use the map to keep shadowed pixels out of the light pass.
+bool g_spotShadowVisEnabled = false;
+static rl_render_texture* Spot_shadow_target_p = nullptr;
+static const int SPOT_SHADOW_MAP_SIZE = 1024;
+
+// The spot shadow map's texture (null before the first one is drawn).
+const keen::TextureData* rl_spot_shadow_map_texture()
+{
+    return Spot_shadow_target_p != nullptr ? Spot_shadow_target_p->m_dyn_texture_p->get_texture_data().pData : nullptr;
+}
+
+// The light's shadow map: a perspective view down the cone, as the shadow map matrix (view * projection, which
+// render_shadow_pass sets as the view with an identity projection, the same row vector, 0..1 depth convention as the
+// sun's matrices). The scene is drawn in render offset space, so the eye is the light's position minus the offset.
+// False: the light has no shadow visibility pass, or is not a spot light.
+bool rl_scene_renderer::render_spot_light_shadow_map(rl_renderer& renderer, rl_camera& camera, rl_light& light, rl_batched_pass& batch_to_use, rl_renderable_instance** transparent_casters, unsigned int num_transparent_casters)
+{
+    const unsigned int vis_flags = light.get_shadow_vis_pass_flags();
+    if (light.get_light_type() != rl_light::LIGHT_TYPE_SPOT_LIGHT || vis_flags == 0xFFFFFFFF)
+    {
+        return false;
+    }
+    if (Spot_shadow_target_p == nullptr)
+    {
+        // Never freed: it lives as long as the renderer does.
+        Spot_shadow_target_p = new rl_render_texture();
+        Spot_shadow_target_p->init(SPOT_SHADOW_MAP_SIZE, SPOT_SHADOW_MAP_SIZE, RL_FORMAT_SHADOW_MAP, 0, "spotShadowMap", 2);
+    }
+    if (Spot_shadow_target_p->m_msaa_texture.pData != nullptr)
+    {
+        Spot_shadow_target_p->m_flags |= rl_render_texture::kRequiresResolve;
+    }
+    const vector offset = renderer.get_render_offset();
+    const vector& position = light.get_position();
+    const vector eye(position.x - offset.x, position.y - offset.y, position.z - offset.z);
+    vector direction;
+    light.get_spotlight_fvec(direction);
+    direction.normalize();
+    vector up = UP_VECTOR;
+    if (fabsf(direction.x * UP_VECTOR.x + direction.y * UP_VECTOR.y + direction.z * UP_VECTOR.z) > 0.99f)
+    {
+        up = FORWARD_VECTOR;
+    }
+    matrix orient;
+    orient.make_uvec(direction, up);
+    matrix44 view;
+    view.set(orient.rvec.x, orient.uvec.x, orient.fvec.x, 0.0f,
+             orient.rvec.y, orient.uvec.y, orient.fvec.y, 0.0f,
+             orient.rvec.z, orient.uvec.z, orient.fvec.z, 0.0f,
+             -(orient.rvec.x * eye.x + orient.rvec.y * eye.y + orient.rvec.z * eye.z),
+             -(orient.uvec.x * eye.x + orient.uvec.y * eye.y + orient.uvec.z * eye.z),
+             -(orient.fvec.x * eye.x + orient.fvec.y * eye.y + orient.fvec.z * eye.z), 1.0f);
+    // Magic numbers: the cone's half angle (the falloff angle) limited to 6..83 degrees; near 0.3 m; far = the light's range.
+    float half_angle = light.get_hotspot_falloff_size();
+    half_angle = half_angle < 0.1f ? 0.1f : (half_angle > 1.45f ? 1.45f : half_angle);
+    const float near_z = 0.3f;
+    const float far_z = light.get_attenuation_end();
+    const float scale = 1.0f / tanf(half_angle);
+    const float depth_scale = far_z / (far_z - near_z);
+    matrix44 projection;
+    projection.set(scale, 0.0f, 0.0f, 0.0f, 0.0f, scale, 0.0f, 0.0f, 0.0f, 0.0f, depth_scale, 1.0f, 0.0f, 0.0f, -near_z * depth_scale, 0.0f);
+    rl_shadow_creation_parameters creation_params;
+    creation_params.shadow_map_matrix = view * projection;
+    creation_params.shadow_zbias = 0.0f;
+    creation_params.shadow_slope_zbias = 0.0f;
+    render_shadow_pass(renderer, camera, light, Spot_shadow_target_p->m_render_target, SPOT_SHADOW_MAP_SIZE, SPOT_SHADOW_MAP_SIZE, creation_params, batch_to_use, vis_flags, transparent_casters, num_transparent_casters, true);
+    return true;
+}
 
 // 0x00517D60 (:78)
 // One shadow map: depth only into depth_target (cleared to 1, the viewport z range 0..1), with the light's shadow

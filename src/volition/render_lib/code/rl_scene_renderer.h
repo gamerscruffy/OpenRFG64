@@ -158,6 +158,8 @@ public:
     void restore_textures();
     void begin_exp_biasing();
     void end_exp_biasing();
+    // OpenRFG: draws the scene depth from a spot light into a shadow map (rl_scene_shadows.cpp). Stage 1 of the dynamic light shadows.
+    bool render_spot_light_shadow_map(rl_renderer& renderer, rl_camera& camera, rl_light& light, rl_batched_pass& batch_to_use, rl_renderable_instance** transparent_casters, unsigned int num_transparent_casters);
     void render_lighting_passes(rl_renderer& renderer, rl_camera& camera, rl_light& primary_light, rl_batched_pass& batch_to_use, rl_renderable_instance** transparent_casters, unsigned int num_transparent_casters, const bool msaa_enabled); // 0x0054DC00 (rl_scene_renderer_lighting.cpp:19)
     void render_base_pass(rl_renderer& renderer, rl_camera& camera, rl_light& light, rl_shadow_render_parameters& shadow_render_params, rl_iterrain_renderer* terrain_renderer_p, rl_batched_pass& batched_pass, const unsigned int vis_flags, const bool skip_decals, const bool alpha_blend, const rl_prim_color_write_mode color_write_mode, const bool msaa_enabled, bool isMainPass, rl_terrain_mode terrain_mode); // 0x00544770 (:1251)
     void render_lighting_pass(rl_renderer& renderer, rl_camera& camera, rl_light& light, rl_shadow_render_parameters& shadow_render_params, rl_iterrain_renderer* terrain_renderer_p, rl_batched_pass& batched_pass, const unsigned int vis_flags, const bool skip_decals, const bool alpha_blend, const rl_prim_color_write_mode color_write_mode, const bool msaa_enabled); // 0x00545C00 (rl_scene_renderer_lighting.cpp:56)

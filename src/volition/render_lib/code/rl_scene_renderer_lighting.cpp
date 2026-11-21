@@ -18,6 +18,7 @@
 #include <stdio.h>
 
 void openrfg_log(const char* text); // crash_early.cpp
+extern bool g_spotShadowVisEnabled; // rl_scene_shadows.cpp
 
 // The position the lights are sorted by distance to (the camera).
 static vector Reference_pos; // 0x01C20A54
@@ -155,6 +156,25 @@ void rl_scene_renderer::render_lighting_passes(rl_renderer& renderer, rl_camera&
 {
     Reference_pos = camera.get_position();
     m_visible_lights.sort(sort_lights_by_distance);
+    // OpenRFG: stage 1 of the dynamic light shadows, the nearest spot light's shadow map (the Ctrl+Shift+K debug view).
+    if (g_spotShadowVisEnabled)
+    {
+        static unsigned int s_logged = 0;
+        for (int i = 0; i < m_visible_lights.size(); i++)
+        {
+            rl_light* spot = m_visible_lights[i];
+            if (spot != &primary_light && render_spot_light_shadow_map(renderer, camera, *spot, batch_to_use, transparent_casters, num_transparent_casters))
+            {
+                if (s_logged++ % 240 == 0)
+                {
+                    char text[200];
+                    snprintf(text, sizeof(text), "DYNLIGHTS spot shadow map drawn for light at (%.1f %.1f %.1f) range=%.1f", spot->get_position().x, spot->get_position().y, spot->get_position().z, spot->get_attenuation_end());
+                    openrfg_log(text);
+                }
+                break;
+            }
+        }
+    }
     for (int i = 0; i < m_visible_lights.size(); i++)
     {
         rl_light* light = m_visible_lights[i];
