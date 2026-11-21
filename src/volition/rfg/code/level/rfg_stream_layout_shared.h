@@ -56,8 +56,10 @@ enum layout_layer
 // World Detail Distance option (stream_world_detail_level_radius).
 #ifdef OPENRFG_X64
 #define STREAM_MAX_ACTIVE_CELLS 49
+#define STREAM_MAX_CELL_SPAN 7
 #else
 #define STREAM_MAX_ACTIVE_CELLS 25
+#define STREAM_MAX_CELL_SPAN 5
 #endif
 
 // OpenRFG: the level layer's stream radius for a World Detail Distance level (0 normal = 5x5 cells, 1 high = up to

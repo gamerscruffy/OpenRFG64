@@ -620,12 +620,27 @@ void stream_layer::stream_new_cells(farray<stream_grid_cell*,STREAM_MAX_ACTIVE_C
         return;
     }
 
-    // 5x5 window of the new cells, indexed [x * 5 + z].
-    stream_grid_cell* window[25] = {};
+    // Window of the new cells (5x5 originally, STREAM_MAX_CELL_SPAN square here), indexed [x * span + z].
+    stream_grid_cell* window[STREAM_MAX_CELL_SPAN * STREAM_MAX_CELL_SPAN] = {};
+    if (max_x - (int)min_x >= STREAM_MAX_CELL_SPAN || max_z - (int)min_z >= STREAM_MAX_CELL_SPAN)
+    {
+        // Wider than the window: request each cell's own packfile instead of grouping them.
+        for (int i = 0; i < cellsp.size(); i++)
+        {
+            stream_grid_cell* const cell = cellsp[i];
+            const unsigned int srid = cell->srid[1] != 0 ? cell->srid[1] : cell->srid[2];
+            if (srid != 0)
+            {
+                stream2_set_priority(srid, priority);
+                stream2_request(srid);
+            }
+        }
+        return;
+    }
     for (int i = 0; i < cellsp.size(); i++)
     {
         stream_grid_cell* const cell = cellsp[i];
-        window[(cell->grid_x - min_x) * 5 + cell->grid_z - min_z] = cell;
+        window[(cell->grid_x - min_x) * STREAM_MAX_CELL_SPAN + cell->grid_z - min_z] = cell;
     }
     const int num_z = max_z - (int)min_z;
     const int num_x = max_x - (int)min_x;
@@ -633,14 +648,14 @@ void stream_layer::stream_new_cells(farray<stream_grid_cell*,STREAM_MAX_ACTIVE_C
     {
         for (int x = 0; x <= num_x; x++)
         {
-            if (window[x * 5 + z] == nullptr)
+            if (window[x * STREAM_MAX_CELL_SPAN + z] == nullptr)
             {
                 continue;
             }
             int h_count = 0;
             for (int x2 = x; x2 <= num_x; x2++)
             {
-                if (window[x2 * 5 + z] != nullptr && window[x2 * 5 + z]->srid[1] != 0)
+                if (window[x2 * STREAM_MAX_CELL_SPAN + z] != nullptr && window[x2 * STREAM_MAX_CELL_SPAN + z]->srid[1] != 0)
                 {
                     h_count++;
                 }
@@ -648,7 +663,7 @@ void stream_layer::stream_new_cells(farray<stream_grid_cell*,STREAM_MAX_ACTIVE_C
             int v_count = 0;
             for (int z2 = z; z2 <= num_z; z2++)
             {
-                if (window[x * 5 + z2] != nullptr && window[x * 5 + z2]->srid[2] != 0)
+                if (window[x * STREAM_MAX_CELL_SPAN + z2] != nullptr && window[x * STREAM_MAX_CELL_SPAN + z2]->srid[2] != 0)
                 {
                     v_count++;
                 }
@@ -657,7 +672,7 @@ void stream_layer::stream_new_cells(farray<stream_grid_cell*,STREAM_MAX_ACTIVE_C
             {
                 for (int z2 = z; z2 <= num_z; z2++)
                 {
-                    stream_grid_cell*& cell = window[x * 5 + z2];
+                    stream_grid_cell*& cell = window[x * STREAM_MAX_CELL_SPAN + z2];
                     if (cell == nullptr)
                     {
                         continue;
@@ -675,7 +690,7 @@ void stream_layer::stream_new_cells(farray<stream_grid_cell*,STREAM_MAX_ACTIVE_C
             {
                 for (int x2 = x; x2 <= num_x; x2++)
                 {
-                    stream_grid_cell*& cell = window[x2 * 5 + z];
+                    stream_grid_cell*& cell = window[x2 * STREAM_MAX_CELL_SPAN + z];
                     if (cell == nullptr)
                     {
                         continue;
