@@ -1875,8 +1875,10 @@ static void boot_stage_1_pools()
     // 64-bit hash entries/pointers are larger than the 32-bit ones the 0x95010 size was made for.
     // OpenRFG: 4x the large allocation headers and hash entries (and 4x the header pool for them) for the World Detail
     // Distance option's extra building cells.
-    Level_memmgr_header_pool.init(mempool_init_alloc(0x95010 * 12), 0x95010 * 12, "Level memmgr headers", 4, 8);
-    Level_memmgr.init(s_levelMemoryBlock.pStart, (unsigned int)s_levelMemoryBlock.size, 2, tiny_buckets, Level_memmgr_header_pool, 0x2000, Level_memmgr_header_pool, 0x3000);
+    // OpenRFG: another 4x (32768 large allocations) after the 15x15 view distance ran the headers out and crashed a
+    // destroyable instance allocation.
+    Level_memmgr_header_pool.init(mempool_init_alloc(0x95010 * 24), 0x95010 * 24, "Level memmgr headers", 4, 8);
+    Level_memmgr.init(s_levelMemoryBlock.pStart, (unsigned int)s_levelMemoryBlock.size, 2, tiny_buckets, Level_memmgr_header_pool, 0x8000, Level_memmgr_header_pool, 0xC000);
 #else
     Level_memmgr_header_pool.init(mempool_init_alloc(0x95010), 0x95010, "Level memmgr headers", 4, 8);
     Level_memmgr.init(s_levelMemoryBlock.pStart, (unsigned int)s_levelMemoryBlock.size, 2, tiny_buckets, Level_memmgr_header_pool, 0x800, Level_memmgr_header_pool, 0xC00);

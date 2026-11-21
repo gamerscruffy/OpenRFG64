@@ -149,7 +149,7 @@ rl_destroyable_model_instance_shared_base::~rl_destroyable_model_instance_shared
         return;
     }
     Rl_destroyable_instance_memmgr->free(m_base_sub_instances);
-    if (Rl_destroyable_instance_alloc_stats_cb != nullptr)
+    if (Rl_destroyable_instance_alloc_stats_cb != nullptr && m_base_sub_instances != nullptr)
     {
         Rl_destroyable_instance_alloc_stats_cb(-shared_base_alloc_size(m_num_base_sub_instances, m_base_kdtree == nullptr));
     }
@@ -265,6 +265,14 @@ bool rl_destroyable_model_instance_shared_base::init(rl_fp_kdtree_base_data* bas
     m_ref_count = 0;
     m_base_kdtree = nullptr;
     unsigned char* block = (unsigned char*)Rl_destroyable_instance_memmgr->alloc(size, "rl_destroyable_model_instance_shared_base::init", 0x10);
+#ifdef OPENRFG_X64
+    if (block == nullptr)
+    {
+        // The level memory had no block this big: no instance (the caller frees it and the building stays undrawn).
+        m_base_sub_instances = nullptr;
+        return false;
+    }
+#endif
     if (Rl_destroyable_instance_alloc_stats_cb != nullptr)
     {
         Rl_destroyable_instance_alloc_stats_cb(size);

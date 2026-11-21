@@ -231,7 +231,12 @@ void* split_memmgr::alloc(unsigned int size, const char* debug_name, unsigned in
     split_memblk* blk = cached_query;
     if (blk == nullptr || ((((unsigned int)blk->mem_base & (align - 1)) != 0 || blk->info.size < size) && blk->info.size < size + align))
     {
+#ifdef OPENRFG_X64
+        // No free block at all (see the note in split_memblk::alloc): fail the allocation instead of crashing.
+        blk = last_free != nullptr ? last_free->can_alloc(size, align) : nullptr;
+#else
         blk = last_free->can_alloc(size, align);
+#endif
     }
     cached_query = nullptr;
     if (blk == nullptr)

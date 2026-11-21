@@ -10,6 +10,9 @@
 // - free() returns the merged previous block after returning `this` to the pool.
 
 #include "volition/vlib/code/memory/split_memblk.h"
+#ifdef OPENRFG_X64
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+#endif
 
 #include "volition/vlib/code/memory/object_pool.h"
 
@@ -82,6 +85,19 @@ split_memblk* split_memblk::alloc(unsigned int size, split_memblk*& root, dynami
     }
 
     split_memblk* const old_next = next;
+#ifdef OPENRFG_X64
+    // Original bug (x86): the block was shrunk before the header for the rest was allocated, so when the header pool was
+    // full the rest was lost for good and, if it was the only free block, the free tree became empty (the next
+    // allocation then crashed in can_alloc). Here the block keeps its whole size when no header is left.
+    split_memblk* const blk = pool.alloc(0);
+    if (blk == nullptr)
+    {
+        openrfg_fail_log("memblk-pool-full", "no header left to split a %u byte block (%u bytes left over stay with the allocation)", size, rest);
+        return nullptr;
+    }
+    info.size = size;
+    info.usable_size = size;
+#else
     info.size = size;
     info.usable_size = size;
     split_memblk* const blk = pool.alloc(0);
@@ -89,6 +105,7 @@ split_memblk* split_memblk::alloc(unsigned int size, split_memblk*& root, dynami
     {
         return nullptr;
     }
+#endif
     blk->info.size = rest;
     blk->info.usable_size = rest;
     blk->info.requested_size = 0;
