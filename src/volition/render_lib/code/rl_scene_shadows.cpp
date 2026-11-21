@@ -48,6 +48,8 @@ void buildShadowParamsProjectionTexture(rl_shadow_render_parameters* pParams, rl
 // OpenRFG, dynamic light shadows stage 1: the spot light shadow map and its debug view (Ctrl+Shift+K shows the map
 // full screen, and only then is it drawn). Later stages use the map to keep shadowed pixels out of the light pass.
 bool g_spotShadowVisEnabled = false;
+// The shadow map's clear value (1 = far). The spot light debug view clears to 0, so drawn casters show against black.
+static float g_shadowClearValue = 1.0f;
 static rl_render_texture* Spot_shadow_target_p = nullptr;
 static const int SPOT_SHADOW_MAP_SIZE = 1024;
 
@@ -124,8 +126,6 @@ bool rl_scene_renderer::render_spot_light_shadow_map(rl_renderer& renderer, rl_c
 // transforms, viewport, z range and macro state are restored afterwards.
 // Notes (decompiled behaviour, kept as is): the pixel and vertex shader resources are unbound directly on the D3D
 // context (bypassing the command writer's cache), and the base pass flag is left as base_pass.
-// OpenRFG: the shadow map's clear value (1 = far). The spot light debug view clears to 0, so drawn casters show against black.
-static float g_shadowClearValue = 1.0f;
 void rl_scene_renderer::render_shadow_pass(rl_renderer& renderer, rl_camera& camera, rl_light& light, const rl_dev_render_target& depth_target, int width, int height, rl_shadow_creation_parameters& shadow_creation_params, rl_batched_pass& batch_to_use, const unsigned int vis_flags, rl_renderable_instance** transparent_casters, unsigned int num_transparent_casters, const bool base_pass)
 {
     // Magic number: 16, every pixel and vertex shader resource slot.
