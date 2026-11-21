@@ -1168,6 +1168,16 @@ void Action_callback_spawn_squad(script_node** args)
     if (node != nullptr)
     {
         const unsigned int handle = node->spawn_child_object(MAP_ELEMENT_INVALID, MAP_ICON_TYPE_NORMAL);
+#ifdef OPENRFG_X64
+        {
+            // OpenRFG: scripted squad spawns are rare, so each one is logged (see SCRIPTPLACE in human_teleport).
+            char msg[256];
+            object* made = handle != 0xFFFFFFFF ? World.object_from_handle(handle) : nullptr;
+            snprintf(msg, sizeof(msg), "SCRIPTPLACE spawn_squad node=%08X at <%.1f %.1f %.1f> -> squad=%08X at <%.1f %.1f %.1f>", (unsigned int)*args[0], node->pos.x, node->pos.y, node->pos.z, handle,
+                made != nullptr ? made->pos.x : 0.0f, made != nullptr ? made->pos.y : 0.0f, made != nullptr ? made->pos.z : 0.0f);
+            openrfg_log(msg);
+        }
+#endif
         if (handle != 0xFFFFFFFF)
         {
             Action_return_value.set(handle);
