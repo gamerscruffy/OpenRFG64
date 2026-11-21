@@ -33,7 +33,7 @@ struct restricted_area_polygon_data
     vector2 warning_polygon[64]; // 0x208
 };
 
-extern object_pool<restricted_area_polygon_data,64,1> Polygon_pool; // 0x0339FB50
+extern object_pool<restricted_area_polygon_data,OPENRFG_ZONE_POOL(64),1> Polygon_pool; // 0x0339FB50
 
 // size 0x138
 class object_restricted_area : public object
