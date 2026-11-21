@@ -357,6 +357,50 @@ void openrfg_log(const char* text)
     }
 }
 
+#ifdef _M_X64
+// Debug aid: a base_array (varray.inl) ran past its capacity and dropped elements. Writes one "VARRAY full" line per
+// distinct call stack (up to 32), with exe-relative addresses for llvm-symbolizer and OpenRFG.pdb.
+void openrfg_varray_overflow(int capacity, int element_size)
+{
+    static volatile LONG Lock = 0;
+    static void* Seen[32][3];
+    static int Num_seen = 0;
+    static volatile LONG Total = 0;
+    const LONG total = InterlockedIncrement(&Total);
+    void* frames[8] = {};
+    const USHORT count = RtlCaptureStackBackTrace(1, 8, frames, nullptr);
+    while (InterlockedCompareExchange(&Lock, 1, 0) != 0)
+    {
+    }
+    bool seen = false;
+    for (int i = 0; i < Num_seen && !seen; i++)
+    {
+        seen = Seen[i][0] == frames[0] && Seen[i][1] == frames[1] && Seen[i][2] == frames[2];
+    }
+    const bool report = !seen && Num_seen < 32;
+    if (report)
+    {
+        Seen[Num_seen][0] = frames[0];
+        Seen[Num_seen][1] = frames[1];
+        Seen[Num_seen][2] = frames[2];
+        Num_seen++;
+    }
+    InterlockedExchange(&Lock, 0);
+    if (!report)
+    {
+        return;
+    }
+    const unsigned char* base = (const unsigned char*)GetModuleHandleA(nullptr);
+    char line[512];
+    int pos = snprintf(line, sizeof(line), "VARRAY full (overflow #%ld): capacity %d, element %d bytes, stack", (long)total, capacity, element_size);
+    for (USHORT i = 0; i < count && pos < (int)sizeof(line) - 24; i++)
+    {
+        pos += snprintf(line + pos, sizeof(line) - pos, " exe+0x%llX", (unsigned long long)((const unsigned char*)frames[i] - base));
+    }
+    openrfg_log(line);
+}
+#endif
+
 // ---- hang watchdog (debug aid): rfg_do_frame calls openrfg_heartbeat() every frame; if no frame completes for 6 seconds
 // the main thread's stack is written to openrfg_crash.txt as "HANG" (up to 3 times).
 namespace

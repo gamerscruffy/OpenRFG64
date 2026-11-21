@@ -8,6 +8,10 @@
 #include "volition/vlib/code/math/rand.h"
 #include "volition/vlib/code/vlib_core/vlib_assert.h"
 
+#ifdef OPENRFG_X64
+void openrfg_varray_overflow(int capacity, int element_size); // crash_early.cpp: logs which array overflowed
+#endif
+
 // <int> 0x007054F0
 template<typename T>
 base_array<T>::base_array()
@@ -28,6 +32,9 @@ void base_array<T>::init(T* data_ptr, int size, int num_existing_elements)
     if (size < num_existing_elements)
     {
         VLIB_CRITICAL_FAILURE();
+#ifdef OPENRFG_X64
+        openrfg_varray_overflow(size, (int)sizeof(T));
+#endif
         num_existing_elements = size;
     }
     num = num_existing_elements;
@@ -43,6 +50,9 @@ int base_array<T>::add(const T& t)
     if (num > array_size)
     {
         VLIB_CRITICAL_FAILURE();
+#ifdef OPENRFG_X64
+        openrfg_varray_overflow(array_size, (int)sizeof(T));
+#endif
         num = index;
         return -1;
     }
