@@ -442,6 +442,45 @@ void openrfg_fail_log(const char* tag, const char* format, ...)
     va_end(args);
     openrfg_log(line);
 }
+
+// Debug aid: writes text plus the names of the calling functions (up to 6), resolved with OpenRFG.pdb.
+void openrfg_log_with_callers(const char* text)
+{
+    static volatile LONG Lock = 0;
+    static bool Sym_ready = false;
+    void* frames[7] = {};
+    const USHORT count = RtlCaptureStackBackTrace(1, 7, frames, nullptr);
+    while (InterlockedCompareExchange(&Lock, 1, 0) != 0)
+    {
+    }
+    HANDLE process = GetCurrentProcess();
+    if (!Sym_ready)
+    {
+        SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        SymInitialize(process, nullptr, TRUE);
+        Sym_ready = true;
+    }
+    char line[1024];
+    int pos = snprintf(line, sizeof(line), "%s | callers", text);
+    for (USHORT i = 0; i < count && pos > 0 && pos < (int)sizeof(line) - 80; i++)
+    {
+        char buffer[sizeof(SYMBOL_INFO) + 128] = {};
+        SYMBOL_INFO* symbol = (SYMBOL_INFO*)buffer;
+        symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+        symbol->MaxNameLen = 127;
+        DWORD64 displacement = 0;
+        if (SymFromAddr(process, (DWORD64)frames[i], &displacement, symbol))
+        {
+            pos += snprintf(line + pos, sizeof(line) - pos, " < %s", symbol->Name);
+        }
+        else
+        {
+            pos += snprintf(line + pos, sizeof(line) - pos, " < 0x%llX", (unsigned long long)(uintptr_t)frames[i]);
+        }
+    }
+    InterlockedExchange(&Lock, 0);
+    openrfg_log(line);
+}
 #endif
 
 // ---- hang watchdog (debug aid): rfg_do_frame calls openrfg_heartbeat() every frame; if no frame completes for 6 seconds
