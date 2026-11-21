@@ -31,7 +31,7 @@
 
 // <rl_height_mesh_instance::factory_init> 0x005101C0 (:26)
 // <rl_height_mesh_instance::create> 0x0054F3A0 (:26)
-RL_FACTORY_CLASS_CORE(rl_height_mesh_instance, 0x52DD6C14, 3000)
+RL_FACTORY_CLASS_CORE(rl_height_mesh_instance, 0x52DD6C14, OPENRFG_ZONE_POOL(3000))
 
 // Not in the binary: the terrain subzone grid cell of a position (inlined in every terrain draw): floor(p / 511 + 8)
 // per axis. Magic numbers: 511 m subzone cells, offset by 8 cells.

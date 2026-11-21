@@ -14,7 +14,7 @@
 #include "volition/vlib/code/math/ix.h"
 #include "volition/vlib/code/math/vector2.h"
 
-static object_pool<object_bounding_box,64,1> object_bounding_boxpool; // pool capacity from the instantiator below
+static object_pool<object_bounding_box,OPENRFG_ZONE_POOL(64),1> object_bounding_boxpool; // pool capacity from the instantiator below
 
 // Built by the variadic constructor (0x010767C0): the names of bounding_box_type.
 static str_data_hash_table<unsigned int, 32, 32, unsigned char> Bounding_box_type_table( // 0x034FE720
@@ -48,7 +48,7 @@ object* alloc_object_bounding_box()
 }
 
 // Magic numbers: rfg.exe's arguments (0x01076810), the pool's bytes and capacity.
-static obj_class_instantiator object_bounding_box_instantiator("object_bounding_box", alloc_object_bounding_box, types_object_bounding_box, bpo_index_object_bounding_box, classname_object_bounding_box, object_bounding_box::pool_remaining, 0x3580, 0x40);
+static obj_class_instantiator object_bounding_box_instantiator("object_bounding_box", alloc_object_bounding_box, types_object_bounding_box, bpo_index_object_bounding_box, classname_object_bounding_box, object_bounding_box::pool_remaining, 0x3580, OPENRFG_ZONE_POOL(0x40));
 
 // 0x00A15CE0 (:32)
 unsigned int object_bounding_box::get_classname_hash()

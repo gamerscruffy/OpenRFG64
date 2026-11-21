@@ -19,7 +19,7 @@
 
 // <rl_low_lod_mesh_instance::factory_init> 0x00510C20 (:14)
 // <rl_low_lod_mesh_instance::create> 0x0054BC60 (:14)
-RL_FACTORY_CLASS_CORE(rl_low_lod_mesh_instance, 0x236D1D4A, 82)
+RL_FACTORY_CLASS_CORE(rl_low_lod_mesh_instance, 0x236D1D4A, OPENRFG_MAX_ZONES * 9 + 1)
 
 // 0x0053EAA0 (:14)
 // Deferred while render_lib is locked. Notes (decompiled behaviour, kept as is): the object goes back to the pool

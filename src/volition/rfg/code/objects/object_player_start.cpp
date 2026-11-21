@@ -9,7 +9,7 @@
 #include "volition/rfg/code/objects/object_prop_names_shared.h"
 #include "volition/vlib/code/memory/object_pool.h"
 
-static const int PLAYER_START_POOL_SIZE = 256;
+static const int PLAYER_START_POOL_SIZE = OPENRFG_ZONE_POOL(256);
 static const int PLAYER_START_POOL_USAGE = 0xB540; // memory footprint registered with the instantiator
 static const int MISSION_NAME_LENGTH = 256;
 static const int TEAM_NAME_LENGTH = 52;

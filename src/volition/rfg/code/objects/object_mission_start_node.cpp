@@ -29,9 +29,9 @@
 
 extern unsigned int Mission_effect_info_handle; // mission_info.cpp
 
-// Magic numbers: the pool holds 32 nodes (object_pool<object_mission_start_node,32,1>). 0x200 is the action node's
+// Magic numbers: the pool holds 32 nodes (object_pool<object_mission_start_node,OPENRFG_ZONE_POOL(32),1>). 0x200 is the action node's
 // disabled_by bit for "the mission start node is hidden".
-static object_pool<object_mission_start_node,32,1> object_mission_start_nodepool; // 0x03067FC0
+static object_pool<object_mission_start_node,OPENRFG_ZONE_POOL(32),1> object_mission_start_nodepool; // 0x03067FC0
 static const int ACTION_NODE_DISABLED_BY_MISSION_START = 0x200;
 static bool Markers_enabled; // 0x0302F157
 static prop_name PROP_MISSION_START_INFO("mission_info"); // 0x016ADE74
@@ -124,7 +124,7 @@ const char* classname_object_mission_start_node()
 }
 
 static obj_class_instantiator object_mission_start_node_instantiator("object_mission_start_node", alloc_object_mission_start_node, types_object_mission_start_node, bpo_index_object_mission_start_node,
-                                                                      classname_object_mission_start_node, object_mission_start_node::pool_remaining, 0x15E0, 32); // (0x01077B70)
+                                                                      classname_object_mission_start_node, object_mission_start_node::pool_remaining, 0x15E0, OPENRFG_ZONE_POOL(32)); // (0x01077B70)
 
 // 0x00A19F90 (:131)
 unsigned int object_mission_start_node::get_classname_hash()

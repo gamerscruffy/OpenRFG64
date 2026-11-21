@@ -57,7 +57,7 @@
 #include "volition/vlib/code/os/frametime.h"
 #include "volition/vlib/code/os/vconsole.h"
 
-static const int OBJECT_EFFECT_POOL_SIZE = 512;
+static const int OBJECT_EFFECT_POOL_SIZE = OPENRFG_ZONE_POOL(512);
 static const int OBJECT_EFFECT_POOL_USAGE = 0x31240; // memory footprint registered with the instantiator
 static const float MPH_TO_METERS_PER_SECOND = 0.44704f;
 static const float DEGREES_TO_RADIANS = 0.017453f; // as rounded in rfg.exe
@@ -1525,7 +1525,7 @@ void object_effect_level_shutdown()
 }
 
 // 0x00744110 (:1385)
-const object_pool<object_effect, 512, 1>& object_effect_get_objects()
+const object_pool<object_effect, OPENRFG_ZONE_POOL(512), 1>& object_effect_get_objects()
 {
     return object_effectpool;
 }

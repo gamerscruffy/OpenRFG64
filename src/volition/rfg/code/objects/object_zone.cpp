@@ -39,9 +39,9 @@
 #include <string.h>
 
 // ---- file-static globals
-static object_pool<obj_zone,9,1> obj_zonepool; // 0x03042670
-static obj_zone_phatom Zone_phantoms[9]; // 0x03187220
-static obj_class_instantiator obj_zone_instantiator("obj_zone", alloc_obj_zone, types_obj_zone, bpo_index_obj_zone, classname_obj_zone, obj_zone::pool_remaining, 0xF10, 9); // 0x034264FC
+static object_pool<obj_zone,OPENRFG_MAX_ZONES,1> obj_zonepool; // 0x03042670
+static obj_zone_phatom Zone_phantoms[OPENRFG_MAX_ZONES]; // 0x03187220
+static obj_class_instantiator obj_zone_instantiator("obj_zone", alloc_obj_zone, types_obj_zone, bpo_index_obj_zone, classname_obj_zone, obj_zone::pool_remaining, 0xF10, OPENRFG_MAX_ZONES); // 0x034264FC
 
 // 0x00A1E0A0 (:38)
 obj_zone_phatom::obj_zone_phatom()
@@ -91,7 +91,7 @@ static int request_aabb_phantom(obj_zone* zone, terrain_data* data)
     }
     bmax.y = min_y - 10.0f;
     bmin.y = broadphase_min.y + 1.0f;
-    for (int i = 0; i < 9; i++)
+    for (int i = 0; i < OPENRFG_MAX_ZONES; i++)
     {
         obj_zone_phatom& phantom = Zone_phantoms[i];
         if (!phantom.in_use)
@@ -114,7 +114,7 @@ static int request_aabb_phantom(obj_zone* zone, terrain_data* data)
 // 0x00A1E0B0 (:133)
 static void release_aabb_phantom(int index)
 {
-    if ((unsigned int)index < 9)
+    if ((unsigned int)index < OPENRFG_MAX_ZONES)
     {
         Zone_phantoms[index].in_use = false;
     }
@@ -479,7 +479,7 @@ unsigned char obj_zone::get_effect_material(unsigned int shape_key, const vector
 // 0x00A1E2B0 (:565)
 void obj_zone_level_shutdown()
 {
-    for (int i = 0; i < 9; i++)
+    for (int i = 0; i < OPENRFG_MAX_ZONES; i++)
     {
         if (Zone_phantoms[i].handle != nullptr)
         {

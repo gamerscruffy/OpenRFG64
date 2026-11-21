@@ -131,7 +131,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static const int RFG_MOVER_POOL_SIZE = 4000; // rfg_moverpool
+static const int RFG_MOVER_POOL_SIZE = OPENRFG_ZONE_POOL(4000); // rfg_moverpool
 static const unsigned int RFG_MOVER_POOL_USAGE = 0x1685E0; // memory footprint registered with the instantiator
 static const unsigned int RFG_MOVER_STATE_BUFFER_SIZE = 0x74000; // Rfg_mover_state_buffer
 static const unsigned int RFG_MOVER_STATE_PAGE_SIZE = 0x10;

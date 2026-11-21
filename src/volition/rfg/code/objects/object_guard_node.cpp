@@ -25,7 +25,7 @@
 static const int GUARD_NODE_RESERVATION_MS = 5000;
 static const int GUARD_FACING_DEGREES_PER_INDEX = 60;
 static const float GUARD_NODE_OCCUPIED_DIST_SQ = 0.25f; // 0.5 m
-static object_pool<object_guard_node,512,1> object_guard_nodepool; // pool capacity from the instantiator below
+static object_pool<object_guard_node,OPENRFG_ZONE_POOL(512),1> object_guard_nodepool; // pool capacity from the instantiator below
 
 // 0x005DBB50
 const object_type object_guard_node::get_type_static()
@@ -264,7 +264,7 @@ object* alloc_object_guard_node()
 }
 
 // Magic numbers: rfg.exe's arguments (0x010774F0), the pool's bytes and capacity.
-static obj_class_instantiator object_guard_node_instantiator("object_guard_node", alloc_object_guard_node, types_object_guard_node, bpo_index_object_guard_node, classname_object_guard_node, object_guard_node::pool_remaining, 0x15A40, 0x200);
+static obj_class_instantiator object_guard_node_instantiator("object_guard_node", alloc_object_guard_node, types_object_guard_node, bpo_index_object_guard_node, classname_object_guard_node, object_guard_node::pool_remaining, 0x15A40, OPENRFG_ZONE_POOL(0x200));
 
 // 0x00A17E40 (:38)
 unsigned int object_guard_node::get_classname_hash()

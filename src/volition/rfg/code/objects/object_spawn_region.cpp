@@ -11,7 +11,7 @@
 #include "volition/vlib/code/math/ix.h"
 #include "volition/vlib/code/math/vector3.h"
 
-static object_pool<object_spawn_region, 32, 1> object_spawn_regionpool; // 0x03063BD0
+static object_pool<object_spawn_region, OPENRFG_ZONE_POOL(32), 1> object_spawn_regionpool; // 0x03063BD0
 
 // 0x00A1D0B0 (:46)
 void types_object_spawn_region(signed char& type, signed char& subtype)
@@ -39,7 +39,7 @@ object* alloc_object_spawn_region()
 }
 
 // Magic numbers: rfg.exe's arguments (0x0107C350), the pool's bytes and capacity.
-static obj_class_instantiator object_spawn_region_instantiator("object_spawn_region", alloc_object_spawn_region, types_object_spawn_region, bpo_index_object_spawn_region, classname_object_spawn_region, object_spawn_region::pool_remaining, 0x1E60, 0x20);
+static obj_class_instantiator object_spawn_region_instantiator("object_spawn_region", alloc_object_spawn_region, types_object_spawn_region, bpo_index_object_spawn_region, classname_object_spawn_region, object_spawn_region::pool_remaining, 0x1E60, OPENRFG_ZONE_POOL(0x20));
 
 // 0x00A1D0E0 (:46)
 unsigned int object_spawn_region::get_classname_hash()

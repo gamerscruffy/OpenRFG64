@@ -17,7 +17,7 @@
 #include "volition/rfg/code/scripting/objective_highlight.h"
 #include "volition/vlib/code/memory/object_pool.h"
 
-static object_pool<object_riding_shotgun_node, 32, 1> object_riding_shotgun_nodepool; // 0x0305F840
+static object_pool<object_riding_shotgun_node, OPENRFG_ZONE_POOL(32), 1> object_riding_shotgun_nodepool; // 0x0305F840
 
 // 0x00A1BC80 (:10)
 void types_object_riding_shotgun_node(signed char& type, signed char& subtype)
@@ -45,7 +45,7 @@ object* alloc_object_riding_shotgun_node()
 }
 
 // Magic numbers: rfg.exe's arguments (0x0107BA1B, 0x0107BA26), the pool's bytes and capacity.
-static obj_class_instantiator object_riding_shotgun_node_instantiator("object_riding_shotgun_node", alloc_object_riding_shotgun_node, types_object_riding_shotgun_node, bpo_index_object_riding_shotgun_node, classname_object_riding_shotgun_node, object_riding_shotgun_node::pool_remaining, 0x15E0, 0x20); // 0x030FCDF0
+static obj_class_instantiator object_riding_shotgun_node_instantiator("object_riding_shotgun_node", alloc_object_riding_shotgun_node, types_object_riding_shotgun_node, bpo_index_object_riding_shotgun_node, classname_object_riding_shotgun_node, object_riding_shotgun_node::pool_remaining, 0x15E0, OPENRFG_ZONE_POOL(0x20)); // 0x030FCDF0
 
 // 0x00A1BCC0 (:11)
 object_riding_shotgun_node::object_riding_shotgun_node()

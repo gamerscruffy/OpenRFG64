@@ -53,7 +53,7 @@ extern bool Player_died; // 0x0302F0A3 (player.cpp)
 static float Safehouse_respawn_vehicle_dist_squared = 4000.0f; // 0x01694614
 static unsigned int Safehouse_containing_player = 0xFFFFFFFF; // 0x01694678
 static bool Safehouse_unfriendlies_ignore_player; // 0x0302F15A
-static object_pool<object_safehouse, 64, 1> object_safehousepool; // 0x030FCE60
+static object_pool<object_safehouse, OPENRFG_ZONE_POOL(64), 1> object_safehousepool; // 0x030FCE60
 
 // 0x00A1C150 (:69): the high half of a handle's zone byte marks a managed layer object.
 static bool object_is_from_managed_layer(const object* op)
@@ -410,7 +410,7 @@ int bpo_index_object_safehouse()
 }
 
 // Magic numbers: rfg.exe's arguments (0x0107BC20), the pool's bytes and capacity.
-static obj_class_instantiator object_safehouse_instantiator("object_safehouse", alloc_object_safehouse, types_object_safehouse, bpo_index_object_safehouse, classname_object_safehouse, object_safehouse::pool_remaining, 0x4E80, 0x40); // 0x03500C94
+static obj_class_instantiator object_safehouse_instantiator("object_safehouse", alloc_object_safehouse, types_object_safehouse, bpo_index_object_safehouse, classname_object_safehouse, object_safehouse::pool_remaining, 0x4E80, OPENRFG_ZONE_POOL(0x40)); // 0x03500C94
 
 // 0x00A3E280
 int object_safehouse::pool_remaining()

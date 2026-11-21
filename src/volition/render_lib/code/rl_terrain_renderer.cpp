@@ -375,7 +375,7 @@ const int rl_terrain_renderer::VISIBLE_LOW_LOD_INSTANCES_MAX_DEFAULT = 100; // 0
 const int rl_terrain_renderer::VISIBLE_LANDMARK_LOD_INSTANCES_MAX_DEFAULT = 100; // 0x012BECF0
 rl_terrain_renderer* rl_terrain_renderer::ms_current_instance_p = nullptr; // 0x01B7BD44
 int rl_terrain_renderer::ms_visible_renderable_instances_max = 1024; // 0x0150A60C
-int rl_terrain_renderer::ms_visible_low_lod_instances_max = 100; // 0x0150A610
+int rl_terrain_renderer::ms_visible_low_lod_instances_max = OPENRFG_MAX_ZONES * 9 + 19; // 0x0150A610 (100: 9 zones of 9 low LOD patches; OpenRFG: sized for OPENRFG_MAX_ZONES)
 int rl_terrain_renderer::ms_visible_landmark_lod_instances_max = 100; // 0x0150A614
 
 // The terrain low LOD meshes are drawn in the base pass.

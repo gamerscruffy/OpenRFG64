@@ -15,7 +15,7 @@
 #include "volition/rfg/code/objects/object_prop_names_shared.h"
 #include "volition/vlib/code/memory/object_pool.h"
 
-static object_pool<object_raid_node, 64, 1> object_raid_nodepool; // 0x031847A0
+static object_pool<object_raid_node, OPENRFG_ZONE_POOL(64), 1> object_raid_nodepool; // 0x031847A0
 
 // 0x00A1AF70 (:30)
 void types_object_raid_node(signed char& type, signed char& subtype)
@@ -43,7 +43,7 @@ object* alloc_object_raid_node()
 }
 
 // Magic numbers: rfg.exe's arguments (0x0107B6F0), the pool's bytes and capacity.
-static obj_class_instantiator object_raid_node_instantiator("object_raid_node", alloc_object_raid_node, types_object_raid_node, bpo_index_object_raid_node, classname_object_raid_node, object_raid_node::pool_remaining, 0x2A80, 0x40);
+static obj_class_instantiator object_raid_node_instantiator("object_raid_node", alloc_object_raid_node, types_object_raid_node, bpo_index_object_raid_node, classname_object_raid_node, object_raid_node::pool_remaining, 0x2A80, OPENRFG_ZONE_POOL(0x40));
 
 // 0x00A1AFA0 (:30)
 unsigned int object_raid_node::get_classname_hash()

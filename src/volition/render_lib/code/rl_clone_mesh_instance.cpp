@@ -54,7 +54,7 @@ RL_FACTORY_CLASS_CORE(rl_clone_mesh_pool, 0x11235813, 4)
 // <rl_clone_mesh_instance::can_create> 0x004E2FD0 (:331)
 // <rl_clone_mesh_instance::factory_init> 0x0050A0B0 (:331)
 // <rl_clone_mesh_instance::create> 0x00548FC0 (:331)
-RL_FACTORY_CLASS_CORE(rl_clone_mesh_instance, 0x01491625, 1024)
+RL_FACTORY_CLASS_CORE(rl_clone_mesh_instance, 0x01491625, OPENRFG_ZONE_POOL(1024))
 
 // Every clone mesh draws its highest LOD over the instance's whole fade range (off in retail; a debug switch).
 bool RL_clone_force_high_lod = false; // 0x01B7BC51

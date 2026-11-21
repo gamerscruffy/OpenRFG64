@@ -115,7 +115,10 @@ struct rl_level_of_detail
     // padding bytes. Read them through rl_lod_get_lod_detail_level / rl_lod_get_draw_distance_level.
     unsigned char m_lod_detail; // 0x1F
     unsigned char m_draw_distance; // 0x20
-    unsigned char padding[115]; // 0x21
+    // OpenRFG: the Terrain Distance level plus one (0 = never set, counts as normal), the sixth padding byte. Read it
+    // through rl_lod_get_terrain_distance_level.
+    unsigned char m_terrain_distance; // 0x21
+    unsigned char padding[114]; // 0x22
 };
 
 // OpenRFG: the SSAO level of the options menu: 0 off, 1 low (the original game's SSAO), 2 medium, 3 high, 4 very
@@ -207,10 +210,24 @@ inline void rl_lod_set_draw_distance_level(rl_level_of_detail& lod, int level)
 }
 
 // Magic numbers: 475 m is the game's own (rfg_camera_system_init); 1000 m is its unused LOD 0 far clip
-// (game_render_set_lod_level).
+// (game_render_set_lod_level). 1500 m reaches the edge of the 5x5 zones of Terrain Distance High.
 inline float rl_draw_distance(int level)
 {
-    return level >= 2 ? 1000.0f : (level == 1 ? 700.0f : 475.0f);
+    return level >= 2 ? 1500.0f : (level == 1 ? 1000.0f : 475.0f);
+}
+
+// OpenRFG: the Terrain Distance level of the options menu: 0 normal (3x3 zones, the original), 1 high (5x5 zones, 64-bit
+// only; stream_terrain_distance_radius). Each zone is a 511 m terrain cell with its low detail terrain and its objects.
+// Unset counts as normal.
+inline int rl_lod_get_terrain_distance_level(const rl_level_of_detail& lod)
+{
+    const int stored = lod.m_terrain_distance;
+    return (stored < 1 || stored > 2) ? 0 : stored - 1;
+}
+
+inline void rl_lod_set_terrain_distance_level(rl_level_of_detail& lod, int level)
+{
+    lod.m_terrain_distance = (unsigned char)((level < 0 || level > 1 ? 0 : level) + 1);
 }
 
 // ---- inline members (no .cpp home)

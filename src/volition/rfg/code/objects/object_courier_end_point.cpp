@@ -27,7 +27,7 @@
 
 #include <stdio.h>
 
-static object_pool<object_courier_end_point, 16, 1> object_courier_end_pointpool; // 0x03537E80
+static object_pool<object_courier_end_point, OPENRFG_ZONE_POOL(16), 1> object_courier_end_pointpool; // 0x03537E80
 static farray<const courier_definition*, 20> Courier_definitions; // 0x016AD1B8
 static string_pool Courier_string_pool("Courier String Pool"); // 0x03430960
 static char* Courier_string_pool_data; // 0x0302F130
@@ -82,7 +82,7 @@ object* alloc_object_courier_end_point()
 }
 
 // Magic numbers: rfg.exe's arguments (0x01076E3B, 0x01076E46), the pool's bytes and capacity.
-static obj_class_instantiator object_courier_end_point_instantiator("object_courier_end_point", alloc_object_courier_end_point, types_object_courier_end_point, bpo_index_object_courier_end_point, classname_object_courier_end_point, object_courier_end_point::pool_remaining, 0xB10, 0x10); // 0x030695AC
+static obj_class_instantiator object_courier_end_point_instantiator("object_courier_end_point", alloc_object_courier_end_point, types_object_courier_end_point, bpo_index_object_courier_end_point, classname_object_courier_end_point, object_courier_end_point::pool_remaining, 0xB10, OPENRFG_ZONE_POOL(0x10)); // 0x030695AC
 
 // 0x00A16500 (:61)
 object_courier_end_point::object_courier_end_point()

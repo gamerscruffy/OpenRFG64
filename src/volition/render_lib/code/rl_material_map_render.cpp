@@ -21,7 +21,7 @@
 // <rl_material_map::factory_init> 0x00511490 (:13)
 // <rl_material_map::release> 0x00511590 (:13)
 // <rl_material_map::create> 0x00527D50 (:13)
-RL_FACTORY_CLASS_IMPLEMENTATION(rl_material_map, 0xA55B00B5, 2048)
+RL_FACTORY_CLASS_IMPLEMENTATION(rl_material_map, 0xA55B00B5, OPENRFG_ZONE_POOL(2048))
 
 // 0x004C2D20 (:18)
 rl_material_map::rl_material_map()

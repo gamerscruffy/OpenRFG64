@@ -17,7 +17,7 @@
 #include "volition/rfg/code/scripting/objective_highlight.h"
 #include "volition/vlib/code/memory/object_pool.h"
 
-static object_pool<object_area_defense_node, 32, 1> object_area_defense_nodepool; // 0x033BFE50
+static object_pool<object_area_defense_node, OPENRFG_ZONE_POOL(32), 1> object_area_defense_nodepool; // 0x033BFE50
 
 // 0x00A159F0 (:13)
 void types_object_area_defense_node(signed char& type, signed char& subtype)
@@ -45,7 +45,7 @@ object* alloc_object_area_defense_node()
 }
 
 // Magic numbers: rfg.exe's arguments (0x010765A0), the pool's bytes and capacity.
-static obj_class_instantiator object_area_defense_node_instantiator("object_area_defense_node", alloc_object_area_defense_node, types_object_area_defense_node, bpo_index_object_area_defense_node, classname_object_area_defense_node, object_area_defense_node::pool_remaining, 0x15E0, 0x20);
+static obj_class_instantiator object_area_defense_node_instantiator("object_area_defense_node", alloc_object_area_defense_node, types_object_area_defense_node, bpo_index_object_area_defense_node, classname_object_area_defense_node, object_area_defense_node::pool_remaining, 0x15E0, OPENRFG_ZONE_POOL(0x20));
 
 // 0x00A15A30 (:14)
 object_area_defense_node::object_area_defense_node()

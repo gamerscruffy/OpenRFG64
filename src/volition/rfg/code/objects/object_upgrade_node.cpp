@@ -15,7 +15,7 @@
 #include "volition/vlib/code/memory/object_pool.h"
 #include "volition/vlib/code/util/string_comp.h"
 
-static object_pool<object_upgrade_node, 32, 1> object_upgrade_nodepool; // 0x03066550
+static object_pool<object_upgrade_node, OPENRFG_ZONE_POOL(32), 1> object_upgrade_nodepool; // 0x03066550
 // 0x01694720, read from rfg.exe, in upgrade_node_types order.
 static const char* UPGRADE_NODE_TYPE_NAMES[NUM_UPGRADE_NODE_TYPES] = {"Weapons", "Vehicles"};
 
@@ -45,7 +45,7 @@ object* alloc_object_upgrade_node()
 }
 
 // Magic numbers: rfg.exe's arguments (0x0107C740), the pool's bytes and capacity.
-static obj_class_instantiator object_upgrade_node_instantiator("object_upgrade_node", alloc_object_upgrade_node, types_object_upgrade_node, bpo_index_object_upgrade_node, classname_object_upgrade_node, object_upgrade_node::pool_remaining, 0x1560, 0x20);
+static obj_class_instantiator object_upgrade_node_instantiator("object_upgrade_node", alloc_object_upgrade_node, types_object_upgrade_node, bpo_index_object_upgrade_node, classname_object_upgrade_node, object_upgrade_node::pool_remaining, 0x1560, OPENRFG_ZONE_POOL(0x20));
 
 // 0x00A1E010 (:38)
 unsigned int object_upgrade_node::get_classname_hash()

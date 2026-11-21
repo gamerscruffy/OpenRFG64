@@ -31,7 +31,7 @@
 // <rl_compiled_render_group::factory_init> 0x0050AB40 (:112)
 // <rl_compiled_render_group::release> 0x0050AC40 (:112)
 // <rl_compiled_render_group::create> 0x00522070 (:112)
-RL_FACTORY_CLASS_IMPLEMENTATION(rl_compiled_render_group, 0x28BA6A06, 1024)
+RL_FACTORY_CLASS_IMPLEMENTATION(rl_compiled_render_group, 0x28BA6A06, OPENRFG_ZONE_POOL(1024))
 
 // Sort the instances of a group by render block, so that one block's instances share a draw (in retail on).
 bool RL_sort_compiled_render_group_instances = true; // 0x014FA102

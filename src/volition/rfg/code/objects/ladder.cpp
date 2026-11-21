@@ -45,7 +45,7 @@
 
 #include <math.h>
 
-static const int LADDER_POOL_SIZE = 128;
+static const int LADDER_POOL_SIZE = OPENRFG_ZONE_POOL(128);
 static const int LADDER_POOL_USAGE = 0x56C0; // memory footprint registered with the instantiator
 // Magic numbers: the rung spacing, the rung at the ladder's origin and the rungs of a climb cycle.
 static const float LADDER_RUNG_HEIGHT = 0.25f;

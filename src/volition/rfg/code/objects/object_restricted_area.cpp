@@ -17,7 +17,7 @@
 #include "volition/rfg/code/vehicle/vehicle_class.h"
 #include "volition/vlib/code/memory/object_pool.h"
 
-static const int MAX_RESTRICTED_AREAS = 64;
+static const int MAX_RESTRICTED_AREAS = OPENRFG_ZONE_POOL(64);
 // Magic number: an area spans this far up and down.
 static const float AREA_HALF_HEIGHT = 50.0f;
 // Magic number: the warning band of a box area with no warning_radius.

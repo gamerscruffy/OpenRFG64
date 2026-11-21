@@ -244,8 +244,8 @@ static bool add_new_point(farray<vector, 64>& external_dest_list, road_evaluatio
 static void build_external_destination_list(farray<vector, 64>& external_dest_list, const vector& center, float radius)
 {
     // Magic number: 322 roads, from the array's size in rfg.exe.
-    farray<object_path_road const*, 322> roads;
-    farray<road_evaluation_set, 322> sets;
+    farray<object_path_road const*, OPENRFG_ZONE_POOL(322)> roads;
+    farray<road_evaluation_set, OPENRFG_ZONE_POOL(322)> sets;
     const float radius_sqrd = radius * radius;
     external_dest_list.clear();
     const vector region_min(center.x - radius, center.y - radius, center.z - radius);

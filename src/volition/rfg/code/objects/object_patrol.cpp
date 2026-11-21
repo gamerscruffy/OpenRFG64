@@ -22,7 +22,7 @@ extern gfm_orders_manager Orders_manager;
 
 // Magic numbers: rfg.exe's pool; a location within 3 m of a node counts as at it; nav point type 1 is "patrol"; a road
 // within 60 m makes a node near a road; a bridge mover more than 1% destroyed is not crossed.
-static object_pool<object_patrol,72,1> object_patrolpool; // 0x033C31B0
+static object_pool<object_patrol,OPENRFG_ZONE_POOL(72),1> object_patrolpool; // 0x033C31B0
 static const float NEAR_PATROL_POINT_DIST_SQRD = 9.0f; // 0x016AD290
 static const float ON_SEGMENT_DIST_SQRD = 3.0f;
 static const signed char NAVPOINT_TYPE_PATROL = 1;
@@ -463,7 +463,7 @@ object* alloc_object_patrol()
     return object_patrolpool.alloc(0);
 }
 
-static obj_class_instantiator object_patrol_instantiator("object_patrol", alloc_object_patrol, types_object_patrol, bpo_index_object_patrol, classname_object_patrol, object_patrol::pool_remaining, 0x3210, 72);
+static obj_class_instantiator object_patrol_instantiator("object_patrol", alloc_object_patrol, types_object_patrol, bpo_index_object_patrol, classname_object_patrol, object_patrol::pool_remaining, 0x3210, OPENRFG_ZONE_POOL(72));
 
 // 0x00A1AB60 (:621)
 unsigned int object_patrol::get_classname_hash()

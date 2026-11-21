@@ -527,10 +527,10 @@ static bool All_items_cast_shadows = true; // 0x01694610
 // farray<object*,16384> Object_update_render_list (0x0169D028) is used here too; placed in object.cpp.
 // player* Player (0x03023874) is used here too; placed in player.cpp.
 static bool Shiny_ammo_crates; // 0x0302F137 (.bss, no writer)
-static object_pool<item,512,1> itempool; // 0x033FC980
+static object_pool<item,OPENRFG_ZONE_POOL(512),1> itempool; // 0x033FC980
 // read from rfg.exe: pool usage 0x28A40 bytes, 512 items. rfg.pdb places it in human.cpp; defined here with the item
 // class (its registration functions are in this file).
-obj_class_instantiator item_instantiator("item", alloc_item, types_item, bpo_index_item, classname_item, item::pool_remaining, 0x28A40, 512); // 0x0306654C
+obj_class_instantiator item_instantiator("item", alloc_item, types_item, bpo_index_item, classname_item, item::pool_remaining, 0x28A40, OPENRFG_ZONE_POOL(512)); // 0x0306654C
 
 // ---- internal functions (forward)
 static void create_physics_object(item* ip); // 0x00A64340 (:1347)

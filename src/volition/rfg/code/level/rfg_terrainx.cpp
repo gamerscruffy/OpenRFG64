@@ -55,14 +55,14 @@
 #include <string.h>
 
 // ---- globals
-object_pool<rfg_terrain_subzone,81,1> Terrain_subzones; // 0x02F97C60
+object_pool<rfg_terrain_subzone,OPENRFG_MAX_ZONES * 9,1> Terrain_subzones; // 0x02F97C60
 
 // ---- file-static globals
 static unsigned char Stitch_piece_physical_material_index_terrainx = 0xFF; // 0x01668711
 static unsigned char Stitch_piece_effect_material_index_terrainx = 0xFF; // 0x01668712
-static str_data_hash_table<rfg_terrain_subzone*,81,64,unsigned char> Terrain_subzone_filename_hash; // 0x02F9B058
-static str_data_hash_table<rfg_terrain*,9,64,unsigned char> Terrain_filename_hash; // 0x02FD9280
-static object_pool<rfg_terrain,9,1> Terrains; // 0x02FD9520
+static str_data_hash_table<rfg_terrain_subzone*,OPENRFG_MAX_ZONES * 9,64,unsigned char> Terrain_subzone_filename_hash; // 0x02F9B058
+static str_data_hash_table<rfg_terrain*,OPENRFG_MAX_ZONES,64,unsigned char> Terrain_filename_hash; // 0x02FD9280
+static object_pool<rfg_terrain,OPENRFG_MAX_ZONES,1> Terrains; // 0x02FD9520
 
 static const unsigned int TERRAIN_SIGNATURE = 0x52524554; // "TERR"
 static const unsigned int SUBZONE_SIGNATURE = 0x5A425553; // "SUBZ"

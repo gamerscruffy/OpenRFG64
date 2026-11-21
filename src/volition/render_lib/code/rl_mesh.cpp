@@ -21,7 +21,7 @@ static volatile LONG Next_uid; // 0x01B7BCCC
 // <rl_mesh::factory_init> 0x00511610 (:7)
 // <rl_mesh::release> 0x00511830 (:7)
 // <rl_mesh::create> 0x00527E20 (:7)
-RL_FACTORY_CLASS_IMPLEMENTATION(rl_mesh, 0x1771352C, 2048)
+RL_FACTORY_CLASS_IMPLEMENTATION(rl_mesh, 0x1771352C, OPENRFG_ZONE_POOL(2048))
 
 // 0x004E9390 (:11)
 rl_mesh::rl_mesh()

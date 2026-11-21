@@ -65,6 +65,8 @@ static mempool_base* Layout_pool; // 0x02CEC1D4
 
 // OpenRFG: the World Detail Distance level the level layer streams with (rl_lod_get_world_detail_level).
 static int s_world_detail_level = 0;
+// OpenRFG: the Terrain Distance level the terrain layer streams with (rl_lod_get_terrain_distance_level).
+static int s_terrain_distance_level = 0;
 
 void openrfg_log(const char* text); // crash_early.cpp
 
@@ -86,6 +88,21 @@ float stream_world_detail_level_radius(int level)
     (void)level;
 #endif
     return 340.0f;
+}
+
+// Magic numbers: the terrain cells (zones) are 511 m. 510 is the original radius (a box of up to 3x3 cells); 1020 reaches
+// up to 5x5 (just under two cells). The 32-bit build keeps 510: its zone pools hold 9 (OPENRFG_MAX_ZONES).
+float stream_terrain_distance_radius(int level)
+{
+#ifdef OPENRFG_X64
+    if (level >= 1)
+    {
+        return 1020.0f;
+    }
+#else
+    (void)level;
+#endif
+    return 510.0f;
 }
 static mempool_base* Layout_tmp_pool; // 0x02CEC1D8
 static mempool_base* zonescript_preload_pool_ptr; // 0x02CEC1DC
@@ -774,12 +791,25 @@ void stream_grid::clear()
     compact_wait_ts.invalidate();
 }
 
-// OpenRFG (not in the binary): the World Detail Distance option. A change takes effect here, unless the fragmentation
-// handling has the radii shrunk (it restores them to the option's radius when it is done). world::monitor_grid calls it
-// before it reads the level radius: its subzone deinstantiation must see a smaller radius before do_frame releases the
-// cells, or their height mesh instances stay in the scene after the cells' meshes are freed.
-void stream_grid::apply_world_detail_option()
+// OpenRFG (not in the binary): the World Detail Distance and Terrain Distance options. A change takes effect here,
+// unless the fragmentation handling has the radii shrunk (it restores them to the options' radii when it is done).
+// world::monitor_leaving_zones and world::monitor_grid call it before they read the radii: the zone and subzone
+// teardown must see a smaller radius before do_frame releases the cells, or their render instances stay in the scene
+// after the cells' meshes are freed.
+void stream_grid::apply_distance_options()
 {
+    const int terrain_level = rl_lod_get_terrain_distance_level(rl_render_lib::get_instance()->get_level_of_detail());
+    if (terrain_level != s_terrain_distance_level)
+    {
+        s_terrain_distance_level = terrain_level;
+        if (!compact_ts.valid())
+        {
+            set_stream_radius(LAYER_TERRAIN, stream_terrain_distance_radius(terrain_level));
+        }
+        char text[200];
+        snprintf(text, sizeof(text), "STREAM terrain distance %d: terrain radius %.1f, level memory %u / %u KB used", terrain_level, stream_terrain_distance_radius(terrain_level), Level_memmgr.space_used() / 1024, Level_memmgr.space_max() / 1024);
+        openrfg_log(text);
+    }
     const int level = rl_lod_get_world_detail_level(rl_render_lib::get_instance()->get_level_of_detail());
     if (level != s_world_detail_level)
     {
@@ -793,7 +823,7 @@ void stream_grid::apply_world_detail_option()
         openrfg_log(text);
     }
     static unsigned int s_frames = 0;
-    if (level > 0 && s_frames++ % 600 == 0)
+    if ((level > 0 || terrain_level > 0) && s_frames++ % 600 == 0)
     {
         char text[200];
         snprintf(text, sizeof(text), "STREAM level cells %d, terrain cells %d, level memory %u / %u KB used, largest free %u KB", layers[LAYER_LEVEL].active_cells.size(), layers[LAYER_TERRAIN].active_cells.size(), Level_memmgr.space_used() / 1024, Level_memmgr.space_max() / 1024, Level_memmgr.largest_allocation_possible() / 1024);
@@ -804,7 +834,7 @@ void stream_grid::apply_world_detail_option()
 // 0x00930FB0 (:3790)
 void stream_grid::do_frame(const vector& stream_pos, bool single_zone_mode)
 {
-    apply_world_detail_option();
+    apply_distance_options();
     // The level cell under the stream position masks level cells (stream_mask).
     stream_grid_cell* current = nullptr;
     int current_index;
@@ -906,7 +936,7 @@ void stream_grid::do_fragmentation_handling()
             return;
         }
         set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(s_world_detail_level));
-        set_stream_radius(LAYER_TERRAIN, 510.0f);
+        set_stream_radius(LAYER_TERRAIN, stream_terrain_distance_radius(s_terrain_distance_level));
         for (int l = LAYER_TERRAIN; l >= LAYER_LEVEL; l--)
         {
             stream_layer& layer = layers[l];
@@ -954,14 +984,14 @@ void stream_grid::do_fragmentation_handling()
     if (!compact_super_emergency)
     {
         set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(s_world_detail_level) * 0.5f);
-        set_stream_radius(LAYER_TERRAIN, 336.6f);
+        set_stream_radius(LAYER_TERRAIN, stream_terrain_distance_radius(s_terrain_distance_level) * 0.66f); // 336.6 m originally
         compact_super_emergency = true;
         compact_wait_ts.set(15000);
         compact_ts.set(5000);
         return;
     }
     set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(s_world_detail_level) * 0.3f);
-    set_stream_radius(LAYER_TERRAIN, 168.3f);
+    set_stream_radius(LAYER_TERRAIN, stream_terrain_distance_radius(s_terrain_distance_level) * 0.33f); // 168.3 m originally
     compact_super_emergency = false;
     compact_wait_ts.set(20000);
     compact_ts.set(6500);
@@ -1251,7 +1281,7 @@ stream_grid* stream_layout_level_load(mempool_base* pool, mempool_base* tmp_pool
         zonescript_preload_pool_ptr = nullptr;
     }
     grid->set_stream_radius(LAYER_LEVEL, stream_world_detail_level_radius(s_world_detail_level));
-    grid->set_stream_radius(LAYER_TERRAIN, 510.0f);
+    grid->set_stream_radius(LAYER_TERRAIN, stream_terrain_distance_radius(s_terrain_distance_level));
     Layout_inited = true;
     return grid;
 }

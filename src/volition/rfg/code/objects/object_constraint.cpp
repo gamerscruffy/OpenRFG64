@@ -26,9 +26,9 @@
 #include <stdio.h>
 
 // ---- file-static globals
-static object_pool<constraint,512,1> constraintpool; // 0x03506CA0
+static object_pool<constraint,OPENRFG_ZONE_POOL(512),1> constraintpool; // 0x03506CA0
 // read from rfg.exe: pool usage 0x2D240 bytes, 512 constraints.
-obj_class_instantiator constraint_instantiator("constraint", alloc_constraint, types_constraint, bpo_index_constraint, classname_constraint, constraint::pool_remaining, 0x2D240, 512); // 0x033C67DC
+obj_class_instantiator constraint_instantiator("constraint", alloc_constraint, types_constraint, bpo_index_constraint, classname_constraint, constraint::pool_remaining, 0x2D240, OPENRFG_ZONE_POOL(512)); // 0x033C67DC
 
 // Adds cp to the circular child or host constraint list of objp (inlined everywhere).
 static void constraint_list_add_child(object* objp, constraint* cp)

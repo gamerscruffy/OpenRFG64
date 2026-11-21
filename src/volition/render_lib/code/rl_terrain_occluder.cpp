@@ -18,7 +18,7 @@
 // <rl_terrain_occluder::factory_init> 0x005196B0 (:12)
 // <rl_terrain_occluder::release> 0x005197B0 (:12)
 // <rl_terrain_occluder::create> 0x00546F40 (:12)
-RL_FACTORY_CLASS_IMPLEMENTATION(rl_terrain_occluder, 0x59564738, 300)
+RL_FACTORY_CLASS_IMPLEMENTATION(rl_terrain_occluder, 0x59564738, OPENRFG_ZONE_POOL(300))
 
 // The occluder's frustum also gets the bottom plane (off in retail).
 bool Rl_terrain_occluder_use_bottom_plane = false; // 0x01B7BD36

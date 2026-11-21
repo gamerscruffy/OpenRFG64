@@ -34,7 +34,7 @@
 #include "volition/vlib/code/memory/object_pool.h"
 #include "volition/vlib/code/util/varray.h"
 
-static const int MAX_AMBUSH_REGIONS = 25;
+static const int MAX_AMBUSH_REGIONS = OPENRFG_ZONE_POOL(25);
 // Magic number: farray<bool,15> on trigger_ambush's stack; a region with more spawn nodes writes past it (original).
 static const int MAX_AMBUSH_SPAWN_FLAGS = 15;
 // Magic numbers: squads update every 1 to 2 seconds.

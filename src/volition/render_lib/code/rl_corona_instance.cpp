@@ -13,7 +13,7 @@
 // The class factory (:7): class id 0xC0902451, 300 coronas.
 // <rl_corona_instance::factory_init> 0x0050C360 (:7)
 // <rl_corona_instance::create> 0x00523650 (:7)
-RL_FACTORY_CLASS_CORE(rl_corona_instance, 0xC0902451, 300)
+RL_FACTORY_CLASS_CORE(rl_corona_instance, 0xC0902451, OPENRFG_ZONE_POOL(300))
 
 // 0x004BD760 (:11)
 rl_corona_instance::rl_corona_instance()

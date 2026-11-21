@@ -281,8 +281,8 @@ void world::collect_sorted_list(base_array<object*>& list, havok_bpi* island)
 bool world::monitor_grid()
 {
     // The streaming region: the level radius around the stream position (the whole territory in multiplayer).
-    // OpenRFG: the World Detail Distance option is applied before the level radius is read below.
-    grid->apply_world_detail_option();
+    // OpenRFG: the World Detail Distance and Terrain Distance options are applied before the radii are read below.
+    grid->apply_distance_options();
     stream_layer& level = grid->layers[LAYER_LEVEL];
     vector region_min;
     vector region_max;
@@ -359,6 +359,8 @@ bool world::monitor_grid()
 void world::monitor_leaving_zones()
 {
     // Zones outside the terrain radius: destream (still streaming) or deserialize (loaded); never in multiplayer.
+    // OpenRFG: the Terrain Distance option is applied first, so a shrink is seen here before the cells are released.
+    grid->apply_distance_options();
     stream_layer& terrain = grid->layers[LAYER_TERRAIN];
     const vector region_min(stream_pos.x - terrain.stream_radius, -512.0f, stream_pos.z - terrain.stream_radius);
     const vector region_max(terrain.stream_radius + stream_pos.x, 512.0f, terrain.stream_radius + stream_pos.z);

@@ -14,7 +14,7 @@
 #include "volition/rfg/code/objects/object_prop_names_shared.h"
 #include "volition/vlib/code/memory/object_pool.h"
 
-static const int MAX_CONVOY_END_POINTS = 16; // the instantiator's capacity, and the farray of convoy_end_get_all_points
+static const int MAX_CONVOY_END_POINTS = OPENRFG_ZONE_POOL(16); // the instantiator's capacity, and the farray of convoy_end_get_all_points
 static const int CONVOY_END_POINT_LAST_USED_MS = 600000; // 10 minutes
 static const int CONVOY_END_POINT_NAME_LEN = 256;
 

@@ -43,7 +43,7 @@ static const signed char NAVPOINT_TYPE_PATH_DOOR = 23;
 static const signed char NAVPOINT_TYPE_TRANSITION_DOOR = 24;
 
 // Magic number: rfg.exe's pool.
-static object_pool<navpoint,3272,1> navpointpool; // 0x03430A00
+static object_pool<navpoint,OPENRFG_ZONE_POOL(3272),1> navpointpool; // 0x03430A00
 bool Navpoint_treat_all_as_enabled; // 0x0302F158
 static unsigned short Navpoint_set; // 0x0302F15C
 static int Dynamic_navpoint_count; // 0x0302F160
@@ -106,7 +106,7 @@ const char* classname_navpoint()
     return "navpoint";
 }
 
-static obj_class_instantiator navpoint_instantiator("navpoint", alloc_navpoint, types_navpoint, bpo_index_navpoint, classname_navpoint, navpoint::pool_remaining, 0xCD510, 3272);
+static obj_class_instantiator navpoint_instantiator("navpoint", alloc_navpoint, types_navpoint, bpo_index_navpoint, classname_navpoint, navpoint::pool_remaining, 0xCD510, OPENRFG_ZONE_POOL(3272));
 
 // 0x00A1A0A0 (:93)
 unsigned int navpoint::get_classname_hash()

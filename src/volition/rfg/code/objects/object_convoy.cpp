@@ -43,7 +43,7 @@
 extern gfm_orders_manager Orders_manager;
 
 static const int MAX_CONVOY_MEMBERS = 12;
-static const int MAX_CONVOYS = 4; // the instantiator's capacity
+static const int MAX_CONVOYS = OPENRFG_ZONE_POOL(4); // the instantiator's capacity
 static const int MAX_DIFFICULTY_LEVEL = 16;
 static const unsigned int CONVOY_STRING_POOL_SIZE = 0x200;
 static const unsigned int CONVOY_DEFINITION_SIZE = 0x120; // sizeof(convoy_definition), also rfg.exe's allocation size

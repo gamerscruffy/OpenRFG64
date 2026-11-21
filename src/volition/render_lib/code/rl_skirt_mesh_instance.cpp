@@ -23,7 +23,7 @@
 
 // <rl_skirt_mesh_instance::factory_init> 0x00518DD0 (:21)
 // <rl_skirt_mesh_instance::create> 0x00550E60 (:21)
-RL_FACTORY_CLASS_CORE(rl_skirt_mesh_instance, 0x64BA3EF1, 1000)
+RL_FACTORY_CLASS_CORE(rl_skirt_mesh_instance, 0x64BA3EF1, OPENRFG_ZONE_POOL(1000))
 
 // Debug switch: the skirts are drawn (on in retail).
 bool Rl_terrain_skirt_rendering_enable = true; // 0x014FA54D

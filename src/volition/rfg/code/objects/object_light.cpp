@@ -24,7 +24,7 @@
 #include "volition/vlib/code/memory/object_pool.h"
 #include "volition/vlib/code/util/string_comp.h"
 
-static const int OBJ_LIGHT_POOL_SIZE = 32; // obj_lightpool
+static const int OBJ_LIGHT_POOL_SIZE = OPENRFG_ZONE_POOL(32); // obj_lightpool
 
 // The light flags of the zone files (flags): shown by day, by night, and clipped to the clip box.
 static const int OBJ_LIGHT_FLAG_DAYTIME = 0x1;

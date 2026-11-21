@@ -57,7 +57,7 @@ struct terrain_loading_stats
     data_stat terrain_texgen; // 0x8C
 };
 
-extern object_pool<rfg_terrain_subzone,81,1> Terrain_subzones; // 0x02F97C60
+extern object_pool<rfg_terrain_subzone,OPENRFG_MAX_ZONES * 9,1> Terrain_subzones; // 0x02F97C60
 
 void unused_dcf_test_terrain_cast_shadows(); // 0x0092AC40 (:84)
 void unused_dcf_R_stitch_batching_toggle(); // 0x0091B200 (:150)

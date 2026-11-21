@@ -65,6 +65,9 @@ enum layout_layer
 // OpenRFG: the level layer's stream radius for a World Detail Distance level (0 normal = 5x5 cells, 1 high = up to
 // 6x6, 2 ultra = 7x7; levels above 0 only on 64-bit).
 float stream_world_detail_level_radius(int level);
+// OpenRFG: the terrain layer's stream radius for a Terrain Distance level (0 normal = 3x3 zones, 1 high = up to 5x5;
+// x64 only).
+float stream_terrain_distance_radius(int level);
 
 // size 0x18
 class stream_grid_cell
@@ -143,7 +146,7 @@ private:
     bool add_fmesh(const char* filename, layout_layer layer, const vector& bmin, const vector& bmax, vlib_platform plat); // 0x0092A6B0 (:2551)
 public:
     void do_frame(const vector& stream_pos, bool single_zone_mode); // 0x00930FB0 (:3790)
-    void apply_world_detail_option(); // OpenRFG (not in the binary)
+    void apply_distance_options(); // OpenRFG (not in the binary)
     void do_fragmentation_handling(); // 0x00922180 (:3910)
     void set_stream_radius(layout_layer layer, float radius); // 0x0091AEB0 (:3995)
     float get_stream_radius(layout_layer layer); // 0x0091AFB0 (:4007)

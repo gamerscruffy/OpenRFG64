@@ -109,6 +109,12 @@ static const int DOPTIONS_ADVANCED_ROW_LOD_DETAIL = 11;
 static const char* kDraw_distance_caption_key = "OPENRFG_DRAW_DISTANCE";
 static wchar_t kDraw_distance_caption[] = L"Draw Distance";
 static const int DOPTIONS_ADVANCED_ROW_DRAW_DISTANCE = 12;
+// OpenRFG: row 13, Terrain Distance: normal (medium) 3x3 zones, high 5x5 zones (rl_lod_get_terrain_distance_level,
+// 64-bit only).
+static const char* cDisplay_settings_terrain_distance[2] = {"MENU_MED", "MENU_HIGH"};
+static const char* kTerrain_distance_caption_key = "OPENRFG_TERRAIN_DISTANCE";
+static wchar_t kTerrain_distance_caption[] = L"Terrain Distance";
+static const int DOPTIONS_ADVANCED_ROW_TERRAIN_DISTANCE = 13;
 static const char* cAnti_alias_lod_names[7] = {"MENU_OFF", "MENU_AA_LOD_MODE_2X", "MENU_AA_LOD_MODE_4X", "MENU_AA_LOD_MODE_8X", "MENU_AA_LOD_MODE_16X", "MENU_AA_LOD_MODE_8XQ", "MENU_AA_LOD_MODE_16XQ"}; // 0x016641B0
 static const char* cDisplay_default_lod_setting_names[5] = {"MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH", "MENU_CUSTOM"}; // 0x016641CC
 static const char* cDisplay_window_mode_names[3] = {"MENU_WINDOW_MODE_WINDOWED", "MENU_WINDOW_MODE_BORDERLESS", "MENU_WINDOW_MODE_FULLSCREEN"}; // 0x016641E0
@@ -196,7 +202,7 @@ static bool lods_equal(const rl_level_of_detail& lhs, const rl_level_of_detail& 
 // OpenRFG: World Detail Distance, LOD Detail and Draw Distance, which the presets (lods_equal) leave out.
 static bool display_openrfg_distances_equal(const rl_level_of_detail& lhs, const rl_level_of_detail& rhs)
 {
-    return rl_lod_get_world_detail_level(lhs) == rl_lod_get_world_detail_level(rhs) && rl_lod_get_lod_detail_level(lhs) == rl_lod_get_lod_detail_level(rhs) && rl_lod_get_draw_distance_level(lhs) == rl_lod_get_draw_distance_level(rhs);
+    return rl_lod_get_world_detail_level(lhs) == rl_lod_get_world_detail_level(rhs) && rl_lod_get_lod_detail_level(lhs) == rl_lod_get_lod_detail_level(rhs) && rl_lod_get_draw_distance_level(lhs) == rl_lod_get_draw_distance_level(rhs) && rl_lod_get_terrain_distance_level(lhs) == rl_lod_get_terrain_distance_level(rhs);
 }
 
 // OpenRFG: puts the caption of an OpenRFG row into the localization table (the game's data has none), once.
@@ -292,7 +298,9 @@ static void display_info_set_to_default_lod_settings(display_default_settings de
         const int world_detail = rl_lod_get_world_detail_level(Pending_lod);
         const int lod_detail = rl_lod_get_lod_detail_level(Pending_lod);
         const int draw_distance = rl_lod_get_draw_distance_level(Pending_lod);
+        const int terrain_distance = rl_lod_get_terrain_distance_level(Pending_lod);
         Pending_lod = Default_lods[default_setting];
+        rl_lod_set_terrain_distance_level(Pending_lod, terrain_distance);
         rl_lod_set_world_detail_level(Pending_lod, world_detail);
         rl_lod_set_lod_detail_level(Pending_lod, lod_detail);
         rl_lod_set_draw_distance_level(Pending_lod, draw_distance);
@@ -627,6 +635,9 @@ static void option_change_occurred_doptions(int choice, void* new_value)
             return;
         case DOPTIONS_ADVANCED_ROW_DRAW_DISTANCE:
             rl_lod_set_draw_distance_level(Pending_lod, value); // OpenRFG
+            return;
+        case DOPTIONS_ADVANCED_ROW_TERRAIN_DISTANCE:
+            rl_lod_set_terrain_distance_level(Pending_lod, value); // OpenRFG
             return;
         default:
             return;
@@ -1321,6 +1332,9 @@ void set_detail_page(detail_option_pages page)
         ui_menu_add_char_list_item(Menu_handle_doptions, kLod_detail_caption_key, cDisplay_settings_world_detail, 3, option_change_occurred_doptions, rl_lod_get_lod_detail_level(Pending_lod), true);
         display_add_openrfg_caption(kDraw_distance_caption_key, kDraw_distance_caption);
         ui_menu_add_char_list_item(Menu_handle_doptions, kDraw_distance_caption_key, cDisplay_settings_world_detail, 3, option_change_occurred_doptions, rl_lod_get_draw_distance_level(Pending_lod), true);
+        // OpenRFG: row 13, Terrain Distance (no effect on 32-bit: its zone pools hold the original 3x3).
+        display_add_openrfg_caption(kTerrain_distance_caption_key, kTerrain_distance_caption);
+        ui_menu_add_char_list_item(Menu_handle_doptions, kTerrain_distance_caption_key, cDisplay_settings_terrain_distance, 2, option_change_occurred_doptions, rl_lod_get_terrain_distance_level(Pending_lod), true);
         // Magic number: row 1, soft shadows.
         ui_menu_enable_menu_item(Menu_handle_doptions, 1, false);
         ui_menu_show_menu_item(Menu_handle_doptions, 1, false);

@@ -63,7 +63,7 @@ static char* Roadblock_name_string_pool_data; // 0x0302F168
 static object_pool<roadblock_data_type, 16, 1> Roadblock_type_pool; // 0x0304B640
 static object_pool<roadblock_squad_info, 32, 1> Roadblock_squad_pool; // 0x031A35D0
 static object_pool<roadblock_formation_info, 8, 1> Roadblock_formation_pool; // 0x034FDF10
-static object_pool<object_roadblock_node, 64, 1> object_roadblock_nodepool; // 0x0303CAE0
+static object_pool<object_roadblock_node, OPENRFG_ZONE_POOL(64), 1> object_roadblock_nodepool; // 0x0303CAE0
 
 static const float DEFAULT_TURRET_ROTATIONAL_LIMIT = 90.0f; // 0x01315398
 static const float GUARD_NODE_OFFSET_DISTANCE = 1.5f; // 0x016AEFCC
@@ -552,7 +552,7 @@ object* alloc_object_roadblock_node()
 }
 
 // Magic numbers: rfg.exe's arguments (0x0107BB00), the pool's bytes and capacity.
-static obj_class_instantiator object_roadblock_node_instantiator("object_roadblock_node", alloc_object_roadblock_node, types_object_roadblock_node, bpo_index_object_roadblock_node, classname_object_roadblock_node, object_roadblock_node::pool_remaining, 0x5B80, 0x40);
+static obj_class_instantiator object_roadblock_node_instantiator("object_roadblock_node", alloc_object_roadblock_node, types_object_roadblock_node, bpo_index_object_roadblock_node, classname_object_roadblock_node, object_roadblock_node::pool_remaining, 0x5B80, OPENRFG_ZONE_POOL(0x40));
 
 // 0x00A1C120 (:663)
 unsigned int object_roadblock_node::get_classname_hash()

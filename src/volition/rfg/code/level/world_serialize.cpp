@@ -89,6 +89,7 @@
 
 #include <new>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -171,6 +172,22 @@ void world::end_mission_object_creation()
     mission_object_creation_mode = false;
 }
 
+// OpenRFG (not in the binary): logs the first time a class pool is out of objects (a zone object is then skipped), so a
+// pool too small for the Terrain Distance option's 5x5 zones shows up in openrfg_crash.txt.
+void openrfg_log(const char* text); // crash_early.cpp
+static void openrfg_log_pool_exhausted(unsigned int bucket, const char* (*classname_func)(), int max_objects)
+{
+    static bool s_logged[768] = {};
+    if (bucket >= 768 || s_logged[bucket])
+    {
+        return;
+    }
+    s_logged[bucket] = true;
+    char text[200];
+    snprintf(text, sizeof(text), "ZONEPOOL class pool exhausted: %s (max %d), objects of this class are skipped", classname_func != nullptr ? classname_func() : "?", max_objects);
+    openrfg_log(text);
+}
+
 // 0x0093B450 (:328)
 object* world::alloc_object_stub(unsigned int classname_hash, world_zone* origin_zone, unsigned int parent)
 {
@@ -182,6 +199,7 @@ object* world::alloc_object_stub(unsigned int classname_hash, world_zone* origin
     object* stub = obj_class_instantiator::alloc_funcs[bucket]();
     if (stub == nullptr)
     {
+        openrfg_log_pool_exhausted(bucket, obj_class_instantiator::classname_funcs[bucket], obj_class_instantiator::max_objects[bucket]);
         return nullptr;
     }
     obj_class_instantiator::type_funcs[bucket](stub->obj_type, stub->sub_type);
@@ -210,6 +228,7 @@ object* world::alloc_object_stub_preexisting(unsigned int classname_hash, unsign
     object* stub = obj_class_instantiator::alloc_funcs[bucket]();
     if (stub == nullptr)
     {
+        openrfg_log_pool_exhausted(bucket, obj_class_instantiator::classname_funcs[bucket], obj_class_instantiator::max_objects[bucket]);
         return nullptr;
     }
     obj_class_instantiator::type_funcs[bucket](stub->obj_type, stub->sub_type);

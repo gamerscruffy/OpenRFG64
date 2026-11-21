@@ -89,8 +89,8 @@ static tweak_table_item Tweak_table_item_Turret_autoaim_close_dp("Turret_autoaim
 static tweak_table_item Tweak_table_item_Turret_autoaim_angle_bias("Turret_autoaim_angle_bias", &Turret_autoaim_angle_bias); // 0x0353F060
 static tweak_table_item Tweak_table_item_Turret_vehicle_turning_sound_min_delta("Turret_vehicle_turning_sound_min_delta", &Turret_vehicle_turning_sound_min_delta); // 0x03045040
 static tweak_table_item Tweak_table_item_Turret_turning_sound_min_delta("Turret_turning_sound_min_delta", &Turret_turning_sound_min_delta); // 0x03067FA8
-static object_pool<turret, 66, 1> turretpool; // 0x03045360
-static obj_class_instantiator turret_instantiator("turret", alloc_turret, types_turret, bpo_index_turret, classname_turret, turret::pool_remaining, 0x5D60, 66); // 0x03560AAC (0x0107CDE0)
+static object_pool<turret, OPENRFG_ZONE_POOL(66), 1> turretpool; // 0x03045360
+static obj_class_instantiator turret_instantiator("turret", alloc_turret, types_turret, bpo_index_turret, classname_turret, turret::pool_remaining, 0x5D60, OPENRFG_ZONE_POOL(66)); // 0x03560AAC (0x0107CDE0)
 
 // The turret's physics when it is streamed in (rdd.get_data()->physics of the original's inlined checks).
 static turret_physics* turret_loaded_physics(const turret* tp)

@@ -73,7 +73,7 @@
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/collide/shape/misc/transform/hkptransformshape.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/entity/hkprigidbody.h"
 
-static const int GENERAL_MOVER_POOL_SIZE = 3072; // general_moverpool
+static const int GENERAL_MOVER_POOL_SIZE = OPENRFG_ZONE_POOL(3072); // general_moverpool
 static const int GM_DESTROYABLE_HITPOINTS = 5000; // pieces of destroyable shapes start with these
 static const int GM_DESTROYABLE_DISLODGE_HITPOINTS = 50;
 static const float GM_FADE_DIST_SQR = 1e+08f; // 10 km: movers fade out of view beyond this

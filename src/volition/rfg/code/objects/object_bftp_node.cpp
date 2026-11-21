@@ -32,7 +32,7 @@
 #include "volition/vlib/code/memory/object_pool.h"
 #include "volition/vlib/code/util/unicode_tools.h"
 
-static object_pool<object_bftp_node, 128, 1> object_bftp_nodepool; // 0x030544E0
+static object_pool<object_bftp_node, OPENRFG_ZONE_POOL(128), 1> object_bftp_nodepool; // 0x030544E0
 
 static bool Bftp_always_bomb; // 0x0302F11E: every tag enables its bomb (debug, never set)
 static bool Bftp_all_bombs_on; // 0x0302F11F: every bomb node is enabled (debug, never set)
@@ -68,7 +68,7 @@ object* alloc_object_bftp_node()
 }
 
 // Magic numbers: rfg.exe's arguments (0x010766C0), the pool's bytes and capacity.
-static obj_class_instantiator object_bftp_node_instantiator("object_bftp_node", alloc_object_bftp_node, types_object_bftp_node, bpo_index_object_bftp_node, classname_object_bftp_node, object_bftp_node::pool_remaining, 0x5AC0, 0x80); // 0x03169678
+static obj_class_instantiator object_bftp_node_instantiator("object_bftp_node", alloc_object_bftp_node, types_object_bftp_node, bpo_index_object_bftp_node, classname_object_bftp_node, object_bftp_node::pool_remaining, 0x5AC0, OPENRFG_ZONE_POOL(0x80)); // 0x03169678
 
 // ---- internal functions
 

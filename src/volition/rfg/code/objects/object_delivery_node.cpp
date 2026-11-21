@@ -13,7 +13,7 @@
 #include "volition/rfg/code/objects/object_prop_names_shared.h"
 #include "volition/vlib/code/memory/object_pool.h"
 
-static object_pool<object_delivery_node, 42, 1> object_delivery_nodepool; // 0x031A0190
+static object_pool<object_delivery_node, OPENRFG_ZONE_POOL(42), 1> object_delivery_nodepool; // 0x031A0190
 
 static const unsigned int DELIVERY_NODE_NO_TIME = 0x7FFFFFFD; // Magic number: the time of a node that has none
 
@@ -43,7 +43,7 @@ object* alloc_object_delivery_node()
 }
 
 // Magic numbers: rfg.exe's arguments (0x0107719B, 0x010771A6), the pool's bytes and capacity.
-static obj_class_instantiator object_delivery_node_instantiator("object_delivery_node", alloc_object_delivery_node, types_object_delivery_node, bpo_index_object_delivery_node, classname_object_delivery_node, object_delivery_node::pool_remaining, 0x1EA0, 0x2A); // 0x0304BA9C
+static obj_class_instantiator object_delivery_node_instantiator("object_delivery_node", alloc_object_delivery_node, types_object_delivery_node, bpo_index_object_delivery_node, classname_object_delivery_node, object_delivery_node::pool_remaining, 0x1EA0, OPENRFG_ZONE_POOL(0x2A)); // 0x0304BA9C
 
 // 0x00A17920 (:25)
 object_delivery_node::object_delivery_node()

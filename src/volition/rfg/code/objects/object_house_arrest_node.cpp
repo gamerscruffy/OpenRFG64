@@ -35,7 +35,7 @@ static object_pool<house_arrest_level_data, 32, 1> House_arrest_level_data_pool;
 static farray<house_arrest_level_data*, 4> Dlc_house_arrest_list; // 0x016AD270
 static string_pool House_arrest_string_pool(nullptr); // 0x0328B6D8
 static char* House_arrest_string_pool_data; // 0x0302F140
-static object_pool<object_house_arrest_node, 16, 1> object_house_arrest_nodepool; // 0x034253C0
+static object_pool<object_house_arrest_node, OPENRFG_ZONE_POOL(16), 1> object_house_arrest_nodepool; // 0x034253C0
 
 // 0x00A18150 (:210)
 void types_object_house_arrest_node(signed char& type, signed char& subtype)
@@ -63,7 +63,7 @@ object* alloc_object_house_arrest_node()
 }
 
 // Magic numbers: rfg.exe's arguments (0x01077660), the pool's bytes and capacity.
-static obj_class_instantiator object_house_arrest_node_instantiator("object_house_arrest_node", alloc_object_house_arrest_node, types_object_house_arrest_node, bpo_index_object_house_arrest_node, classname_object_house_arrest_node, object_house_arrest_node::pool_remaining, 0xAD0, 0x10);
+static obj_class_instantiator object_house_arrest_node_instantiator("object_house_arrest_node", alloc_object_house_arrest_node, types_object_house_arrest_node, bpo_index_object_house_arrest_node, classname_object_house_arrest_node, object_house_arrest_node::pool_remaining, 0xAD0, OPENRFG_ZONE_POOL(0x10));
 
 // 0x00A33C70 (.h:31)
 house_arrest_squad_data::house_arrest_squad_data()

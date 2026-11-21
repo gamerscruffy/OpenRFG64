@@ -18,7 +18,7 @@
 // <rl_quadtree_sector::factory_init> 0x00514940 (:9)
 // <rl_quadtree_sector::release> 0x00514A30 (:9)
 // <rl_quadtree_sector::create> 0x0052C910 (:9)
-RL_FACTORY_CLASS_IMPLEMENTATION(rl_quadtree_sector, 0xE47BC810, 0x1000)
+RL_FACTORY_CLASS_IMPLEMENTATION(rl_quadtree_sector, 0xE47BC810, OPENRFG_ZONE_POOL(0x1000))
 
 const int rl_quadtree_sector::CHILDREN_MAX = 4; // 0x012BEE44
 

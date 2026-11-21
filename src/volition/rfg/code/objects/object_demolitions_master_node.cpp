@@ -31,7 +31,7 @@ static string_pool Demolitions_master_string_pool(nullptr); // 0x03067F40
 static char* Demolitions_master_string_pool_data; // 0x0302F138
 static object_pool<demolitions_master_level_data, 32, 1> Demolitions_master_level_data_pool; // 0x0353F0A0
 static farray<demolitions_master_level_data*, 6> Dlc_demo_master_list; // 0x016AD248
-static object_pool<object_demolitions_master_node, 32, 1> object_demolitions_master_nodepool; // 0x03043AE0
+static object_pool<object_demolitions_master_node, OPENRFG_ZONE_POOL(32), 1> object_demolitions_master_nodepool; // 0x03043AE0
 
 // 0x00A17BA0 (:357)
 void types_object_demolitions_master_node(signed char& type, signed char& subtype)
@@ -59,7 +59,7 @@ object* alloc_object_demolitions_master_node()
 }
 
 // Magic numbers: rfg.exe's arguments (0x01077240), the pool's bytes and capacity.
-static obj_class_instantiator object_demolitions_master_node_instantiator("object_demolitions_master_node", alloc_object_demolitions_master_node, types_object_demolitions_master_node, bpo_index_object_demolitions_master_node, classname_object_demolitions_master_node, object_demolitions_master_node::pool_remaining, 0x1560, 0x20);
+static obj_class_instantiator object_demolitions_master_node_instantiator("object_demolitions_master_node", alloc_object_demolitions_master_node, types_object_demolitions_master_node, bpo_index_object_demolitions_master_node, classname_object_demolitions_master_node, object_demolitions_master_node::pool_remaining, 0x1560, OPENRFG_ZONE_POOL(0x20));
 
 // 0x00A62D80 (:71). rfg.exe: LTCG, level_name in EDI.
 static demolitions_master_level_data* find_demolitions_master_data(const char* level_name)

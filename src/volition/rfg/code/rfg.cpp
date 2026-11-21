@@ -1886,7 +1886,13 @@ static void boot_stage_1_pools()
     Special_reserve.init_rfg_split_mempool("special reserve mempool", mempool_init_alloc(4), 4, 4, nullptr, 0, 4, 8);
     Chunk_preload_pool.init_rfg_split_mempool("chunk_preload", mempool_init_alloc(0x4B000), 0x4B000, 4, nullptr, 0, 4, 8);
     Stream_chunk_preload_allocator.init(&Chunk_preload_pool);
+#ifdef OPENRFG_X64
+    // OpenRFG: 48 MB (15 MB in the original) for the broadphase object/island buffers of the zone pools scaled for
+    // 5x5 zones (OPENRFG_ZONE_POOL, havok_bpo_system_init) and 64-bit pointers.
+    Permanent_mempool.init_rfg_split_mempool("Permanent mempool", mempool_init_alloc(0x3000000), 0x3000000, 4, nullptr, 0, 4, 8);
+#else
     Permanent_mempool.init_rfg_split_mempool("Permanent mempool", mempool_init_alloc(0xF00000), 0xF00000, 4, nullptr, 0, 4, 8);
+#endif
     Stream_permanent_allocator.init(&Permanent_mempool);
     Interface_mempool.init_rfg_split_mempool("interface", mempool_init_alloc(0x980000), 0x980000, 4, nullptr, 0, 4, 8);
     Interface_perm_mempool.init_rfg_split_mempool("interface_perm", mempool_init_alloc(0x3000000), 0x3000000, 4, nullptr, 0, 4, 8);

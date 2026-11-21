@@ -53,7 +53,7 @@
 
 // Magic numbers: rfg.exe's pools and tables.
 string_pool Action_node_string_pool("Action_node_string_pool"); // 0x030F7E10
-static object_pool<object_action_node,608,1> object_action_nodepool; // 0x033D66E0
+static object_pool<object_action_node,OPENRFG_ZONE_POOL(608),1> object_action_nodepool; // 0x033D66E0
 static object_pool<action_node_definition,156,1> Action_node_definition_pool; // 0x0305A6E0
 static object_pool<action_node_animation_info,124,1> Action_anim_info_pool; // 0x03426500
 static str_data_hash_table_cached<action_node_definition*,156,unsigned char> Action_node_definition_hash; // 0x03425EB8
@@ -299,7 +299,7 @@ object* alloc_object_action_node()
 }
 
 // Magic numbers: rfg.exe's arguments, the pool's bytes and capacity.
-static obj_class_instantiator object_action_node_instantiator("object_action_node", alloc_object_action_node, types_object_action_node, bpo_index_object_action_node, classname_object_action_node, object_action_node::pool_remaining, 156320, 608); // 0x030FCE5C
+static obj_class_instantiator object_action_node_instantiator("object_action_node", alloc_object_action_node, types_object_action_node, bpo_index_object_action_node, classname_object_action_node, object_action_node::pool_remaining, 156320, OPENRFG_ZONE_POOL(608)); // 0x030FCE5C
 
 // 0x005DBF10
 const object_type object_action_node::get_type_static()
@@ -2192,7 +2192,7 @@ void action_node_system_init()
 }
 
 // 0x00A60910 (:3049)
-bool action_node_collect_nodes(const npc* np, float radius, farray<object_action_node const*,608>& node_list, bool ped_only, bool patrol_only)
+bool action_node_collect_nodes(const npc* np, float radius, farray<object_action_node const*, OPENRFG_ZONE_POOL(608)>& node_list, bool ped_only, bool patrol_only)
 {
     node_list.clear();
     unsigned int handles[608];
@@ -2230,7 +2230,7 @@ bool action_node_collect_nodes(const npc* np, float radius, farray<object_action
 }
 
 // 0x00A60AD0 (:3154)
-bool action_node_collect_nodes(const player* pp, float radius, farray<object_action_node const*,608>& node_list)
+bool action_node_collect_nodes(const player* pp, float radius, farray<object_action_node const*, OPENRFG_ZONE_POOL(608)>& node_list)
 {
     node_list.clear();
     unsigned int handles[608];
@@ -2305,7 +2305,7 @@ static bool action_node_build_set_internal(const human* hp, const object_action_
     {
         return true;
     }
-    farray<object_action_node const*,608> candidates;
+    farray<object_action_node const*, OPENRFG_ZONE_POOL(608)> candidates;
     for (int i = 0; i < root_anp->node_links.size(); i++)
     {
         const object_action_node* linked = World.object_from_handle<object_action_node>(root_anp->node_links[i]);

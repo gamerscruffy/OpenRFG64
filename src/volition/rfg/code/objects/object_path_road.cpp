@@ -22,7 +22,7 @@
 #include "volition/vlib/code/memory/vmemory.h"
 
 static const int MAX_ROAD_BREAKS = 4;
-static const int MAX_ROADS = 322;
+static const int MAX_ROADS = OPENRFG_ZONE_POOL(322);
 static const unsigned char BREAK_INDEX_MASK = 0x3F; // a break is index | state << 6
 static const float CLOSEST_ROAD_RADIUS = 30.0f; // the search radius of the break and rejoin helpers
 static const float ROAD_END_U_TOLERANCE = 0.05f;
@@ -792,7 +792,7 @@ float object_road_get_direction(object_path_road* road, const vector& fvec, floa
 }
 
 // 0x00A92950 (:1340)
-bool object_road_get_roads_in_zone(const vector& point, farray<object_path_road const*, 322>& road_list, bool use_special_roads)
+bool object_road_get_roads_in_zone(const vector& point, farray<object_path_road const*, OPENRFG_ZONE_POOL(322)>& road_list, bool use_special_roads)
 {
     return object_road_get_roads_in_zone(rfg_zonex_get_grid_xy(point), road_list, use_special_roads);
 }
@@ -804,7 +804,7 @@ static unsigned int road_zone(const object_path_road* road)
 }
 
 // 0x00A69050 (:1349): Original quirk kept: use_special_roads asks for special roads only.
-bool object_road_get_roads_in_zone(unsigned short zone_id_xy, farray<object_path_road const*, 322>& road_list, bool use_special_roads)
+bool object_road_get_roads_in_zone(unsigned short zone_id_xy, farray<object_path_road const*, OPENRFG_ZONE_POOL(322)>& road_list, bool use_special_roads)
 {
     if (zone_id_xy > 0xFF)
     {

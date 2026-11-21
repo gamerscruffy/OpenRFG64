@@ -64,7 +64,7 @@ static const float DESPAWN_PLAYER_RANGE_SQUARED = 10000.0f;
 static const float DESPAWN_NODE_RANGE_SQUARED = 400.0f;
 
 // Magic number: rfg.exe's pool.
-static const int VEHICLE_SPAWN_NODE_POOL_SIZE = 128;
+static const int VEHICLE_SPAWN_NODE_POOL_SIZE = OPENRFG_ZONE_POOL(128);
 static const int VEHICLE_SPAWN_NODE_POOL_USAGE = 0x5AC0;
 
 // ---- file-static globals
@@ -1067,8 +1067,8 @@ void object_spawn_set_player_vehicle_info(const vehicle_info* player_vehicle_inf
 // ---- NPC and squad nodes (stub_impl.md S9). The turret node stays unregistered: no turret class yet.
 static const float DEFAULT_SPAWN_PROB_MAX = 1.0f;
 // Magic numbers: rfg.exe's pools.
-static object_pool<object_npc_spawn_node,64,1> object_npc_spawn_nodepool; // 0x03060E20
-static object_pool<object_squad_spawn_node,256,1> object_squad_spawn_nodepool; // 0x033C67E0
+static object_pool<object_npc_spawn_node,OPENRFG_ZONE_POOL(64),1> object_npc_spawn_nodepool; // 0x03060E20
+static object_pool<object_squad_spawn_node,OPENRFG_ZONE_POOL(256),1> object_squad_spawn_nodepool; // 0x033C67E0
 static const char* ORDERS_NAMES[NUM_GFM_ORDERS_TYPES] = { // 0x016946B0
     "Default", "Defend", "Attack", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, "Fodder", "Terrorize", "Wait", "Roadblock", "Trapped", "Trapped Jail", "Drive By", "Fly By", "Drop-off", "Tied Up"
 };
@@ -1287,7 +1287,7 @@ object* alloc_object_npc_spawn_node()
     return object_npc_spawn_nodepool.alloc(0);
 }
 
-static obj_class_instantiator object_npc_spawn_node_instantiator("object_npc_spawn_node", alloc_object_npc_spawn_node, types_object_npc_spawn_node, bpo_index_object_npc_spawn_node, classname_object_npc_spawn_node, object_npc_spawn_node::pool_remaining, 0x2D80, 64);
+static obj_class_instantiator object_npc_spawn_node_instantiator("object_npc_spawn_node", alloc_object_npc_spawn_node, types_object_npc_spawn_node, bpo_index_object_npc_spawn_node, classname_object_npc_spawn_node, object_npc_spawn_node::pool_remaining, 0x2D80, OPENRFG_ZONE_POOL(64));
 
 // 0x00A1CA40 (:1531)
 unsigned int object_npc_spawn_node::get_classname_hash()
@@ -1666,7 +1666,7 @@ object* alloc_object_squad_spawn_node()
     return object_squad_spawn_nodepool.alloc(0);
 }
 
-static obj_class_instantiator object_squad_spawn_node_instantiator("object_squad_spawn_node", alloc_object_squad_spawn_node, types_object_squad_spawn_node, bpo_index_object_squad_spawn_node, classname_object_squad_spawn_node, object_squad_spawn_node::pool_remaining, 0xE540, 256);
+static obj_class_instantiator object_squad_spawn_node_instantiator("object_squad_spawn_node", alloc_object_squad_spawn_node, types_object_squad_spawn_node, bpo_index_object_squad_spawn_node, classname_object_squad_spawn_node, object_squad_spawn_node::pool_remaining, 0xE540, OPENRFG_ZONE_POOL(256));
 
 // 0x00A1CBE0 (:1896)
 unsigned int object_squad_spawn_node::get_classname_hash()
@@ -2342,7 +2342,7 @@ bool object_squad_spawn_node::is_safehouse_vip() const
 }
 
 // ---- turret nodes
-static object_pool<object_turret_spawn_node, 64, 1> object_turret_spawn_nodepool; // 0x03197820
+static object_pool<object_turret_spawn_node, OPENRFG_ZONE_POOL(64), 1> object_turret_spawn_nodepool; // 0x03197820
 
 // 0x00A1CE40 (:2747)
 void types_object_turret_spawn_node(signed char& type, signed char& subtype)
@@ -2370,7 +2370,7 @@ object* alloc_object_turret_spawn_node()
 }
 
 // Magic numbers: the pool usage and size, as registered at 0x0107C230.
-static obj_class_instantiator object_turret_spawn_node_instantiator("object_turret_spawn_node", alloc_object_turret_spawn_node, types_object_turret_spawn_node, bpo_index_object_turret_spawn_node, classname_object_turret_spawn_node, object_turret_spawn_node::pool_remaining, 0x2E80, 64); // 0x03538994
+static obj_class_instantiator object_turret_spawn_node_instantiator("object_turret_spawn_node", alloc_object_turret_spawn_node, types_object_turret_spawn_node, bpo_index_object_turret_spawn_node, classname_object_turret_spawn_node, object_turret_spawn_node::pool_remaining, 0x2E80, OPENRFG_ZONE_POOL(64)); // 0x03538994
 
 // 0x00A1CE70 (:2747)
 unsigned int object_turret_spawn_node::get_classname_hash()

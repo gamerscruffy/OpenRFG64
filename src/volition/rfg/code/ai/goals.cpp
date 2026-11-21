@@ -2028,7 +2028,7 @@ int flee_restricted_area_goal::get_fitness(const npc* np, ai_plan_conditions) co
 }
 
 // 0x00637D10 (:3038). LTCG: node_list ESI.
-int find_nearest_action_node(const npc* np, farray<object_action_node const*, 608>& node_list)
+int find_nearest_action_node(const npc* np, farray<object_action_node const*, OPENRFG_ZONE_POOL(608)>& node_list)
 {
     if (node_list.size() <= 1)
     {
@@ -2089,9 +2089,9 @@ int use_action_node_goal::get_fitness(const npc* np, ai_plan_conditions) const
 // 0x0067D4B0 (:3156)
 bool use_action_node_goal::store_setup_data(ai_goal_setup_data& goal_setup_data, const npc* np) const
 {
-    farray<object_action_node const*, 608> all_nodes;
-    farray<object_action_node const*, 608> normal_nodes;
-    farray<object_action_node const*, 608> priority_nodes;
+    farray<object_action_node const*, OPENRFG_ZONE_POOL(608)> all_nodes;
+    farray<object_action_node const*, OPENRFG_ZONE_POOL(608)> normal_nodes;
+    farray<object_action_node const*, OPENRFG_ZONE_POOL(608)> priority_nodes;
 
     if (np->scripted_action_node_handle != 0xFFFFFFFF)
     {

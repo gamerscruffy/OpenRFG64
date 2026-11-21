@@ -22,7 +22,7 @@ static const int AMBIENT_BEHAVIOR_NAME_SIZE = 24;
 static int Num_ambient_behavior_groups; // 0x0373EFD4
 static ambient_behavior_group Ambient_behavior_groups[MAX_AMBIENT_BEHAVIOR_GROUPS]; // 0x0373F018
 
-static object_pool<object_ambient_behavior_region, 20, 1> object_ambient_behavior_regionpool; // 0x037449F0
+static object_pool<object_ambient_behavior_region, OPENRFG_ZONE_POOL(20), 1> object_ambient_behavior_regionpool; // 0x037449F0
 
 // 0x00B4C070 (:32)
 void ambient_behavior_system_init()
@@ -107,7 +107,7 @@ object* alloc_object_ambient_behavior_region()
 }
 
 // Magic numbers: the pool usage and size, as registered at 0x0108C330.
-static obj_class_instantiator object_ambient_behavior_region_instantiator("object_ambient_behavior_region", alloc_object_ambient_behavior_region, types_object_ambient_behavior_region, bpo_index_object_ambient_behavior_region, classname_object_ambient_behavior_region, object_ambient_behavior_region::pool_remaining, 0xD80, 20); // 0x0374A4E4
+static obj_class_instantiator object_ambient_behavior_region_instantiator("object_ambient_behavior_region", alloc_object_ambient_behavior_region, types_object_ambient_behavior_region, bpo_index_object_ambient_behavior_region, classname_object_ambient_behavior_region, object_ambient_behavior_region::pool_remaining, 0xD80, OPENRFG_ZONE_POOL(20)); // 0x0374A4E4
 
 // 0x00B40EA0 (:91)
 unsigned int object_ambient_behavior_region::get_classname_hash()

@@ -16,7 +16,7 @@
 #include "volition/rfg/code/objects/object_raid_node.h"
 #include "volition/vlib/code/memory/object_pool.h"
 
-static object_pool<object_activity_spawn, 36, 1> object_activity_spawnpool; // 0x03543A00
+static object_pool<object_activity_spawn, OPENRFG_ZONE_POOL(36), 1> object_activity_spawnpool; // 0x03543A00
 
 // <object_raid_node> 0x00A4A100, <object_house_arrest_node> 0x00A4A160, <object_area_defense_node> 0x00A4A1C0 (:26)
 template<typename T>
@@ -125,7 +125,7 @@ object* alloc_object_activity_spawn()
 }
 
 // Magic numbers: rfg.exe's arguments (0x01076330), the pool's bytes and capacity.
-static obj_class_instantiator object_activity_spawn_instantiator("object_activity_spawn", alloc_object_activity_spawn, types_object_activity_spawn, bpo_index_object_activity_spawn, classname_object_activity_spawn, object_activity_spawn::pool_remaining, 0x18A0, 0x24);
+static obj_class_instantiator object_activity_spawn_instantiator("object_activity_spawn", alloc_object_activity_spawn, types_object_activity_spawn, bpo_index_object_activity_spawn, classname_object_activity_spawn, object_activity_spawn::pool_remaining, 0x18A0, OPENRFG_ZONE_POOL(0x24));
 
 // 0x00A15870 (:113)
 unsigned int object_activity_spawn::get_classname_hash()

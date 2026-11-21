@@ -14,7 +14,7 @@
 #include "volition/vlib/code/util/hash_table.h"
 #include "volition/vlib/code/util/varray.h"
 
-static const int MAX_DUMMY_OBJECTS = 256;
+static const int MAX_DUMMY_OBJECTS = OPENRFG_ZONE_POOL(256);
 
 static object_pool<object_dummy, MAX_DUMMY_OBJECTS, 1> object_dummypool; // 0x033B5910
 static const c_chunk_base* BARRICADE_CHUNK; // 0x0302F13C

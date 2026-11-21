@@ -255,7 +255,7 @@ int object_effect_get_count(); // 0x0074AB80 (:1318)
 void object_effect_system_init(mempool* permanent_pool); // 0x0074AB90 (:1341)
 void object_effect_level_init_pre(); // 0x00744100 (:1365)
 void object_effect_level_shutdown(); // 0x0074AC30 (:1371)
-const object_pool<object_effect,512,1>& object_effect_get_objects(); // 0x00744110 (:1385)
+const object_pool<object_effect,OPENRFG_ZONE_POOL(512),1>& object_effect_get_objects(); // 0x00744110 (:1385)
 const char* object_effect_get_expression_variable_name(object_effect_expression_variable_e variable_e); // 0x00744120 (:1390)
 void object_effect_expressions_set_global_variable(object_effect_expression_variable_e variable_e, float value); // 0x00744130 (:1395)
 

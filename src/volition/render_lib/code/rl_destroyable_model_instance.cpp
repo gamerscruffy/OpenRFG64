@@ -43,10 +43,10 @@
 // <rl_destroyable_model_instance_shared_base::factory_init> 0x0050CA20 (:33)
 // <rl_destroyable_model_instance_shared_base::release> 0x0050CB20 (:33)
 // <rl_destroyable_model_instance_shared_base::create> 0x00523E80 (:33)
-RL_FACTORY_CLASS_IMPLEMENTATION(rl_destroyable_model_instance_shared_base, 0x207F2A39, 1000)
+RL_FACTORY_CLASS_IMPLEMENTATION(rl_destroyable_model_instance_shared_base, 0x207F2A39, OPENRFG_ZONE_POOL(1000))
 // <rl_destroyable_model_instance::factory_init> 0x0050CBA0 (:34)
 // <rl_destroyable_model_instance::create> 0x00549AF0 (:34)
-RL_FACTORY_CLASS_CORE(rl_destroyable_model_instance, 0x7A6C541D, 1000)
+RL_FACTORY_CLASS_CORE(rl_destroyable_model_instance, 0x7A6C541D, OPENRFG_ZONE_POOL(1000))
 
 // m_flags bit 0: the instance was batchable before its compiled mesh made it unbatched.
 const unsigned int rl_destroyable_model_instance::kWasBatchable = 1; // 0x012BEDD4

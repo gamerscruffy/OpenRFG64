@@ -30,7 +30,7 @@
 #include "volition/vlib/code/util/dictionary.h"
 
 // Magic number: rfg.exe's pool.
-static object_pool<trigger_region,106,1> trigger_regionpool; // 0x0342A3A0
+static object_pool<trigger_region,OPENRFG_ZONE_POOL(106),1> trigger_regionpool; // 0x0342A3A0
 static const explosion_info* Mine_killzone_explosion; // 0x0302F21C
 static const char* MINE_KILLZONE_EXPLOSION_NAME = "mine_killzone"; // 0x01694704
 static const char* TRIGGER_REGION_TYPE_NAMES[NUM_TRIGGER_REGION_TYPES] = { "default", "kill human" }; // 0x01694708
@@ -70,7 +70,7 @@ object* alloc_trigger_region()
     return trigger_regionpool.alloc(0);
 }
 
-static obj_class_instantiator trigger_region_instantiator("trigger_region", alloc_trigger_region, types_trigger_region, bpo_index_trigger_region, classname_trigger_region, trigger_region::pool_remaining, 0x65C0, 106);
+static obj_class_instantiator trigger_region_instantiator("trigger_region", alloc_trigger_region, types_trigger_region, bpo_index_trigger_region, classname_trigger_region, trigger_region::pool_remaining, 0x65C0, OPENRFG_ZONE_POOL(106));
 
 // 0x00A1DC50 (:97)
 unsigned int trigger_region::get_classname_hash()

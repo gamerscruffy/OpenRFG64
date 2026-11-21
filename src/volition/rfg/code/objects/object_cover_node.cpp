@@ -55,7 +55,7 @@ static const unsigned short CN_FILE_FLAG_FIRE_LEFT = 2;
 static const unsigned short CN_FILE_FLAG_FIRE_RIGHT = 4;
 static const unsigned short CN_FILE_FLAG_FIRE_POPUP = 8; // only read on a crouching node
 
-static const int MAX_COVER_NODES = 5120;
+static const int MAX_COVER_NODES = OPENRFG_ZONE_POOL(5120);
 static const int DESTRUCTION_EVENT_MAX_NODES = 64; // 0x40 handles on the stack
 
 static object_pool<cover_node, MAX_COVER_NODES, 1> cover_nodepool; // 0x032A0680

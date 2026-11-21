@@ -19,8 +19,8 @@
 #include "keen/base/trace.hpp"
 
 // ---- file-static globals
-static object_pool<zone_file,32,1> Zones; // 0x02CEC200
-static str_data_hash_table<zone_file*,32,64,unsigned char> Zone_filename_hash; // 0x02FE5110
+static object_pool<zone_file,OPENRFG_MAX_ZONES + 39,1> Zones; // 0x02CEC200
+static str_data_hash_table<zone_file*,OPENRFG_MAX_ZONES + 39,64,unsigned char> Zone_filename_hash; // 0x02FE5110
 
 // 0x0093A4F0 (:42)
 bool zone_load_zone(const char* filename, unsigned int srid, unsigned char* cpu_data, int cpu_data_size, unsigned char* gpu_data, int gpu_data_size)

@@ -176,7 +176,7 @@ protected:
     farray<RenderChunk*,2048> m_highLodChunks; // 0x3710C
     farray<RenderChunk*,2048> m_blendLodChunks; // 0x3911C
     farray<RenderChunk*,2048> m_combineLodChunks; // 0x3B12C
-    farray<rl_scene_entity*,100> m_low_lod_scene_list; // 0x3D13C
+    farray<rl_scene_entity*,OPENRFG_MAX_ZONES * 9 + 19> m_low_lod_scene_list; // 0x3D13C
     unsigned int m_depth_only_material_handle; // 0x3D2DC
     rl_material* m_depth_only_material; // 0x3D2E0
 private:

@@ -29,7 +29,7 @@ static const char ASD_STRING_POOL_NAME[] = "ASD String Pool";
 static char* Asd_string_pool_data; // 0x0302F128
 static string_pool Asd_string_pool(ASD_STRING_POOL_NAME); // 0x035B5940
 static farray<const asd_definition*,20> Asd_definitions; // 0x016AD0F8
-static object_pool<object_air_strike_defense_node, 20, 1> object_air_strike_defense_nodepool; // 0x031872B0
+static object_pool<object_air_strike_defense_node, OPENRFG_ZONE_POOL(20), 1> object_air_strike_defense_nodepool; // 0x031872B0
 
 // 0x00A15940 (:35)
 void types_object_air_strike_defense_node(signed char& type, signed char& subtype)
@@ -58,7 +58,7 @@ object* alloc_object_air_strike_defense_node()
 
 // Magic numbers: rfg.exe's arguments (0x01076480), the pool's bytes and capacity.
 static obj_class_instantiator object_air_strike_defense_node_instantiator("object_air_strike_defense_node", alloc_object_air_strike_defense_node, types_object_air_strike_defense_node, bpo_index_object_air_strike_defense_node,
-                                                                          classname_object_air_strike_defense_node, object_air_strike_defense_node::pool_remaining, 0xDD0, 0x14); // 0x030C0708
+                                                                          classname_object_air_strike_defense_node, object_air_strike_defense_node::pool_remaining, 0xDD0, OPENRFG_ZONE_POOL(0x14)); // 0x030C0708
 
 // 0x00A15980 (:36)
 object_air_strike_defense_node::object_air_strike_defense_node()
