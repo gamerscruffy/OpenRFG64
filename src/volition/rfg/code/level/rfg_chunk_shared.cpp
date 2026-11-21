@@ -66,8 +66,11 @@ static const char* Stitch_platform_ext[8] = {".cstch_pc", ".cstch_pc", ".cstch_p
 static const char* Chunk_platform_ext[8] = {".cchk_pc", ".cchk_pc", ".cchk_pc", ".cchk_pc", ".cchk_pc", ".cchk_pc", ".cchk_pc", ".cchk_pc"}; // 0x01668738
 static unsigned short C_chunk_base_uid; // 0x02CEC148
 static bool Chunk_system_init; // 0x02CEC14A
-static object_pool<c_chunk_base,352,1> Chunk_base; // 0x02FA0560
-static str_data_hash_table<c_chunk_base*,352,32,unsigned short> Chunk_base_hash; // 0x02FD9BE0
+// OpenRFG: scaled with the zone pools. A full pool made chunk_base_load fail without a word, and every building of
+// a chunk that could not load stayed invisible; at 15x15 the loaded zones need far more than 352 building chunks.
+static object_pool<c_chunk_base,OPENRFG_ZONE_POOL(352),1> Chunk_base; // 0x02FA0560
+static str_data_hash_table<c_chunk_base*,OPENRFG_ZONE_POOL(352),32,unsigned short> Chunk_base_hash; // 0x02FD9BE0
+void openrfg_log(const char* text); // crash_early.cpp
 
 // 0x0091FAC0 (compiler generated)
 c_chunk_base::c_chunk_base()
@@ -584,6 +587,14 @@ bool chunk_base_load(const char* filename, unsigned int srid, unsigned char* cpu
 {
     if (Chunk_base.get_free() < 1)
     {
+        static bool s_logged = false;
+        if (!s_logged)
+        {
+            s_logged = true;
+            char text[200];
+            snprintf(text, sizeof(text), "ZONEPOOL chunk pool exhausted (max %d): building chunk %s not loaded", (int)Chunk_base.get_capacity(), filename);
+            openrfg_log(text);
+        }
         return false;
     }
     c_chunk_base* base = Chunk_base.alloc(0);
