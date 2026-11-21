@@ -38,6 +38,7 @@
 #include "volition/stream2/code/stream2.h"
 #include "volition/stream2/code/stream2_allocator.h"
 #include "volition/vlib/code/cfile/cfile.h"
+#include "volition/vlib/code/memory/split_memmgr.h"
 #include "volition/vlib/code/cfile/packfile.h"
 #include "volition/vlib/code/math/bbox.h"
 #include "volition/vlib/code/memory/rfg_split_mempool.h"
