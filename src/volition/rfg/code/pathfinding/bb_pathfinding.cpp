@@ -187,8 +187,9 @@ static const float ZONE_VERT_MATCH_XZ = 0.001f;
 static const float ZONE_VERT_MATCH_Y = 0.05f;
 static const float OUTER_EDGE_MATCH = 0.05f;
 static const float ZONE_STITCH_BOX_GROW = 2.5f;
-// Magic number: 3 x 3 zones around the player, the stack array of stitch_zone in rfg.exe.
-static const int MAX_STITCH_ZONES = 9;
+// Magic number: 3 x 3 zones around the player, the stack array of stitch_zone in rfg.exe (9). OpenRFG: one entry per
+// loaded zone, so the larger Terrain Distance (5 x 5 zones) does not write past it.
+static const int MAX_STITCH_ZONES = OPENRFG_MAX_ZONES;
 
 static bool bb_pf_cell_traversable(const nav_cell* ncp, nav_cell_traversal_rule rule)
 {
