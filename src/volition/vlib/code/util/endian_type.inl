@@ -6,13 +6,22 @@
 
 #ifdef OPENRFG_X64
 #include <intrin.h>
+namespace keen
+{
+    namespace debug
+    {
+        void nativePrintArgs(const char*, ...);
+    }
+}
 // x64: a self-relative 32-bit offset cannot reach a target more than 2 GB away (the heaps are far apart). Such a
 // target goes in a global table and the offset holds 0x7F000000 + its index (a real distance never reaches that).
+// Entries are never freed (nothing says when a target dies), so long streaming sessions at large view distances keep
+// adding new addresses; 4M entries (48 MB) instead of 1M, and the growth is logged.
 namespace et_far
 {
 static const int Base = 0x7F000000;
-static const unsigned int Max_entries = 0x100000;
-static const unsigned int Hash_size = 0x200000;
+static const unsigned int Max_entries = 0x400000;
+static const unsigned int Hash_size = 0x800000;
 struct tables
 {
     void* targets[Max_entries];
@@ -45,6 +54,19 @@ inline int far_index_of(const void* target)
                 t.hash[h] = t.count + 1;
                 result = (int)t.count;
                 t.count++;
+                if ((t.count & 0x3FFFF) == 0)
+                {
+                    keen::debug::nativePrintArgs("et_far: %u of %u far pointer entries used (none failed yet)\n", t.count, Max_entries);
+                }
+            }
+            else
+            {
+                static bool reported = false;
+                if (!reported)
+                {
+                    reported = true;
+                    keen::debug::nativePrintArgs("et_far: far pointer table full, from_pointer failed (%u entries); pointers will be garbage\n", Max_entries);
+                }
             }
             break;
         }

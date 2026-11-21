@@ -1470,7 +1470,18 @@ void roadMeshInstanceRender(keen::GraphicsCommandWriter* pCommandWriter, Terrain
         {
             continue;
         }
+#ifdef OPENRFG_X64
+        // A road whose material was unregistered while the instance still draws (seen at 15x15 view distance) has a
+        // handle that no longer resolves; skip the block instead of reading through null.
+        const rl_material* road_material_p = terrain_material(material_map_p->get_material(material_index));
+        if (road_material_p == nullptr)
+        {
+            continue;
+        }
+        const rl_material_data* pMaterialData = road_material_p->get_material_data();
+#else
         const rl_material_data* pMaterialData = terrain_material(material_map_p->get_material(material_index))->get_material_data();
+#endif
         setRoadMeshShaderAndConstants(pCommandWriter, pContext, pass, pMaterialData, translation, tint);
         setMaterial(pCommandWriter, pContext, pass, pMaterialData);
         draw_render_block(pCommandWriter, mesh_p->getRenderGeometry(), blocks[b]);
