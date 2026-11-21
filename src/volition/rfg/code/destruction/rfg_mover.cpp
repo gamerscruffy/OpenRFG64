@@ -133,6 +133,9 @@ static void openrfg_log_mover_pieces(rfg_mover* rm, const char* what, int count,
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/collide/agent/collidable/hkpcollidable.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/motion/hkpmotion.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/entity/hkprigidbody.h"
+#include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/collide/shape/query/hkpshaperaycastinput.h"
+#include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/collide/shape/query/hkpshaperaycastoutput.h"
+#include "volition/rfg/code/havok/havok_convert.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -3805,6 +3808,91 @@ static void openrfg_log_mover_pieces(rfg_mover* rm, const char* what, int count,
     openrfg_log(text);
 }
 
+// OpenRFG (not in the binary): once per building near the player (first 120 lines), a NEARSHAPE line that tells whether
+// its collision shape is really under the player. It casts a ray straight down (player + 3 m to - 40 m) through the
+// building's own destroyable shape in body space, compares the Havok body position with the mover position, checks
+// the body uses that shape, and counts the pieces in the shape's child list (in the list, shape state on) and the
+// pieces whose world position is within 8 m sideways of the player, with their lowest and highest height.
+static void openrfg_log_near_shape(rfg_mover* rm, rfg_destroyable_shape* shape, hkpRigidBody* rb, const vector& p, const char* name)
+{
+    static unsigned int s_done[120];
+    static int s_count = 0;
+    if (s_count >= 120 || shape == nullptr || rb == nullptr)
+    {
+        return;
+    }
+    for (int i = 0; i < s_count; i++)
+    {
+        if (s_done[i] == rm->handle)
+        {
+            return;
+        }
+    }
+    s_done[s_count++] = rm->handle;
+
+    vector body_pos;
+    matrix body_orient;
+    havok_body_get_pos_orient(rb, body_pos, body_orient);
+    const vector body_off(body_pos.x - rm->pos.x, body_pos.y - rm->pos.y, body_pos.z - rm->pos.z);
+    const hkpShape* body_shape = rb->getCollidable()->getShape();
+
+    const vector from_w(p.x - body_pos.x, p.y + 3.0f - body_pos.y, p.z - body_pos.z);
+    const vector to_w(p.x - body_pos.x, p.y - 40.0f - body_pos.y, p.z - body_pos.z);
+    hkpShapeRayCastInput ray_in;
+    game_to_havok_vector(ray_in.m_from, from_w.copy_rotate(body_orient));
+    game_to_havok_vector(ray_in.m_to, to_w.copy_rotate(body_orient));
+    hkpShapeRayCastOutput ray_out;
+    const bool hit = shape->castRay(ray_in, ray_out).m_bool != 0;
+    const float hit_y = hit ? (p.y + 3.0f) - 43.0f * ray_out.m_hitFraction : 0.0f;
+
+    int in_list = 0;
+    int state_on = 0;
+    int near_side = 0;
+    float near_min_y = 1.0e9f;
+    float near_max_y = -1.0e9f;
+    rfg_subpiece* objects = shape->get_object_buffer();
+    const int total = shape->parent != nullptr ? shape->parent->num_objects : 0;
+    if (shape->child_obj_list != 0xFFFF && objects != nullptr)
+    {
+        rfg_subpiece* sp = &objects[shape->child_obj_list];
+        for (int guard = 0; guard <= total; guard++)
+        {
+            in_list++;
+            if (shape->get_shape_state(sp))
+            {
+                state_on++;
+            }
+            vector sp_pos;
+            matrix sp_orient;
+            shape->get_subpiece_pos_orient_uncached(sp, sp_pos, sp_orient);
+            const float sx = sp_pos.x - p.x;
+            const float sz = sp_pos.z - p.z;
+            if (sx * sx + sz * sz < 64.0f)
+            {
+                near_side++;
+                near_min_y = sp_pos.y < near_min_y ? sp_pos.y : near_min_y;
+                near_max_y = sp_pos.y > near_max_y ? sp_pos.y : near_max_y;
+            }
+            if (sp->next == shape->child_obj_list)
+            {
+                break;
+            }
+            sp = &objects[sp->next];
+        }
+    }
+
+    char text[480];
+    snprintf(text, sizeof(text), "NEARSHAPE %s mover <%.1f, %.1f, %.1f> body offset <%.2f, %.2f, %.2f>, body uses this shape %d (shape type %d), "
+        "ray down from %.1f: %s %.1f | pieces in list %d, state on %d, existing %d of %d, within 8 m sideways %d (y %.1f to %.1f) | "
+        "local bounds <%.0f, %.0f, %.0f> to <%.0f, %.0f, %.0f>, tree %d",
+        name, rm->pos.x, rm->pos.y, rm->pos.z, body_off.x, body_off.y, body_off.z, (int)(body_shape == (const hkpShape*)shape),
+        body_shape != nullptr ? (int)body_shape->m_type.m_storage : -1, p.y + 3.0f, hit ? "hit at y" : "MISS", hit_y,
+        in_list, state_on, shape->num_existing_child_shapes, total, near_side, near_side ? near_min_y : 0.0f, near_side ? near_max_y : 0.0f,
+        shape->local_bmin.x, shape->local_bmin.y, shape->local_bmin.z, shape->local_bmax.x, shape->local_bmax.y, shape->local_bmax.z,
+        (int)(shape->aabb_tree != nullptr));
+    openrfg_log(text);
+}
+
 // OpenRFG (not in the binary): every ~5 s, a NEAR summary of the buildings whose bounds are within 40 m of the player,
 // and a NEARBAD line for each one that is not streamed, has no render instance, no Havok body, or a body outside the
 // Havok world (first 1500 lines). Finds pieces you can see through or fall through.
@@ -3848,6 +3936,11 @@ static void openrfg_log_movers_near_player()
         const bool has_instance = data != nullptr && data->model_instance_p != nullptr;
         hkpRigidBody* rb = havok_get_pointer_from_rigid_body_handle(rm->havok_handle);
         const bool in_world = rb != nullptr && rb->getWorld() != nullptr;
+        if (data != nullptr && data->shape != nullptr)
+        {
+            c_chunk_base* shape_chunk = chunk_get_base_by_uid(rm->chunk_uid);
+            openrfg_log_near_shape(rm, data->shape, rb, p, shape_chunk != nullptr ? shape_chunk->name : "(chunk not loaded)");
+        }
         if (streamed && loaded && has_instance && in_world)
         {
             continue;
