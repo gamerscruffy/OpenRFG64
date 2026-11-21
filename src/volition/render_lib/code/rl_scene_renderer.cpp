@@ -101,6 +101,7 @@ float RL_alpha_dist_start = 65.0f; // 0x014FA474
 float RL_alpha_dist_end = 75.0f; // 0x014FA478
 bool g_fxaaEnabled = true; // 0x014FA47C
 bool g_ssaoVisEnabled = false; // 0x01B7BD1E
+bool g_fogDisabled = false; // OpenRFG: F5 fog toggle
 extern bool g_spotShadowVisEnabled; // rl_scene_shadows.cpp (OpenRFG)
 extern bool g_spotShadowUseLightPass; // rl_scene_shadows.cpp (OpenRFG)
 const keen::TextureData* rl_spot_shadow_map_texture(); // rl_scene_shadows.cpp (OpenRFG)
@@ -293,7 +294,15 @@ void rl_scene_renderer::init(keen::GraphicsCommandWriter* pCommandWriter, int w,
 static void initialize_scene_constants(rl_renderer& renderer, const rl_scene& scene)
 {
     const rl_fog_state& fog = scene.get_fog_state();
-    renderer.set_fog_parameters(fog.get_height_density(), fog.get_atmosphere_scale(), fog.get_density(), fog.get_density_offset());
+    // OpenRFG: with fog off (F5) the densities are zero; the atmosphere scale and offset stay for the sky.
+    if (g_fogDisabled)
+    {
+        renderer.set_fog_parameters(0.0f, fog.get_atmosphere_scale(), 0.0f, fog.get_density_offset());
+    }
+    else
+    {
+        renderer.set_fog_parameters(fog.get_height_density(), fog.get_atmosphere_scale(), fog.get_density(), fog.get_density_offset());
+    }
     renderer.set_fog_color(fog.get_color());
     renderer.set_ambient_color(scene.get_ambient_color());
     renderer.set_back_ambient_color(scene.get_back_ambient_color());
@@ -665,6 +674,17 @@ void rl_scene_renderer::render_scene_part2(rl_renderer& deferredRenderer, rl_cam
             g_ssaoVisEnabled = !g_ssaoVisEnabled;
         }
         s_ssao_vis_key_was_down = down;
+    }
+    // OpenRFG: F5 toggles the scene fog (initialize_scene_constants).
+    {
+        static bool s_fog_key_was_down = false;
+        const bool down = (GetAsyncKeyState(0x74) & 0x8000) != 0;
+        if (down && !s_fog_key_was_down)
+        {
+            g_fogDisabled = !g_fogDisabled;
+            openrfg_log(g_fogDisabled ? "FOG off (F5)" : "FOG on (F5)");
+        }
+        s_fog_key_was_down = down;
     }
     // OpenRFG: Ctrl+Shift+K toggles the spot light shadow map debug view (the nearest spot light's map full screen).
     {
