@@ -43,6 +43,8 @@
 #ifdef OPENRFG_X64
 void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
 void openrfg_log(const char* text); // crash_early.cpp
+class rfg_mover;
+static void openrfg_log_mover_pieces(rfg_mover* rm, const char* what, int count, float damage);
 #endif
 
 #include "volition/rfg/code/ai/ai_building_logic.h"
@@ -1939,6 +1941,19 @@ bool rfg_mover::stream(bool load)
         mover_stream_in_event stream_event; // EVENT_MOVER_STREAM_IN
         stream_event.handle = get_handle();
         gem_post_event(stream_event);
+        {
+            // OpenRFG: see openrfg_log_mover_pieces
+            const char* log_name = chunk->name;
+            bool is_bridge = false;
+            for (const char* c = log_name; c != nullptr && *c != 0 && !is_bridge; c++)
+            {
+                is_bridge = _strnicmp(c, "bridge", 6) == 0;
+            }
+            if (is_bridge)
+            {
+                openrfg_log_mover_pieces(this, "stream in", 0, damage_pct);
+            }
+        }
         maybe_flag_restore();
         if (flags.run_stress_on_stream)
         {
@@ -3763,6 +3778,33 @@ void rfg_mover::update_render_subpieces()
     }
 }
 
+// OpenRFG (not in the binary): PIECES lines name a building, its distance from the player and how many of its pieces
+// exist, when it loses pieces (first 600) and whenever a building with "bridge" in its chunk name streams in.
+static void openrfg_log_mover_pieces(rfg_mover* rm, const char* what, int count, float damage)
+{
+    static int s_logged = 0;
+    if (s_logged >= 600)
+    {
+        return;
+    }
+    s_logged++;
+    rfg_destroyable_shape* shape = rm->get_shape();
+    c_chunk_base* chunk = chunk_get_base_by_uid(rm->chunk_uid);
+    float dist = -1.0f;
+    player* local = player_get_local_player();
+    if (local != nullptr)
+    {
+        const vector d(rm->pos.x - local->pos.x, rm->pos.y - local->pos.y, rm->pos.z - local->pos.z);
+        dist = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
+    }
+    char text[320];
+    snprintf(text, sizeof(text), "PIECES #%d %s %d: %s at <%.0f, %.0f, %.0f> %.0f m from the player, %d of %d pieces exist, damage %.2f, mover flags 0x%08X, stress queued %d",
+        s_logged, what, count, chunk != nullptr ? chunk->name : "?", rm->pos.x, rm->pos.y, rm->pos.z, dist,
+        shape != nullptr ? shape->num_existing_child_shapes : -1, shape != nullptr && shape->parent != nullptr ? shape->parent->num_objects : -1,
+        damage, rm->mover_flags, (int)rm->flags.run_stress_on_stream);
+    openrfg_log(text);
+}
+
 // 0x0072F0B0 (:4456)
 // Removes deleted pieces from the instance: they fade out through a mover fader (unless no-fade, 0x80000000, or
 // script point hosts, 0x400000; nano pieces use the nano effect), their dlods are re-checked, and owned whole-mesh sub
@@ -3781,6 +3823,7 @@ void rfg_mover::delete_subpieces(unsigned short subpieces, int num_subpieces)
     {
         return;
     }
+    openrfg_log_mover_pieces(this, "deleting pieces", num_subpieces, damage_pct); // OpenRFG
     rl_destroyable_model_instance* ri = data->model_instance_p;
     short* unclaim = (short*)pool->alloc(num_subpieces * 4, 0);
     int num_unclaim = 0;
