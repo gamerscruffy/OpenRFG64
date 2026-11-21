@@ -379,7 +379,13 @@ void world::system_init()
     }
 
     // Broadphase object counts per bpo index.
+#ifdef OPENRFG_X64
+    // OpenRFG: x3 for Terrain / World Detail Distance up to 15x15 (the 5x5+ settings filled them). The total (54792)
+    // must stay under 0xFFFF: havok_bp.cpp links objects and islands by 16-bit indices.
+    int max_bpo_objects[4] = { 0x1EC0 * 3, 2000 * 3, 0xCC8 * 3, 0x1400 * 3 };
+#else
     int max_bpo_objects[4] = { 0x1EC0, 2000, 0xCC8, 0x1400 };
+#endif
     havok_bpo_system_init(4, max_bpo_objects);
     load_most_recent_level_filename();
     set_thread_ownership();
