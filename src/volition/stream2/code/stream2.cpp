@@ -18,6 +18,9 @@
 //   the container types.
 
 #include "volition/stream2/code/stream2.h"
+#ifdef OPENRFG_X64
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+#endif
 #include "volition/rfg/code/gamewide/game_trace.h" // DBGSTRQ
 
 #include "volition/rfg/code/gamewide/downloadable_content.h"
@@ -454,6 +457,9 @@ static void queue_process_passive()
                 const bool split = (prim->flags & 0x4) != 0;
                 if (!prim->pdef->load_cb(prim->name, stream2_sc_id(sc), prim->cpu_data, prim->cpu_size, split ? prim->gpu_data : nullptr, split ? prim->gpu_size : 0))
                 {
+#ifdef OPENRFG_X64
+                    openrfg_fail_log("prim-load", "passive load callback failed for %s in container %s", prim->name, sc->name);
+#endif
                     failed = true;
                     break;
                 }

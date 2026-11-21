@@ -39,6 +39,9 @@
 
 #include <chrono> // DBGSTRT
 #include <stdio.h>
+#ifdef OPENRFG_X64
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+#endif
 #include <string.h>
 
 volatile bool g_stream2ContainerLoaded; // 0x01AC3B4A
@@ -88,6 +91,9 @@ int stream2_container_load(const keen::Thread& thread)
                 const bool split = (prim->flags & 0x4) != 0;
                 if (!prim->pdef->load_cb(prim->name, stream2_sc_id(sc), prim->cpu_data, prim->cpu_size, split ? prim->gpu_data : nullptr, split ? prim->gpu_size : 0))
                 {
+#ifdef OPENRFG_X64
+                    openrfg_fail_log("prim-load", "threaded load callback failed for %s in container %s (container marked error)", prim->name, sc->name);
+#endif
                     sc->flags |= 0x40;
                     break;
                 }
@@ -403,6 +409,9 @@ bool stream2_container::stream_wait()
                 }
                 if (!loaded)
                 {
+#ifdef OPENRFG_X64
+                    openrfg_fail_log("prim-load", "load callback failed for %s in container %s (container still marked loaded)", prim->name, name);
+#endif
                     failed = true;
                     break;
                 }

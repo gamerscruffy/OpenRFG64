@@ -4,6 +4,7 @@
 #include <dbghelp.h>
 #include <tlhelp32.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <exception>
@@ -397,6 +398,48 @@ void openrfg_varray_overflow(int capacity, int element_size)
     {
         pos += snprintf(line + pos, sizeof(line) - pos, " exe+0x%llX", (unsigned long long)((const unsigned char*)frames[i] - base));
     }
+    openrfg_log(line);
+}
+#endif
+
+#ifdef _M_X64
+// Debug aid: a rate-limited "FAILLOG <tag> #n: ..." line for silent failures (each tag: the first 20, then every 500th).
+void openrfg_fail_log(const char* tag, const char* format, ...)
+{
+    static volatile LONG Lock = 0;
+    static const char* Tags[64];
+    static int Counts[64];
+    static int Num_tags = 0;
+    while (InterlockedCompareExchange(&Lock, 1, 0) != 0)
+    {
+    }
+    int slot = -1;
+    for (int i = 0; i < Num_tags; i++)
+    {
+        if (Tags[i] == tag || strcmp(Tags[i], tag) == 0)
+        {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0 && Num_tags < 64)
+    {
+        slot = Num_tags++;
+        Tags[slot] = tag;
+        Counts[slot] = 0;
+    }
+    const int count = slot >= 0 ? ++Counts[slot] : 0;
+    InterlockedExchange(&Lock, 0);
+    if (count == 0 || (count > 20 && count % 500 != 0))
+    {
+        return;
+    }
+    char line[640];
+    int pos = snprintf(line, sizeof(line), "FAILLOG %s #%d: ", tag, count);
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line + pos, sizeof(line) - pos, format, args);
+    va_end(args);
     openrfg_log(line);
 }
 #endif

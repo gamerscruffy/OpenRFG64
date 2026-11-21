@@ -40,6 +40,9 @@
 // - script_point_destroy dereferences the shape without checking it.
 
 #include "volition/rfg/code/destruction/rfg_mover.h"
+#ifdef OPENRFG_X64
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+#endif
 
 #include "volition/rfg/code/ai/ai_building_logic.h"
 #include "volition/rfg/code/code_effects/glass.h"
@@ -388,6 +391,9 @@ static rl_destroyable_model_instance* build_new_rl_instance_from_shape(rfg_destr
     rl_destroyable_model_instance* ri = rl_destroyable_model_instance::create();
     if (ri == nullptr)
     {
+#ifdef OPENRFG_X64
+        openrfg_fail_log("mover-render", "no rl_destroyable_model_instance left (pool empty) for chunk %s", base_chunk != nullptr ? base_chunk->name : "?");
+#endif
         return nullptr;
     }
     const unsigned int mark = Common_mempool.mark();
@@ -396,6 +402,9 @@ static rl_destroyable_model_instance* build_new_rl_instance_from_shape(rfg_destr
         rfg_mover* sibling = shape->sib_next->get_mover();
         if (sibling == nullptr)
         {
+#ifdef OPENRFG_X64
+            openrfg_fail_log("mover-render", "split shape of chunk %s has no sibling mover", base_chunk != nullptr ? base_chunk->name : "?");
+#endif
             ri->release();
             ri = nullptr;
         }
@@ -556,6 +565,9 @@ static rl_destroyable_model_instance* build_new_rl_instance_from_shape(rfg_destr
     }
     if (!ok)
     {
+#ifdef OPENRFG_X64
+        openrfg_fail_log("mover-render", "render instance init failed for chunk %s (%d sub instances)", base_chunk->name, num_infos);
+#endif
         ri->release();
         Common_mempool.restore_to_mark(mark);
         return nullptr;

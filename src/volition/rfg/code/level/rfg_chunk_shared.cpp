@@ -71,6 +71,9 @@ static bool Chunk_system_init; // 0x02CEC14A
 static object_pool<c_chunk_base,OPENRFG_ZONE_POOL(352),1> Chunk_base; // 0x02FA0560
 static str_data_hash_table<c_chunk_base*,OPENRFG_ZONE_POOL(352),32,unsigned short> Chunk_base_hash; // 0x02FD9BE0
 void openrfg_log(const char* text); // crash_early.cpp
+#ifdef OPENRFG_X64
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+#endif
 
 // 0x0091FAC0 (compiler generated)
 c_chunk_base::c_chunk_base()
@@ -605,9 +608,19 @@ bool chunk_base_load(const char* filename, unsigned int srid, unsigned char* cpu
         chunk_base_load_internal(filename, cpu_data, cpu_data_size, gpu_data, gpu_data_size, base, true))
     {
         strcpy(base->name, name);
+#ifdef OPENRFG_X64
+        if (!Chunk_base_hash.insert_key_data(name, base))
+        {
+            openrfg_fail_log("chunk-hash", "chunk %s loaded but not added to the name table (%d chunks loaded)", name, (int)Chunk_base.get_capacity() - Chunk_base.get_free());
+        }
+#else
         Chunk_base_hash.insert_key_data(name, base);
+#endif
         return true;
     }
+#ifdef OPENRFG_X64
+    openrfg_fail_log("chunk-load", "chunk %s not loaded: %s", name, Chunk_base_hash.exists(name) ? "a chunk with this name is already loaded" : "chunk_base_load_internal failed");
+#endif
     Chunk_base.free(base);
     return false;
 }

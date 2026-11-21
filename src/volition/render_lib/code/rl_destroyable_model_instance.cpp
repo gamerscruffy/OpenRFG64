@@ -12,6 +12,9 @@
 // Mesh recompiles (rl_mesh_recompile.cpp) replace the sub instance drawing with one compiled mesh when enabled.
 
 #include "volition/render_lib/code/rl_destroyable_model_instance.h"
+#ifdef OPENRFG_X64
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+#endif
 
 #include "volition/render_lib/code/rl_clone_mesh_instance.h"
 #include "volition/render_lib/code/rl_decal.h"
@@ -749,10 +752,16 @@ bool rl_destroyable_model_instance::init(rl_mesh* mesh_p, const rl_material_map*
     m_shared_data = rl_destroyable_model_instance_shared_base::create();
     if (m_shared_data == nullptr)
     {
+#ifdef OPENRFG_X64
+        openrfg_fail_log("destroyable-init", "no shared base left (pool empty)");
+#endif
         return false;
     }
     if (!m_shared_data->init(base_kdtree, num_sub_inst_infos))
     {
+#ifdef OPENRFG_X64
+        openrfg_fail_log("destroyable-init", "shared base memory (%d sub instances) not allocated from level memory", num_sub_inst_infos);
+#endif
         m_shared_data->release();
         m_shared_data = nullptr;
         return false;

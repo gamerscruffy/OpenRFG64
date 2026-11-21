@@ -17,6 +17,9 @@
 // - space_free does not count alignment padding inside large blocks.
 
 #include "volition/vlib/code/memory/split_memmgr.h"
+#ifdef OPENRFG_X64
+void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.cpp
+#endif
 
 #include "volition/vlib/code/memory/vmemory.h"
 
@@ -233,6 +236,9 @@ void* split_memmgr::alloc(unsigned int size, const char* debug_name, unsigned in
     cached_query = nullptr;
     if (blk == nullptr)
     {
+#ifdef OPENRFG_X64
+        openrfg_fail_log("memmgr-alloc", "%s: %u bytes (align %u) for %s failed; used %u of %u KB", name != nullptr ? name : "?", size, align, debug_name != nullptr ? debug_name : "?", (unsigned int)(mem_used / 1024), (unsigned int)(space_max() / 1024));
+#endif
         dump_mem_usage();
         cs.leave();
         return nullptr;
