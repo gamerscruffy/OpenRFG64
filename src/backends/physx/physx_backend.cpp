@@ -15,13 +15,29 @@
 #include "core/startup.h"
 #include "physx/bridge.h"
 
-bool openrfg_physx_start()
+bool openrfg_physx_install(bool launch)
 {
     wchar_t exe[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring dir(exe, n);
     dir = dir.substr(0, dir.find_last_of(L"\\/")) + L"\\backends";
-    startup::run(dir);
-    // The core is starting now (or did not load); whether PhysX comes up is told later in rfgphys.log.
-    return pxbridge::active();
+    startup::run(dir, launch);
+    // With launch the core is starting now (or did not load: openrfg_physx_state says failed); whether PhysX comes up
+    // is told later in rfgphys.log.
+    return pxbridge::installed();
+}
+
+bool openrfg_physx_launch()
+{
+    return pxbridge::start();
+}
+
+void openrfg_physx_stop()
+{
+    pxbridge::stop();
+}
+
+int openrfg_physx_state()
+{
+    return (int)pxbridge::state();
 }

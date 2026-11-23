@@ -13,8 +13,8 @@
 // menu changes them only from the main menu, where no level is loaded, and openrfg_backends_apply makes the change at
 // once, without a restart. The 32-bit build has no backends (openrfg_backends_enabled is false, the rows are hidden).
 //
-// This first step has the settings, the hardware probe and the menu rows; no backend is built in yet, so STANDARD and
-// HAVOK run whatever the choice (the log says so).
+// PhysX is built in when CMake is given the PhysX SDK (physx/physx_backend.h): HAVOK and PHYSX switch at the main menu.
+// The path tracer is not built in yet: STANDARD runs whatever the renderer choice (the log says so).
 #pragma once
 
 struct ID3D11Device;
@@ -81,9 +81,10 @@ void openrfg_backends_write_ini(const keen::FilePath& path);
 
 // The hardware probe, on a worker thread (Application::initialize, once the game's device exists).
 void openrfg_backends_start_probe(ID3D11Device* device);
-// Starts a chosen PhysX on a worker thread at boot (Application::initialize, after the probe). Its start reads
-// OpenRFG.pdb for seconds and nothing waits for it: rfgphys attaches to the game whenever it is ready (a game thread
-// held that long would be a hang).
+// Installs rfgphys on a worker thread at boot (Application::initialize, after the probe), with a chosen PhysX started
+// by it: its install reads OpenRFG.pdb for seconds and nothing waits for it, rfgphys attaches to the game whenever it is
+// ready (a game thread held that long would be a hang). With Havok chosen it installs only for the unattended tests'
+// record/replay harness (RFGPHYS_HARNESS_MODE), PhysX off; otherwise not until PhysX is chosen.
 void openrfg_backends_start_early();
 // The probe's result; waits for it if it is still running.
 const openrfg_backend_probe& openrfg_backends_probe();
@@ -99,10 +100,14 @@ bool openrfg_backends_keep_debris_resolved(int keep_debris);
 int openrfg_backends_effective_renderer();
 int openrfg_backends_effective_physics();
 bool openrfg_backends_effective_keep_debris();
-// KEEP DEBRIS right now: PhysX runs (started, not just starting) and KEEP DEBRIS is on. A plain read, for the game's
-// hot paths (keep_debris.cpp).
+// KEEP DEBRIS right now: PhysX runs or is starting, and KEEP DEBRIS is on. Cheap, for the game's hot paths
+// (keep_debris.cpp); off as soon as PhysX stops or is lost.
 bool openrfg_backends_keep_debris_now();
 
-// Makes the settings run: stops what no longer runs, starts what does, and logs the result. Call only where no level
-// is loaded: the main menu (main_menu_enter, the options' Accept).
+// Makes the settings run: stops what no longer runs, starts what does (a PhysX that failed or was lost starts again),
+// and logs the result. Nothing waits: the PhysX core releases PhysX on its own thread. Call only where no level is
+// loaded: the main menu (main_menu_enter, the options' Accept).
 void openrfg_backends_apply();
+// Each main menu frame (main_menu_process): settles a change that could not be made at once (an install that finished
+// after the choice changed). Cheap.
+void openrfg_backends_main_menu_frame();

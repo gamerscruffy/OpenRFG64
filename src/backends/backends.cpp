@@ -15,6 +15,7 @@
 #include <windows.h>
 
 #include <stdio.h>
+#include <string.h>
 
 void openrfg_log(const char* text); // crash_early.cpp
 
@@ -47,65 +48,82 @@ namespace
     int g_applied_physics = -1;
     int g_applied_keep_debris = -1;
 
-    // PhysX started (it keeps running until the game ends: stopping it is a later step), or it failed to start.
-    bool g_physx_running = false;
-    bool g_physx_failed = false;
-    // openrfg_backends_keep_debris_now: set when PhysX's start succeeds, recomputed by openrfg_backends_apply.
-    volatile bool g_keep_debris_now = false;
+    // Keep debris as chosen (the choice resolved against the hardware): it applies while PhysX runs. Set where waiting
+    // for the hardware check is fine (the main menu, the install thread); read by the game's code every frame.
+    volatile bool g_keep_debris_wanted = false;
 
 #if defined(OPENRFG_BACKEND_PHYSX)
-    // PhysX starts on a worker thread, never on the game's: its start reads OpenRFG.pdb for seconds, and a game thread
-    // held that long is a hang (the watchdog reports one after 6 s). rfgphys attaches whenever it is ready: its world
-    // mirror arms at gameplay, and the debris offload takes the pieces made from then on. 1 running, 2 failed.
-    HANDLE g_physx_start_thread = nullptr;
-    volatile LONG g_physx_start_result = 0;
+    // rfgphys installs once, on a worker thread, never on the game's: its install reads OpenRFG.pdb for seconds, and a
+    // game thread held that long is a hang (the watchdog reports one after 6 s). It installs its hooks and modules, and
+    // with PHYSX chosen it starts the PhysX core; rfgphys attaches whenever it is ready (its world mirror arms at
+    // gameplay, and the debris offload takes the pieces made from then on). After that the core starts and stops on the
+    // game's simulation thread at the main menu (physx_reconcile), where no level is loaded.
+    // g_install_result: 0 not done, 1 installed, 2 failed (written by the install thread, read from any thread).
+    HANDLE g_install_thread = nullptr;
+    volatile LONG g_install_result = 0;
+    bool g_install_begun = false;
 
-    DWORD WINAPI physx_start_thread(void*)
+    DWORD WINAPI physx_install_thread(void* launch)
     {
-        const bool ok = openrfg_physx_start();
+        const bool ok = openrfg_physx_install(launch != nullptr);
         if (ok)
         {
-            g_keep_debris_now = openrfg_backends_keep_debris_resolved(g_settings.keep_debris);
+            g_keep_debris_wanted = openrfg_backends_keep_debris_resolved(g_settings.keep_debris);
         }
-        InterlockedExchange(&g_physx_start_result, ok ? 1 : 2);
-        openrfg_log(ok ? "BACKENDS PhysX started (backends rfgphys.log has the details)" : "BACKENDS PhysX did not start: Havok only (backends rfgphys.log says why)");
-        return 0;
-    }
-
-    void physx_begin_start()
-    {
-        if (g_physx_start_thread == nullptr && !g_physx_running && !g_physx_failed)
+        InterlockedExchange(&g_install_result, ok ? 1 : 2);
+        if (!ok)
         {
-            g_physx_start_thread = CreateThread(nullptr, 0, physx_start_thread, nullptr, 0, nullptr);
-            if (g_physx_start_thread == nullptr)
-            {
-                g_physx_failed = true;
-            }
-        }
-    }
-
-    // Takes the start's result once it is done; true while it is still running.
-    bool physx_starting()
-    {
-        if (g_physx_start_thread == nullptr)
-        {
-            return false;
-        }
-        if (WaitForSingleObject(g_physx_start_thread, 0) == WAIT_TIMEOUT)
-        {
-            return true;
-        }
-        CloseHandle(g_physx_start_thread);
-        g_physx_start_thread = nullptr;
-        if (g_physx_start_result == 1)
-        {
-            g_physx_running = true;
+            openrfg_log("BACKENDS PhysX did not install: Havok only (backends rfgphys.log says why)");
         }
         else
         {
-            g_physx_failed = true;
+            openrfg_log(launch != nullptr ? "BACKENDS PhysX installed and starting (backends rfgphys.log has the details)" : "BACKENDS PhysX installed, not started (Havok chosen)");
         }
-        return false;
+        return 0;
+    }
+
+    void physx_begin_install(bool launch)
+    {
+        if (g_install_begun)
+        {
+            return;
+        }
+        g_install_begun = true;
+        g_install_thread = CreateThread(nullptr, 0, physx_install_thread, launch ? (void*)1 : nullptr, 0, nullptr);
+        if (g_install_thread == nullptr)
+        {
+            InterlockedExchange(&g_install_result, 2);
+        }
+    }
+
+    bool physx_installed()
+    {
+        return g_install_result == 1;
+    }
+
+    bool physx_installing()
+    {
+        return g_install_begun && g_install_result == 0;
+    }
+
+    int physx_state()
+    {
+        return physx_installed() ? openrfg_physx_state() : OPENRFG_PHYSX_OFF;
+    }
+
+    // PhysX steps the debris, or is coming up to.
+    bool physx_active()
+    {
+        const int state = physx_state();
+        return state == OPENRFG_PHYSX_STARTING || state == OPENRFG_PHYSX_RUNNING;
+    }
+
+    // The unattended tests run rfgphys's record/replay harness, which installs with rfgphys: with Havok chosen too.
+    bool harness_requested()
+    {
+        char mode[32];
+        const DWORD n = GetEnvironmentVariableA("RFGPHYS_HARNESS_MODE", mode, sizeof(mode));
+        return n > 0 && n < sizeof(mode) && _stricmp(mode, "off") != 0 && strcmp(mode, "0") != 0;
     }
 #endif
 
@@ -161,8 +179,65 @@ namespace
         {
             return "not built into this program (no PhysX SDK given to CMake)";
         }
-        return physics == OPENRFG_PHYSICS_PHYSX && g_physx_failed ? "PhysX did not start (backends rfgphys.log says why)" : nullptr;
+#if defined(OPENRFG_BACKEND_PHYSX)
+        if (physics == OPENRFG_PHYSICS_PHYSX)
+        {
+            if (g_install_result == 2)
+            {
+                return "PhysX did not install (backends rfgphys.log says why)";
+            }
+            const int state = physx_state();
+            if (state == OPENRFG_PHYSX_FAILED || state == OPENRFG_PHYSX_LOST)
+            {
+                return "PhysX stopped working (backends rfgphys.log says why); it starts again at the main menu";
+            }
+        }
+#endif
+        return nullptr;
     }
+
+#if defined(OPENRFG_BACKEND_PHYSX)
+    // Brings the PhysX core in line with the choice (simulation thread, no level loaded). retry: also starts again one
+    // that failed or was lost (on entering the main menu and on Accept; each main menu frame only takes a finished
+    // install and a changed choice, so a core that fails at once is not started every frame).
+    void physx_reconcile(bool retry)
+    {
+        if (g_install_thread != nullptr && g_install_result != 0)
+        {
+            CloseHandle(g_install_thread);
+            g_install_thread = nullptr;
+        }
+        const bool want = g_settings.physics == OPENRFG_PHYSICS_PHYSX && openrfg_backends_physics_supported(OPENRFG_PHYSICS_PHYSX, nullptr) && physics_built(OPENRFG_PHYSICS_PHYSX);
+        if (!g_install_begun)
+        {
+            if (want)
+            {
+                physx_begin_install(true);
+            }
+            return;
+        }
+        if (!physx_installed())
+        {
+            return; // installing (it started the core if PHYSX was chosen then; settled here once it is done) or failed
+        }
+        const int state = openrfg_physx_state();
+        if (want)
+        {
+            // A start asked for while the last core stops follows once it has ended (pxbridge::start).
+            if (state == OPENRFG_PHYSX_OFF || (retry && (state == OPENRFG_PHYSX_STOPPING || state == OPENRFG_PHYSX_FAILED || state == OPENRFG_PHYSX_LOST)))
+            {
+                const bool ok = openrfg_physx_launch();
+                openrfg_log(!ok ? "BACKENDS PhysX cannot start now (backends rfgphys.log says why)"
+                                : (state == OPENRFG_PHYSX_STOPPING ? "BACKENDS PhysX starts again once it has stopped" : "BACKENDS PhysX starting"));
+            }
+        }
+        else if (state == OPENRFG_PHYSX_STARTING || state == OPENRFG_PHYSX_RUNNING)
+        {
+            openrfg_physx_stop();
+            openrfg_log("BACKENDS PhysX stopping (Havok chosen): the core releases PhysX");
+        }
+    }
+#endif
 }
 
 bool openrfg_backends_enabled()
@@ -272,20 +347,17 @@ int openrfg_backends_effective_renderer()
 
 int openrfg_backends_effective_physics()
 {
-#if defined(OPENRFG_BACKEND_PHYSX)
-    physx_starting(); // takes a finished start's result
-#endif
-    // A running PhysX cannot be stopped yet: it runs until the game ends, whatever the choice since.
-    if (g_physx_running)
-    {
-        return OPENRFG_PHYSICS_PHYSX;
-    }
     return physics_fallback_reason(g_settings.physics) == nullptr ? g_settings.physics : OPENRFG_PHYSICS_HAVOK;
 }
 
 bool openrfg_backends_keep_debris_now()
 {
-    return g_keep_debris_now;
+#if defined(OPENRFG_BACKEND_PHYSX)
+    // Live: off as soon as PhysX stops or is lost (the game's own limits on debris apply again).
+    return g_keep_debris_wanted && physx_active();
+#else
+    return false;
+#endif
 }
 
 bool openrfg_backends_effective_keep_debris()
@@ -296,9 +368,27 @@ bool openrfg_backends_effective_keep_debris()
 void openrfg_backends_start_early()
 {
 #if defined(OPENRFG_BACKEND_PHYSX)
-    if (openrfg_backends_enabled() && openrfg_backends_effective_physics() == OPENRFG_PHYSICS_PHYSX)
+    if (!openrfg_backends_enabled())
     {
-        physx_begin_start();
+        return;
+    }
+    if (openrfg_backends_effective_physics() == OPENRFG_PHYSICS_PHYSX)
+    {
+        physx_begin_install(true);
+    }
+    else if (harness_requested())
+    {
+        physx_begin_install(false);
+    }
+#endif
+}
+
+void openrfg_backends_main_menu_frame()
+{
+#if defined(OPENRFG_BACKEND_PHYSX)
+    if (openrfg_backends_enabled())
+    {
+        physx_reconcile(false);
     }
 #endif
 }
@@ -309,26 +399,24 @@ void openrfg_backends_apply()
     {
         return;
     }
+    g_keep_debris_wanted = openrfg_backends_keep_debris_resolved(g_settings.keep_debris);
 #if defined(OPENRFG_BACKEND_PHYSX)
-    // A chosen PhysX not started yet starts on its worker thread (at boot it began in openrfg_backends_start_early);
-    // nothing here waits for it.
-    if (!physx_starting() && openrfg_backends_effective_physics() == OPENRFG_PHYSICS_PHYSX)
-    {
-        physx_begin_start();
-    }
-    const bool physx_is_starting = physx_starting();
+    // The PhysX core starts or stops (an install not begun yet begins on its worker thread); nothing here waits.
+    physx_reconcile(true);
+    const int px = physx_state();
+    const char* physx_note = physx_installing() || px == OPENRFG_PHYSX_STARTING ? " (starting)" : (px == OPENRFG_PHYSX_STOPPING ? " (PhysX stopping)" : "");
 #else
-    const bool physx_is_starting = false;
+    const char* physx_note = "";
 #endif
     const int renderer = openrfg_backends_effective_renderer();
     const int physics = openrfg_backends_effective_physics();
     const int keep_debris = openrfg_backends_effective_keep_debris() ? 1 : 0;
-    g_keep_debris_now = g_physx_running && openrfg_backends_keep_debris_resolved(g_settings.keep_debris);
     if (renderer == g_applied_renderer && physics == g_applied_physics && keep_debris == g_applied_keep_debris)
     {
         return;
     }
-    // Here the backends that no longer run stop and the chosen ones start (no level is loaded). None is built in yet.
+    // Here the backends that no longer run stop and the chosen ones start (no level is loaded): PhysX above; the path
+    // tracer is not built in yet.
     g_applied_renderer = renderer;
     g_applied_physics = physics;
     g_applied_keep_debris = keep_debris;
@@ -343,14 +431,10 @@ void openrfg_backends_apply()
     if (physics != g_settings.physics)
     {
         const char* why = physics_fallback_reason(g_settings.physics);
-        if (why == nullptr && g_physx_running)
-        {
-            why = "PhysX runs until the game restarts (stopping it comes later)";
-        }
         snprintf(physics_note, sizeof(physics_note), " (chosen: %s; %s)", physics_name(g_settings.physics), why != nullptr ? why : "?");
     }
     const char* keep_choice = g_settings.keep_debris == OPENRFG_KEEP_DEBRIS_AUTO ? "automatic" : (g_settings.keep_debris == OPENRFG_KEEP_DEBRIS_ON ? "on" : "off");
     char msg[768];
-    snprintf(msg, sizeof(msg), "BACKENDS renderer %s%s, physics %s%s%s, keep debris %s (chosen: %s)", renderer_name(renderer), renderer_note, physics_name(physics), physx_is_starting ? " (starting)" : "", physics_note, keep_debris ? "on" : "off", keep_choice);
+    snprintf(msg, sizeof(msg), "BACKENDS renderer %s%s, physics %s%s%s, keep debris %s (chosen: %s)", renderer_name(renderer), renderer_note, physics_name(physics), physx_note, physics_note, keep_debris ? "on" : "off", keep_choice);
     openrfg_log(msg);
 }

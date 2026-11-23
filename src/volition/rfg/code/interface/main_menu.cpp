@@ -1514,6 +1514,7 @@ static bool main_menu_wait_for_options()
 // background video, the invite into the online menus.
 void main_menu_process()
 {
+    openrfg_backends_main_menu_frame(); // OpenRFG: settles a backend change that could not be made at once
     vint_data_item* select = vint_data_item::find(Main_menu_controller_select_handle);
     if (select != nullptr)
     {
