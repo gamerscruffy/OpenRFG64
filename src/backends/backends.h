@@ -99,6 +99,9 @@ bool openrfg_backends_keep_debris_resolved(int keep_debris);
 int openrfg_backends_effective_renderer();
 int openrfg_backends_effective_physics();
 bool openrfg_backends_effective_keep_debris();
+// KEEP DEBRIS right now: PhysX runs (started, not just starting) and KEEP DEBRIS is on. A plain read, for the game's
+// hot paths (keep_debris.cpp).
+bool openrfg_backends_keep_debris_now();
 
 // Makes the settings run: stops what no longer runs, starts what does, and logs the result. Call only where no level
 // is loaded: the main menu (main_menu_enter, the options' Accept).

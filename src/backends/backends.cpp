@@ -46,6 +46,8 @@ namespace
     // PhysX started (it keeps running until the game ends: stopping it is a later step), or it failed to start.
     bool g_physx_running = false;
     bool g_physx_failed = false;
+    // openrfg_backends_keep_debris_now: set when PhysX's start succeeds, recomputed by openrfg_backends_apply.
+    volatile bool g_keep_debris_now = false;
 
 #if defined(OPENRFG_BACKEND_PHYSX)
     // PhysX starts on a worker thread, never on the game's: its start reads OpenRFG.pdb for seconds, and a game thread
@@ -57,6 +59,10 @@ namespace
     DWORD WINAPI physx_start_thread(void*)
     {
         const bool ok = openrfg_physx_start();
+        if (ok)
+        {
+            g_keep_debris_now = openrfg_backends_keep_debris_resolved(g_settings.keep_debris);
+        }
         InterlockedExchange(&g_physx_start_result, ok ? 1 : 2);
         openrfg_log(ok ? "BACKENDS PhysX started (backends rfgphys.log has the details)" : "BACKENDS PhysX did not start: Havok only (backends rfgphys.log says why)");
         return 0;
@@ -273,6 +279,11 @@ int openrfg_backends_effective_physics()
     return physics_fallback_reason(g_settings.physics) == nullptr ? g_settings.physics : OPENRFG_PHYSICS_HAVOK;
 }
 
+bool openrfg_backends_keep_debris_now()
+{
+    return g_keep_debris_now;
+}
+
 bool openrfg_backends_effective_keep_debris()
 {
     return openrfg_backends_effective_physics() == OPENRFG_PHYSICS_PHYSX && openrfg_backends_keep_debris_resolved(g_settings.keep_debris);
@@ -308,6 +319,7 @@ void openrfg_backends_apply()
     const int renderer = openrfg_backends_effective_renderer();
     const int physics = openrfg_backends_effective_physics();
     const int keep_debris = openrfg_backends_effective_keep_debris() ? 1 : 0;
+    g_keep_debris_now = g_physx_running && openrfg_backends_keep_debris_resolved(g_settings.keep_debris);
     if (renderer == g_applied_renderer && physics == g_applied_physics && keep_debris == g_applied_keep_debris)
     {
         return;

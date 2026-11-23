@@ -148,6 +148,8 @@ public:
     bool is_zone_border_zone(const vector& pos) const; // 0x0092E110 (world_stream.cpp:324)
     bool get_zone_bbox_from_pos(const vector& pos, vector& bmin, vector& bmax); // 0x0092CEE0 (:1395)
     int get_max_world_objects() const;
+    // OpenRFG (new, backends' keep debris): the zone with the most object handles in use, and how many it uses.
+    const world_zone* openrfg_fullest_zone(int* used) const;
     const char* get_pending_filename(); // 0x00883810 (.h:230)
     int get_num_objects() const; // 0x00923680 (:1378)
     object* get_object(int i) const; // 0x00923690 (:1383)

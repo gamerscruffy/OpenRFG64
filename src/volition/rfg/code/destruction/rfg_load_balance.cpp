@@ -15,6 +15,7 @@
 //   stopped.
 
 #include "volition/rfg/code/destruction/rfg_load_balance.h"
+#include "backends/keep_debris.h" // OpenRFG (backends: keep debris)
 
 #include "volition/rfg/code/camera/rfg_camera.h"
 #include "volition/rfg/code/destruction/rfg_mover.h"
@@ -133,6 +134,7 @@ static bool rfgl_should_delete(object* objp)
 // General movers (find_gm) or rfg_movers.
 static int rfgl_find_and_delete_object_mover(int objects_to_delete, bool find_gm)
 {
+    openrfg_keep_debris_fade_scope fades_go_through; // OpenRFG (backends): the game's own cleanup (Havok out of memory) fades kept debris too
     int& index = find_gm ? RFG_load_gm_index : RFG_load_rm_index;
     const int num = find_gm ? World.get_num_objects<general_mover>() : World.get_num_objects<rfg_mover>();
     if (num < 1)
@@ -217,7 +219,7 @@ static int rfgl_find_and_delete_debris_object(int objects_to_delete)
 // load).
 static void rfgl_maybe_delete_objects()
 {
-    if (!RFG_load_balance)
+    if (!RFG_load_balance || openrfg_keep_debris_keeping()) // OpenRFG (backends): keep debris
     {
         return;
     }
@@ -560,6 +562,7 @@ void rfgl_desired_values(rfgl_balance_values& bvl, int incoming_objects, int fla
         bvl.delete_count = delete_count;
         bvl.quality_count = quality_left <= incoming_objects - delete_count ? quality_left : incoming_objects - delete_count;
     }
+    bvl.delete_count = openrfg_keep_debris_shatter_deletes(incoming_objects, bvl.delete_count); // OpenRFG (backends): keep debris
     if (Multiplayer)
     {
         bvl.quality_count = 0;

@@ -1127,6 +1127,40 @@ int world::get_num_objects() const
     return all_objects.size();
 }
 
+// OpenRFG (new, backends' keep debris, after OpenRFG64-memtest): world is a friend of handle_manager, whose bitmap of
+// each zone it counts here.
+const world_zone* world::openrfg_fullest_zone(int* used) const
+{
+    const world_zone* fullest = nullptr;
+    int most = 0;
+    for (int z = 0; all_zones != nullptr && z < num_territory_zones; z++)
+    {
+        const world_zone* zone = all_zones[z];
+        if (zone == nullptr)
+        {
+            continue;
+        }
+        int in_use = 0;
+        for (unsigned char bits : zone->obj_handle_mgr.status)
+        {
+            for (; bits != 0; bits &= (unsigned char)(bits - 1))
+            {
+                in_use++;
+            }
+        }
+        if (in_use > most || fullest == nullptr)
+        {
+            most = in_use;
+            fullest = zone;
+        }
+    }
+    if (used != nullptr)
+    {
+        *used = most;
+    }
+    return fullest;
+}
+
 // 0x00923690 (:1383)
 object* world::get_object(int i) const
 {

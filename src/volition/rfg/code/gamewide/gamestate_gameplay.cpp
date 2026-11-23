@@ -23,6 +23,7 @@
 //   the indent is kept, the times are not printed.
 
 #include "volition/rfg/code/gamewide/gamestate_gameplay.h"
+#include "backends/keep_debris.h" // OpenRFG (backends: keep debris)
 
 #include "volition/audio_lib/code/audiolib_api.h"
 #include "volition/render_lib/code/rl_partition_system.h"
@@ -550,6 +551,7 @@ static void gamestate_gp_simulate_frame()
     fb_accum_blur_update();
     camera_do_frame_post();
     ai_process_target_building_update();
+    openrfg_keep_debris_sim_frame(); // OpenRFG (backends): keep debris's zone reserve
 }
 
 // 0x007F0F00 (:979)

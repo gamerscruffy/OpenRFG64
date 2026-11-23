@@ -9,6 +9,8 @@ if(OPENRFG_X64)
     target_compile_definitions(openrfg_backends PRIVATE OPENRFG_BACKENDS=1)
 endif()
 target_link_libraries(rfg PUBLIC openrfg_backends)
+# KEEP DEBRIS (keep_debris.h) uses the game's types: it is compiled into the rfg library itself.
+target_sources(rfg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/keep_debris.cpp)
 
 # ---- PhysX: rfgphys (external/rfgphys, the PhysX mod's repository as a git subtree).
 # Its game code is built into the game; its core (the PhysX host's code with PhysX's static libraries, which have
