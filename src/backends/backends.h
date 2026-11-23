@@ -81,6 +81,10 @@ void openrfg_backends_write_ini(const keen::FilePath& path);
 
 // The hardware probe, on a worker thread (Application::initialize, once the game's device exists).
 void openrfg_backends_start_probe(ID3D11Device* device);
+// Starts a chosen PhysX on a worker thread at boot (Application::initialize, after the probe). Its start reads
+// OpenRFG.pdb for seconds and nothing waits for it: rfgphys attaches to the game whenever it is ready (a game thread
+// held that long would be a hang).
+void openrfg_backends_start_early();
 // The probe's result; waits for it if it is still running.
 const openrfg_backend_probe& openrfg_backends_probe();
 

@@ -12,6 +12,8 @@
 #include "volition/vlib/code/util/endian_type.h"
 #endif
 
+#include <windows.h>
+
 #include <stdio.h>
 
 void openrfg_log(const char* text); // crash_early.cpp
@@ -44,6 +46,58 @@ namespace
     // PhysX started (it keeps running until the game ends: stopping it is a later step), or it failed to start.
     bool g_physx_running = false;
     bool g_physx_failed = false;
+
+#if defined(OPENRFG_BACKEND_PHYSX)
+    // PhysX starts on a worker thread, never on the game's: its start reads OpenRFG.pdb for seconds, and a game thread
+    // held that long is a hang (the watchdog reports one after 6 s). rfgphys attaches whenever it is ready: its world
+    // mirror arms at gameplay, and the debris offload takes the pieces made from then on. 1 running, 2 failed.
+    HANDLE g_physx_start_thread = nullptr;
+    volatile LONG g_physx_start_result = 0;
+
+    DWORD WINAPI physx_start_thread(void*)
+    {
+        const bool ok = openrfg_physx_start();
+        InterlockedExchange(&g_physx_start_result, ok ? 1 : 2);
+        openrfg_log(ok ? "BACKENDS PhysX started (backends rfgphys.log has the details)" : "BACKENDS PhysX did not start: Havok only (backends rfgphys.log says why)");
+        return 0;
+    }
+
+    void physx_begin_start()
+    {
+        if (g_physx_start_thread == nullptr && !g_physx_running && !g_physx_failed)
+        {
+            g_physx_start_thread = CreateThread(nullptr, 0, physx_start_thread, nullptr, 0, nullptr);
+            if (g_physx_start_thread == nullptr)
+            {
+                g_physx_failed = true;
+            }
+        }
+    }
+
+    // Takes the start's result once it is done; true while it is still running.
+    bool physx_starting()
+    {
+        if (g_physx_start_thread == nullptr)
+        {
+            return false;
+        }
+        if (WaitForSingleObject(g_physx_start_thread, 0) == WAIT_TIMEOUT)
+        {
+            return true;
+        }
+        CloseHandle(g_physx_start_thread);
+        g_physx_start_thread = nullptr;
+        if (g_physx_start_result == 1)
+        {
+            g_physx_running = true;
+        }
+        else
+        {
+            g_physx_failed = true;
+        }
+        return false;
+    }
+#endif
 
     // Built into this program. The path tracer comes in a later step; until then a choice of it falls back.
     bool renderer_built(int renderer)
@@ -208,6 +262,9 @@ int openrfg_backends_effective_renderer()
 
 int openrfg_backends_effective_physics()
 {
+#if defined(OPENRFG_BACKEND_PHYSX)
+    physx_starting(); // takes a finished start's result
+#endif
     // A running PhysX cannot be stopped yet: it runs until the game ends, whatever the choice since.
     if (g_physx_running)
     {
@@ -221,6 +278,16 @@ bool openrfg_backends_effective_keep_debris()
     return openrfg_backends_effective_physics() == OPENRFG_PHYSICS_PHYSX && openrfg_backends_keep_debris_resolved(g_settings.keep_debris);
 }
 
+void openrfg_backends_start_early()
+{
+#if defined(OPENRFG_BACKEND_PHYSX)
+    if (openrfg_backends_enabled() && openrfg_backends_effective_physics() == OPENRFG_PHYSICS_PHYSX)
+    {
+        physx_begin_start();
+    }
+#endif
+}
+
 void openrfg_backends_apply()
 {
     if (!openrfg_backends_enabled())
@@ -228,18 +295,15 @@ void openrfg_backends_apply()
         return;
     }
 #if defined(OPENRFG_BACKEND_PHYSX)
-    // PhysX starts here, where no level is loaded (at boot, or later from the options).
-    if (openrfg_backends_effective_physics() == OPENRFG_PHYSICS_PHYSX && !g_physx_running && !g_physx_failed)
+    // A chosen PhysX not started yet starts on its worker thread (at boot it began in openrfg_backends_start_early);
+    // nothing here waits for it.
+    if (!physx_starting() && openrfg_backends_effective_physics() == OPENRFG_PHYSICS_PHYSX)
     {
-        if (openrfg_physx_start())
-        {
-            g_physx_running = true;
-        }
-        else
-        {
-            g_physx_failed = true;
-        }
+        physx_begin_start();
     }
+    const bool physx_is_starting = physx_starting();
+#else
+    const bool physx_is_starting = false;
 #endif
     const int renderer = openrfg_backends_effective_renderer();
     const int physics = openrfg_backends_effective_physics();
@@ -271,6 +335,6 @@ void openrfg_backends_apply()
     }
     const char* keep_choice = g_settings.keep_debris == OPENRFG_KEEP_DEBRIS_AUTO ? "automatic" : (g_settings.keep_debris == OPENRFG_KEEP_DEBRIS_ON ? "on" : "off");
     char msg[768];
-    snprintf(msg, sizeof(msg), "BACKENDS renderer %s%s, physics %s%s, keep debris %s (chosen: %s)", renderer_name(renderer), renderer_note, physics_name(physics), physics_note, keep_debris ? "on" : "off", keep_choice);
+    snprintf(msg, sizeof(msg), "BACKENDS renderer %s%s, physics %s%s%s, keep debris %s (chosen: %s)", renderer_name(renderer), renderer_note, physics_name(physics), physx_is_starting ? " (starting)" : "", physics_note, keep_debris ? "on" : "off", keep_choice);
     openrfg_log(msg);
 }
