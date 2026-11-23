@@ -1,0 +1,6505 @@
+#include "physx/debris_offload.h"
+
+#include <windows.h>
+#include <intrin.h>
+
+#include <algorithm>
+#include <atomic>
+#include <limits>
+#include <cmath>
+#include <cstddef>
+#include <cstdio>
+#include <share.h>
+#include <cstring>
+#include <initializer_list>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+#include <deque>
+#include <new>
+
+#include "core/config.h"
+#include "core/gameloop.h"
+#include "core/log.h"
+#include "core/session.h"
+#include "game/layout.h"
+#include "game/rfg.h"
+#include "harness/harness.h"
+#include "hooks/hooks.h"
+#include "physx/bridge.h"
+#include "physx/havok_shapes.h"
+#include "physx/render_routing.h"
+#include "physx/world_mirror.h"
+#include "telemetry/object_census.h"
+
+namespace debris_offload {
+namespace {
+
+namespace hs = havok_shapes;
+namespace ipc = rfgphysx;
+namespace r = rfg::rva;
+
+constexpr int kGameplay = 1;               // GS_GAMEPLAY
+constexpr uint32_t kAdoptPerFrame = 400;   // pieces taken over per frame at most (the rest the next frame)
+constexpr float kFloorY = -400.0f;         // pieces below this are given up
+uint64_t g_fell = 0;                        // pieces given up there (they fell through the world)
+// Where pieces go down: the first ones to sink below kLowY (under the ground of the maps without a chasm) are logged
+// with their positions over that step, which shows where the world has a hole or an edge (07 B5a).
+constexpr float kLowY = -20.0f;
+constexpr uint32_t kLowLogged = 16;
+uint32_t g_low_slots[kLowLogged], g_low_logged = 0;
+
+// general_mover / object fields (01 §10.10, research/docs/06 §13).
+// OpenRFG64: struct offsets by name (game/layout.h); flags and the chunks' file records stay constants.
+const uint32_t &kObjFlags = layout::object_flags, &kObjHavokHandle = layout::object_havok_handle,
+               &kObjAttach = layout::object_attach;  // child_constraint, host_constraint, attach_info (3 pointers)
+constexpr uint8_t kObjDestroyed = 0x10;
+const uint32_t &kObjHandle = layout::object_handle, &kObjType = layout::object_type;
+// object::srid: the stream2 container the object's data comes from; a mover's is its building's chunk (mesh,
+// materials, destruction data: what the render instance draws). The object holds a reference on it while byte +0x55
+// of its flags has 8 (requested) or 0x10 (streamed in); world::free_object gives it back.
+const uint32_t &kObjSrid = layout::object_srid, &kObjStreamFlags = layout::object_stream_flags;
+constexpr uint8_t kObjStreamHeld = 0x18;
+const uint32_t& kMoverFlags = layout::mover_flags;
+constexpr uint32_t kMoverLoadBalanced = 4, kMoverFading = 0x800;
+const uint32_t& kMoverChunkUid = layout::mover_chunk_uid;  // object_mover::chunk_uid: (c_chunk_base::internal_uid << 16) | pool index
+constexpr uint32_t kNoChunk = 0xFFFFFFFFu;
+const uint32_t& kGmRenderInstance = layout::gm_render_instance;  // general_mover::rdd.model_instance_p
+const uint32_t& kGmOriginalObject = layout::gm_original_object;  // general_mover::original_object: the object it broke off
+constexpr uint32_t kNoObject = 0xFFFFFFFFu;
+// world_zone: state (2: loaded), its obj_zone, its name.
+const uint32_t &kZoneState = layout::zone_state, &kZoneObj = layout::zone_obj, &kZoneName = layout::zone_name;
+constexpr int32_t kZoneLoaded = 2;
+// World lists: all_objects.elt, subtype_objects[OT_SUB_MOVER_GENERAL] (elt, num).
+const uint32_t &kWorldAllObjects = layout::world_all_objects, &kWorldGeneralMovers = layout::world_general_movers,
+               &kWorldGeneralMoverCount = layout::world_general_mover_count;
+// hkpRigidBody: motion at +0xE0 (type +8, m_inertiaAndMassInv +0xC0, m_linearVelocity +0xD0, m_angularVelocity +0xE0).
+const uint32_t &kBodyMotionType = layout::hk_entity_motion_type, &kBodyInvMass = layout::hk_body_inv_mass,
+               &kBodyLinVel = layout::hk_body_lin_vel, &kBodyAngVel = layout::hk_body_ang_vel;
+// rl_scene_entity: rotation rows (rvec, uvec, fvec) at +0x08, position at +0x2C, flags at +0x40, partition at +0x9C.
+const uint32_t &kInstRot = layout::inst_rot, &kInstPos = layout::inst_pos, &kInstFlags = layout::inst_flags,
+               &kInstPartition = layout::inst_partition;
+constexpr uint32_t kPlayerShape = 0xFFFF0001u;
+
+bool g_on = false;
+// Experiment.PhysXDebrisBatch: rl_scene_renderer::render draws an instance whose flags (+0x40) have bit 7 through
+// the batched pass (vtable slot 7, add_to_batch: sub-instances instanced by material) and every other one on its own
+// (slot 11, add_to_deferred, then one draw per pass). A destroyable instance starts batchable, but once its compiled
+// mesh (its sub-instances merged, rl_start_recompile_mesh_instance) arrives, set_compiled_cache_data clears the bit:
+// every piece then costs a draw per pass. With this the pieces' bit is set again every frame, in the render task.
+bool g_batch = false;
+constexpr uint16_t kInstBatchable = 0x80;
+uint32_t g_batch_restored = 0;  // bits set again (they had been cleared), for the log
+// Experiment.PhysXDebrisDropMeshes: after a split the game builds every destroyable instance a compiled mesh, its
+// sub-instances merged (rl_start_recompile_mesh_instance; rl_mesh_recompile_data: CPU copies of the vertices and
+// indices plus GPU buffers, inst +0x158). Drawn batched, a piece never uses it. The render task gives the pieces'
+// meshes back (rl_delete_mesh_recompile_data, the game's own deferred delete; a few hundred a frame, within its 2,048
+// queue slots), and no new ones are built for them. The set of the pieces' instances is read by that hook.
+const uint32_t& kInstRecompileData = layout::inst_recompile_data;
+constexpr uint32_t kDropPerFrame = 400;
+bool g_drop_meshes = false;
+uint32_t g_meshes_dropped = 0, g_recompiles_skipped = 0;
+void(__cdecl* o_start_recompile)(const void*, bool) = nullptr;  // rl_start_recompile_mesh_instance, hooked
+SRWLOCK g_piece_set_lock = SRWLOCK_INIT;
+std::unordered_set<const void*> g_piece_set;
+// The pieces' instances that got a compiled mesh (set_compiled_cache_data, which also clears the batchable bit) or
+// were just taken over: the render task gives the mesh back and sets the bit again, for these only (it used to look at
+// every piece's instance every frame). Any thread queues.
+SRWLOCK g_fix_lock = SRWLOCK_INIT;
+std::vector<uint8_t*> g_fix_queue;
+// OpenRFG64: the player's capsule is slot 0, the vehicles' proxies the next kVehicleSlots, and the pieces have
+// [g_debris_first, g_slots). g_slots grows during the session (grow_slots), up to g_slots_max.
+uint32_t g_slots = 0, g_player_slot = 0, g_debris_first = 0, g_slots_max = 0;
+constexpr uint32_t kNoStandIn = 0xFFFFFFFFu;
+constexpr uint32_t kNoPile = 0xFFFFFFFFu;
+struct Piece {
+    // What the render task looks at each frame for the pieces that move or changed (move_piece) comes first.
+    uint8_t* inst = nullptr;  // the render instance taken over; null: free slot. In a pile: the pile's instance
+    uint32_t pile = kNoPile;  // the pile drawing it (Experiment.PhysXDebrisPiles)
+    double frozen_since_ms = 0;  // since when it has been still in PhysX: frozen, or asleep (0: it moves)
+    uint8_t settle = 0;       // 1 while the last applied pose was an interpolated (moving) one
+    uint8_t fresh = 0;        // 1 from adoption until the render task first sees the piece
+    uint8_t candidate = 0;    // in g_pile_candidates (still, not in a pile)
+    float own_sub[12] = {};   // in a pile: its sub-instance's transform in its own instance, given back when it leaves
+    uint16_t sub_index = 0;   // in a pile: its sub-instance's index in its building
+    uint16_t submesh = 0;     // in a pile: its sub-instance's submesh
+    uint8_t disable_deferred = 0;  // in a pile: its sub-instance's flag of that name
+    float piled_pos[3] = {}, piled_q[4] = {};  // in a pile: where PhysX had it when it joined (it is drawn there)
+    uint8_t heavy = 0;        // solid to the player (Experiment.PhysXSolidDebris)
+    const uint8_t* shape = nullptr;  // its general_mover's hkpConvexVerticesShape, referenced: its stand-ins' shape
+    uint32_t stand_in = kNoStandIn;  // Havok handle of its stand-in
+    uint32_t wanted = 0;      // the stand-in pass that last wanted one
+    float want_key = 0;       // that pass: how much (lower first)
+    float si_pos[3] = {}, si_q[4] = {};  // where its stand-in was last put
+    float mass = 0;
+    uint8_t physical_material = 0, effect_material = 0;  // its Havok body's properties 3 and 4, for its stand-in
+    float box_c[3] = {}, box_size[3] = {};  // bounds of its parts in its own frame: centre, full extents
+    float radius = 0;         // of those bounds around its origin
+    uint32_t srid = 0;        // the chunk container its general_mover held a reference on (0: none): see g_srid_pieces
+    uint32_t chunk_uid = kNoChunk;  // its building's chunk
+    uint32_t original = kNoObject;  // the object it broke off (its general_mover's original_object)
+    double born_ms = 0;       // OpenRFG64: when it was taken over (young pieces are given up last)
+};
+// OpenRFG64: the records by slot. The slots grow during the session and a record may not move (references to
+// one are kept across calls), so address space for the most slots is reserved at start and committed as they grow.
+template <typename T>
+class SlotArray {
+public:
+    bool reserve(size_t most) {
+        if (m_data) return most <= m_most;
+        void* p = VirtualAlloc(nullptr, most * sizeof(T), MEM_RESERVE, PAGE_READWRITE);
+        if (!p) return false;
+        m_data = static_cast<T*>(p);
+        m_most = most;
+        return true;
+    }
+    bool grow(size_t n, const T& init) {
+        if (n <= m_size) return true;
+        if (n > m_most || !VirtualAlloc(m_data + m_size, (n - m_size) * sizeof(T), MEM_COMMIT, PAGE_READWRITE))
+            return false;
+        for (size_t i = m_size; i < n; ++i) new (m_data + i) T(init);
+        m_size = n;
+        return true;
+    }
+    T& operator[](size_t i) { return m_data[i]; }
+    const T& operator[](size_t i) const { return m_data[i]; }
+    size_t size() const { return m_size; }
+    T* begin() { return m_data; }
+    T* end() { return m_data + m_size; }
+    const T* begin() const { return m_data; }
+    const T* end() const { return m_data + m_size; }
+
+private:
+    T* m_data = nullptr;
+    size_t m_size = 0, m_most = 0;
+};
+SlotArray<Piece> g_pieces;
+std::vector<uint32_t> g_free;
+// A freed slot waits here until the snapshots show it empty. Until the host has heard, they show its last body, alive, and
+// a new body put in the slot went where that one was for a few frames (research/docs/08 §13): a chunk warping and back.
+struct CoolingSlot {
+    uint32_t slot, frame;  // pxbridge::frame() when it was freed
+};
+std::deque<CoolingSlot> g_cooling, g_vehicle_cooling;
+void cool_slots(std::deque<CoolingSlot>& cooling, std::vector<uint32_t>& free_slots) {
+    const ipc::SnapshotHeader* s = pxbridge::snapshot(nullptr);
+    if (!s) return;
+    while (!cooling.empty() && int32_t(s->last_frame - cooling.front().frame) > 0) {
+        free_slots.push_back(cooling.front().slot);
+        cooling.pop_front();
+    }
+}
+// The host state byte each slot had when the render task last acted on it (move_pieces): a slot is looked at again
+// only while its piece moves or when its state changed (a frozen pile of 30,000 pieces costs a 64 KB compare).
+std::vector<uint8_t> g_seen_state;
+// Still pieces not in a pile (Experiment.PhysXDebrisPiles): what piles_frame looks over for new piles.
+std::unordered_set<uint32_t> g_pile_candidates;
+// Where each piece is, for the stand-ins' search (update_stand_ins): its pose in the newest snapshot and its radius,
+// 16 bytes a slot instead of its record and its pose (r < 0: no live piece). move_piece writes it for the pieces that
+// move or changed; give_up clears it.
+struct Spatial {
+    float x, y, z, r;
+};
+std::vector<Spatial> g_spatial;
+std::unordered_map<uint64_t, uint32_t> g_shape_ids;
+uint32_t g_next_shape = 1;
+bool g_player_ready = false;
+FrameStats g_stats{};
+uint64_t g_total_adopted = 0;
+uint64_t g_adopted_faded = 0;  // went over faded by distance (their instances keep the opacity)
+// Masses of the pieces taken over, by powers of two (bucket b: [2^(b-1), 2^b) kg; 0: under 1 kg), and how the game
+// decides between pushing a body out of the player's way and standing on it (character_controller_should_push_away:
+// lighter than Character_collision_push_away_mass is pushed).
+uint32_t g_mass_hist[20] = {};
+bool g_tweaks_logged = false;
+float g_largest_radius = 0;                             // of the pieces taken over in this level (at most 50 m)
+bool g_diag = false;                                    // Telemetry.Enabled: the censuses below
+uint32_t g_adopted_top_types[hs::kTypeCount + 1] = {};  // the top shape types of the pieces taken over
+
+int mass_bucket(float mass) {
+    int b = 0;
+    for (float m = 1.0f; mass >= m && b < 19; m *= 2.0f) ++b;
+    return b;
+}
+
+float g_radius_min = 1e30f, g_radius_max = 0;  // the convex radii of the pieces' parts taken over
+double g_radius_sum = 0;
+uint32_t g_radius_n = 0;
+
+void log_masses(const char* when) {
+    char text[512];
+    int n = 0;
+    for (int b = 0; b < 20 && n < int(sizeof(text)) - 32; ++b)
+        if (g_mass_hist[b])
+            n += snprintf(text + n, sizeof(text) - n, " <%u kg: %u", 1u << b, g_mass_hist[b]);
+    LOG("debris offload: masses of the pieces taken over (%s):%s", when, n ? text : " none");
+    if (g_radius_n)
+        LOG("debris offload: convex radii of their parts: %.4f to %.4f m, %.4f mean (%u parts)", double(g_radius_min),
+            double(g_radius_max), g_radius_sum / g_radius_n, g_radius_n);
+    g_radius_min = 1e30f, g_radius_max = 0, g_radius_sum = 0, g_radius_n = 0;
+}
+
+// ---- shapes ----
+
+struct Parts : hs::Sink {
+    std::vector<std::vector<ipc::Vec3>> parts;
+    std::vector<float> radii;  // each part's convex radius (the host grows its hull by it)
+    bool has_triangles = false;
+    void triangle(const float*, const float*, const float*) override { has_triangles = true; }
+    void convex(const float (*v)[3], int n, float radius, uint32_t) override {
+        if (n < 3) return;
+        std::vector<ipc::Vec3> p(size_t(std::min(n, 255)));
+        for (size_t i = 0; i < p.size(); ++i) p[i] = {v[i][0], v[i][1], v[i][2]};
+        parts.push_back(std::move(p));
+        radii.push_back(radius);
+    }
+    void height_field(const uint8_t*, const hs::Transform&) override { has_triangles = true; }
+    void unsupported(uint8_t) override { has_triangles = true; }
+};
+
+bool walk_guarded(const uint8_t* shape, Parts& p) {
+    __try {
+        return hs::walk(shape, hs::Transform::identity(), p);
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return false;
+    }
+}
+
+bool send_part(uint32_t shape, uint32_t part, const std::vector<ipc::Vec3>& v, uint32_t flags = 0,
+               float radius = 0.0f) {
+    std::vector<uint8_t> buf((sizeof(ipc::ShapePart) + v.size() * sizeof(ipc::Vec3) + 7) & ~size_t(7));
+    auto* c = reinterpret_cast<ipc::ShapePart*>(buf.data());
+    c->h = {uint16_t(ipc::Cmd::ShapePart), 0, uint32_t(buf.size())};
+    c->shape = shape;
+    c->part = part;
+    c->vertex_count = uint32_t(v.size());
+    c->flags = flags;
+    c->radius = radius;
+    memcpy(c + 1, v.data(), v.size() * sizeof(ipc::Vec3));
+    return pxbridge::send_record(buf.data(), uint32_t(buf.size()));
+}
+
+// The same parts (to the millimetre) with the same flags share one host shape: shards of one building repeat a lot.
+uint32_t intern_shape(const Parts& p, uint32_t flags) {
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+    mix(flags);
+    for (size_t i = 0; i < p.parts.size(); ++i) {
+        const auto& part = p.parts[i];
+        mix(part.size());
+        mix(uint64_t(int64_t(std::lround(double(i < p.radii.size() ? p.radii[i] : 0.0f) * 10000.0))));
+        for (const ipc::Vec3& v : part) {
+            mix(uint64_t(int64_t(std::lround(double(v.x) * 1000.0))));
+            mix(uint64_t(int64_t(std::lround(double(v.y) * 1000.0))));
+            mix(uint64_t(int64_t(std::lround(double(v.z) * 1000.0))));
+        }
+    }
+    auto it = g_shape_ids.find(h);
+    if (it != g_shape_ids.end()) return it->second;
+    const uint32_t id = g_next_shape++;
+    for (size_t i = 0; i < p.parts.size(); ++i)
+        if (!send_part(id, uint32_t(i), p.parts[i], flags, i < p.radii.size() ? p.radii[i] : 0.0f))
+            return 0;  // ring full: try again later
+    g_shape_ids.emplace(h, id);
+    return id;
+}
+
+// ---- render instances ----
+
+// As object_mover::update_render: mark the transform dirty, update the scene partition, tell the renderer.
+void refresh_instance(uint8_t* inst) {
+    uint16_t& flags = *reinterpret_cast<uint16_t*>(inst + kInstFlags);
+    flags = uint16_t((flags & 0xFFEF) | 1);
+    if (rfg::fn<bool(__cdecl*)()>(r::RL_auto_partition_update)()) {
+        uint8_t* partition = *reinterpret_cast<uint8_t**>(inst + kInstPartition);
+        if (partition && !(flags & 2)) {
+            using Update = void(__thiscall*)(uint8_t*, uint8_t*);
+            (*reinterpret_cast<Update* const*>(partition))[2](partition, inst);
+        }
+    }
+    rfg::fn<void(__cdecl*)(uint8_t*)>(r::game_render_scene_update)(inst);
+}
+
+void rotation_of(const float q[4], float rot[9]) {  // rvec, uvec, fvec: the rotated x, y and z axes
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    rot[0] = 1 - 2 * (y * y + z * z), rot[1] = 2 * (x * y + z * w), rot[2] = 2 * (x * z - y * w);
+    rot[3] = 2 * (x * y - z * w), rot[4] = 1 - 2 * (x * x + z * z), rot[5] = 2 * (y * z + x * w);
+    rot[6] = 2 * (x * z + y * w), rot[7] = 2 * (y * z - x * w), rot[8] = 1 - 2 * (x * x + y * y);
+}
+
+void move_instance(uint8_t* inst, const float pos[3], const float q[4]) {
+    rotation_of(q, reinterpret_cast<float*>(inst + kInstRot));
+    memcpy(inst + kInstPos, pos, 12);
+    refresh_instance(inst);
+}
+
+// As move_instance, unless the instance is there already: within 0.05 mm, its axes within 5e-5 (0.003 degrees). PhysX
+// keeps a piece awake for a while after it stops, and the partition update is most of a move's cost; after a blast,
+// moving 2,000-3,000 awake pieces took up to 4 ms of the frame. Compared with what the instance shows, so a slow
+// piece still gets there (in steps of 0.05 mm).
+constexpr float kMoveEpsilon = 5e-5f;
+uint64_t g_moves_skipped = 0;
+bool move_instance_if_moved(uint8_t* inst, const float pos[3], const float q[4]) {
+    float rot[9];
+    rotation_of(q, rot);
+    const float* cur_rot = reinterpret_cast<const float*>(inst + kInstRot);
+    const float* cur_pos = reinterpret_cast<const float*>(inst + kInstPos);
+    bool there = true;
+    for (int k = 0; k < 3 && there; ++k) there = std::fabs(cur_pos[k] - pos[k]) < kMoveEpsilon;
+    for (int k = 0; k < 9 && there; ++k) there = std::fabs(cur_rot[k] - rot[k]) < kMoveEpsilon;
+    if (there) {
+        ++g_moves_skipped;
+        return false;
+    }
+    memcpy(inst + kInstRot, rot, sizeof(rot));
+    memcpy(inst + kInstPos, pos, 12);
+    refresh_instance(inst);
+    return true;
+}
+
+void release_instance(uint8_t* inst) {
+    using Release = void(__thiscall*)(uint8_t*);
+    (*reinterpret_cast<Release* const*>(inst))[1](inst);  // rl_destroyable_model_instance::release
+}
+
+std::vector<uint32_t> g_stand_ins_to_free;  // Havok handles, freed at the end of the frame (not in the render task)
+
+// The chunks the pieces draw from. A piece keeps the reference its general_mover held on its building's chunk (adopt),
+// so the chunk stays loaded as long as the piece does; given up, the piece's reference goes back from the next render
+// task (release_chunk_refs): in the handshake after the frame's deferred render-instance releases (rl_unlock), before
+// stream2_do_frame unloads containers nothing references any more. Pieces leave with the zone they lie in, as the
+// game's debris does (d_destream_zone), and a chunk unloading under a piece anyway takes the piece with it first
+// (d_chunk_unload).
+std::unordered_map<uint32_t, uint32_t> g_chunk_pieces;  // chunk uid -> live pieces drawn from it
+// A stream2 container counts its references in a short. Each piece kept its general_mover's reference, and a building
+// type with 32,700 pieces in PhysX overflowed it (research/docs/07, B5b): the count went negative, the next release
+// unloaded the chunk under its pieces (all given up) and Havok, still stepping bodies with the chunk's shapes, crashed.
+// The pieces of one container keep one reference between them, the first one's; the others give theirs back at once.
+std::unordered_map<uint32_t, uint32_t> g_srid_pieces;  // container -> live pieces sharing our one reference on it
+uint32_t g_srid_peak = 0;                              // the most pieces one reference held at once, this session
+std::vector<uint32_t> g_refs_to_release;
+uint64_t g_refs_taken = 0, g_refs_missing = 0, g_refs_released = 0;
+bool g_stream_owner_checked = false;
+
+void leave_pile(uint32_t slot);  // its sub-instance leaves the pile's instance, which stays for the others (piles)
+void cancel_compile(uint8_t* inst);  // the instance's pending mesh compile, if any, is aborted (piles)
+void queue_instance_fix(uint8_t* inst);  // its compiled mesh given back, its batchable bit set again (render task)
+
+void give_up(uint32_t slot, bool tell_host) {
+    Piece& p = g_pieces[slot];
+    if (!p.inst) return;
+    if (p.stand_in != kNoStandIn) g_stand_ins_to_free.push_back(p.stand_in);
+    if (p.pile != kNoPile) {
+        leave_pile(slot);
+    } else {
+        if (g_drop_meshes) {
+            AcquireSRWLockExclusive(&g_piece_set_lock);
+            g_piece_set.erase(p.inst);
+            ReleaseSRWLockExclusive(&g_piece_set_lock);
+        }
+        release_instance(p.inst);
+    }
+    // Sim thread, Havok not stepping (end of frame, the handshake, the level's end): the stand-in body (freed at the
+    // end of the frame) holds a reference of its own.
+    if (p.shape) rfg::fn<void(__thiscall*)(const void*)>(r::hkReferencedObject__removeReference)(p.shape);
+    if (p.srid) {
+        const auto held = g_srid_pieces.find(p.srid);
+        if (held == g_srid_pieces.end() || --held->second == 0) {  // the last of its container's pieces
+            if (held != g_srid_pieces.end()) g_srid_pieces.erase(held);
+            g_refs_to_release.push_back(p.srid);
+        }
+    }
+    const auto chunk = g_chunk_pieces.find(p.chunk_uid);
+    if (chunk != g_chunk_pieces.end() && --chunk->second == 0) g_chunk_pieces.erase(chunk);
+    p = Piece{};
+    if (slot < g_seen_state.size()) g_seen_state[slot] = 0;
+    if (slot < g_spatial.size()) g_spatial[slot].r = -1.0f;
+    g_pile_candidates.erase(slot);
+    g_cooling.push_back({slot, pxbridge::frame()});
+    if (tell_host) pxbridge::destroy_body(slot);
+    ++g_stats.released;
+}
+
+void release_chunk_refs() {
+    if (g_refs_to_release.empty()) return;
+    if (!g_stream_owner_checked) {
+        g_stream_owner_checked = true;
+        const uint32_t owner = rfg::global<uint32_t>(r::Stream_thread_id);
+        if (owner != GetCurrentThreadId())  // stream2_release does nothing on another thread
+            LOG("debris offload: WARNING streaming belongs to thread %u, not %u: the pieces' chunk references stay "
+                "held", owner, GetCurrentThreadId());
+    }
+    const auto release = rfg::fn<void(__cdecl*)(uint32_t)>(r::stream2_release);
+    for (uint32_t srid : g_refs_to_release) release(srid);
+    g_refs_released += g_refs_to_release.size();
+    g_refs_to_release.clear();
+}
+
+// ---- adoption ----
+
+uint8_t* world() { return static_cast<uint8_t*>(rfg::addr(r::World)); }
+
+const uint32_t& kBodyFilterInfo = layout::hk_entity_filter_info;  // hkpEntity: m_collidable.m_broadPhaseHandle.m_collisionFilterInfo
+// hkpWorldObject::m_properties: hkpProperty {key, pad, value (8 bytes)} at +0x7C, count at +0x80. The game keeps
+// the object at key 0 (object_from_world_obj), the physical and effect materials at 3 and 4.
+const uint32_t &kBodyProps = layout::hk_body_properties, &kBodyPropCount = layout::hk_body_property_count;
+uint32_t body_property(const uint8_t* body, uint32_t key) {
+    const uint8_t* props = *reinterpret_cast<uint8_t* const*>(body + kBodyProps);
+    const int n = *reinterpret_cast<const int*>(body + kBodyPropCount);
+    for (int i = 0; props && i < n; ++i)
+        if (*reinterpret_cast<const uint32_t*>(props + i * 16) == key)
+            return *reinterpret_cast<const uint32_t*>(props + i * 16 + 8);
+    return 0;
+}
+bool g_solid = false;
+float g_push_mass = 0;  // pieces this heavy are solid: Experiment.PhysXSolidMassKg, else the game's push-away mass
+int g_solid_mass_kg = 0;
+
+void bounds(const Parts& parts, Piece& p) {
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    for (const auto& part : parts.parts)
+        for (const ipc::Vec3& v : part) {
+            const float c[3] = {v.x, v.y, v.z};
+            for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], c[k]), hi[k] = std::max(hi[k], c[k]);
+        }
+    float r2 = 0;
+    for (int k = 0; k < 3; ++k) {
+        p.box_c[k] = 0.5f * (lo[k] + hi[k]);
+        p.box_size[k] = hi[k] - lo[k];
+        const float reach = std::max(std::fabs(lo[k]), std::fabs(hi[k]));
+        r2 += reach * reach;
+    }
+    p.radius = std::sqrt(r2);
+}
+
+void quat_from_cols(const float* c0, const float* c1, const float* c2, float q[4]) {
+    // Havok rotation columns -> quaternion (x, y, z, w).
+    const float m00 = c0[0], m10 = c0[1], m20 = c0[2], m01 = c1[0], m11 = c1[1], m21 = c1[2], m02 = c2[0], m12 = c2[1],
+                m22 = c2[2];
+    const float tr = m00 + m11 + m22;
+    if (tr > 0) {
+        const float s = std::sqrt(tr + 1.0f) * 2;
+        q[3] = 0.25f * s, q[0] = (m21 - m12) / s, q[1] = (m02 - m20) / s, q[2] = (m10 - m01) / s;
+    } else if (m00 > m11 && m00 > m22) {
+        const float s = std::sqrt(1.0f + m00 - m11 - m22) * 2;
+        q[3] = (m21 - m12) / s, q[0] = 0.25f * s, q[1] = (m01 + m10) / s, q[2] = (m02 + m20) / s;
+    } else if (m11 > m22) {
+        const float s = std::sqrt(1.0f + m11 - m00 - m22) * 2;
+        q[3] = (m02 - m20) / s, q[0] = (m01 + m10) / s, q[1] = 0.25f * s, q[2] = (m12 + m21) / s;
+    } else {
+        const float s = std::sqrt(1.0f + m22 - m00 - m11) * 2;
+        q[3] = (m10 - m01) / s, q[0] = (m02 + m20) / s, q[1] = (m12 + m21) / s, q[2] = 0.25f * s;
+    }
+}
+
+// A new piece stays with the game's physics for its first moments (the game's own debris lasts 2-5 s): pieces thrown
+// off a blast hit what stands around them and break it (in single player any loose body damages a building it hits
+// hard enough: rfg_dyn_add_pre_collide_contact), and pieces lying on a damaged building weigh on it (the game's stress
+// evaluation counts them). Handed over at once, a thermobaric rocket into Vista's sphere tower broke off a quarter of
+// the pieces it does in the game. With more than kMaxWaiting waiting the wait shrinks, the oldest going first, so
+// Havok carries about what it does in the game. While they wait, their compiled meshes are given back as the pieces'
+// are (the game builds one for every new piece; a collapse leaves a thousand waiting, and the address space is 32-bit).
+// A piece that has lain still for kAtRestMs when it goes over starts frozen in the host (ipc::kBodyAtRest): a pile that
+// settled in Havok and came over awake all at once rocked in PhysX for good. Calm is the host's test for freezing.
+constexpr uint32_t kMaxWaiting = 768;
+constexpr uint32_t kAtRestMs = 250;
+// A piece that waited goes over gentle (ipc::kBodyGentle): what it overlaps then (pieces it moved into meanwhile, the
+// pieces of its own shatter, which Havok had pushed apart only so far) is undone slowly, without the bubbling.
+constexpr uint32_t kGentleAfterMs = 300;
+constexpr float kCalmSpeed = 0.15f, kCalmSpin = 0.5f;  // m/s, rad/s
+uint32_t g_adopt_delay_ms = 0;             // Experiment.PhysXAdoptDelayMs
+// World-only pieces (layer 44, RFG_WORLD_ONLY: every small piece in Wrecking Crew, about half in single player) go
+// over at once (Experiment.PhysXWorldOnlyAtOnce), gentle. While they waited they went through the avenue map's ground,
+// a building like any other: born above it, they came over under it within a second (B5a: 135-305 pieces of 16,500-
+// 22,000 a stress cycle, then lost to the world), though DebrisCollide's layer table lets them meet buildings; made
+// ultra-lite meanwhile they did the same. In the game they meet nothing but the terrain and characters, so what the wait
+// is for (pieces breaking and weighing on what they hit) never concerned them; in PhysX they meet everything.
+constexpr uint32_t kLayerWorldOnly = 44;
+bool g_world_only_at_once = false;
+uint64_t g_world_only_went = 0;
+// A piece that broke off a loose chunk simulated in PhysX goes over at once too, gentle (research/docs/08, C2c): Havok
+// has no pile, so a piece waiting there falls through the pile the chunk landed on and comes over deep inside it.
+std::unordered_set<uint32_t> g_driven;     // object handles of the driven chunks (read in Havok's step)
+uint64_t g_from_driven_went = 0;
+uint32_t g_waiting = 0;                    // pieces waiting at the last pass
+uint32_t g_waiting_peak = 0;               // for the level-end log
+uint32_t g_went_at_rest = 0, g_went_moving = 0;  // for the level-end log
+struct Waiting {
+    uint32_t since_ms;       // game ms adopt() first saw it
+    uint32_t calm_since_ms;  // since when it has been calm (valid with calm)
+    bool calm;
+    bool area_waited = false;  // OpenRFG64: it was due, but the static world around it was not in the host yet
+};
+uint64_t g_area_waits = 0;  // OpenRFG64: pieces that waited for the static world around them (world_mirror::ready_at)
+// OpenRFG64: where the frame's time goes here, every 5 s of gameplay (the 64-bit build runs without telemetry).
+enum { kTimeExplosions, kTimeSlots, kTimeAdopt, kTimePlayer, kTimeVehicles, kTimeStandIns, kTimeTask, kTimeZone, kTimeParts };
+const char* const kTimeNames[kTimeParts] = {"explosions and sweeps", "slots", "adopt", "player", "vehicles and chunks",
+                                            "stand-ins", "render task", "zone checks"};
+double g_time_ms[kTimeParts] = {};
+uint32_t g_time_frames = 0;
+uint64_t g_time_zone_calls = 0, g_time_movers = 0;
+double g_time_next_ms = 0;
+std::unordered_map<uint32_t, Waiting> g_first_seen;  // object handle -> waiting piece
+
+std::vector<std::pair<uint32_t, uint8_t*>> g_waiting_list;  // this pass's waiting pieces (handle, render instance)
+
+// The game's object behind a waiting piece, if it is still the same live general mover; null when the game removed it.
+uint8_t* waiting_object(uint32_t handle, const uint8_t* inst) {
+    uint8_t* obj = rfg::fn<uint8_t*(__fastcall*)(void* RFG_EDX_TYPE, uint32_t)>(r::world__object_from_handle)(world() RFG_EDX_ARG,
+                                                                                                       handle);
+    if (!obj || obj[kObjType] != 2 || obj[kObjType + 1] != 0 || (obj[kObjFlags] & kObjDestroyed) ||
+        *reinterpret_cast<uint8_t**>(obj + kGmRenderInstance) != inst)
+        return nullptr;  // gone, or its handle now names another object
+    return obj;
+}
+
+void push_new_piece_by_blow(const uint8_t* body, uint32_t handle, uint32_t now_ms);  // with the melee blows below
+
+// general_mover::update_render_opacity fades a debris piece out once its body rests beyond 35 or 50 m from the camera
+// (Shard_fade_dist0_sqr, _dist1_sqr) and back in when the camera comes near. A piece handed over faded out kept its
+// render instance's opacity, and nothing fades a piece in PhysX back in: rubble a shockwave mod's blow threw that far
+// vanished. Pieces in PhysX stay visible at any distance, so the pieces still waiting in Havok do too: they fade with
+// the threshold the game gives moving debris (back in when faded, never out). Fades for deletion are unchanged.
+constexpr uint32_t kMoverPermanent = 2;  // never distance-faded by the game either
+const uint32_t& kObjRenderAlpha = layout::mover_render_alpha;  // uint16, Lparam_super_overbrighten when fully visible
+constexpr float kNoDistanceFade = 1e8f;  // the game's threshold for moving debris (squared metres)
+void(__fastcall* o_update_render_opacity)(uint8_t* RFG_EDX_TYPE) = nullptr;
+void __fastcall d_update_render_opacity(uint8_t* mover RFG_EDX_PARAM) {
+    const uint32_t mflags = *reinterpret_cast<const uint32_t*>(mover + kMoverFlags);
+    if (g_on && (mflags & kMoverLoadBalanced) && !(mflags & kMoverPermanent) &&
+        *reinterpret_cast<const int32_t*>(mover + kObjHavokHandle) != -1 && rfg::global<uint8_t>(r::Multiplayer) == 0) {
+        rfg::fn<int(__thiscall*)(uint8_t*, float, float)>(r::object_mover__handle_fading)(mover, 0.0f, kNoDistanceFade);
+        return;
+    }
+    o_update_render_opacity(mover RFG_EDX_PASS);
+}
+
+// world::object_physically_in_original_zone(object*): whether the object's position lies in the 511 m square of the
+// zone its handle belongs to. general_mover::update_pos_and_orient destroys a single-player general mover the moment
+// it leaves that square (the zone it lies in may stream out apart from its own). A piece waiting in Havok for PhysX
+// that a blow threw over a zone's border so went from the world in mid-flight: a shockwave hammer sent about 1,500 of
+// a tower's 2,000 pieces over one within 0.2 s of the hit (a Dust tower, 2026-10-28; "the structure almost
+// disappears"). Such a piece goes to PhysX at the end of the frame instead, where every piece goes with the zone it
+// lies in when that streams out. Only calls from that destroy are answered (rfg_mover and save code ask too), and
+// only for pieces adopt() takes; one that still has not gone over after kZoneKeepFrames is left to the game.
+constexpr uint32_t kZoneCheckReturn = 0x45;  // general_mover::update_pos_and_orient: after its call at +0x40
+constexpr uint32_t kZoneKeepFrames = 60;
+std::unordered_map<uint32_t, uint32_t> g_adopt_now;  // object handle -> the frame it left its zone
+uint32_t g_zone_frame = 0;
+uint64_t g_zone_kept = 0, g_zone_kept_adopted = 0, g_zone_left_to_game = 0;
+// The general movers the game deleted for leaving their zone, by why they were not kept (the log's census).
+enum { kZoneNotDebris, kZoneFading, kZoneNoInstance, kZoneNoBody, kZoneAttached, kZoneNotReady, kZoneReasons };
+uint64_t g_zone_deleted[kZoneReasons] = {};
+const void* g_zone_check_return = nullptr;
+const void* g_chunk_zone_check_return = nullptr;  // in object_mover::check_for_movement_delete
+std::atomic<uint32_t> g_chunks_kept_in_zone{0};
+bool(__fastcall* o_in_original_zone)(void* RFG_EDX_TYPE, uint8_t*) = nullptr;
+// The detour times the check (OpenRFG64's 5 s line); `caller` is the game's call site.
+bool in_original_zone(void* w RFG_EDX_PARAM, uint8_t* obj, const void* caller);
+bool __fastcall d_in_original_zone(void* w RFG_EDX_PARAM, uint8_t* obj) {
+    const int64_t t0 = session::qpc();
+    const bool in = in_original_zone(w RFG_EDX_PASS, obj, _ReturnAddress());
+    g_time_ms[kTimeZone] += session::ticks_to_ms(session::qpc() - t0);
+    ++g_time_zone_calls;
+    return in;
+}
+bool in_original_zone(void* w RFG_EDX_PARAM, uint8_t* obj, const void* caller) {
+    const bool in = o_in_original_zone(w RFG_EDX_PASS, obj);
+    // A loose chunk in the host goes where the host takes it, past a zone's edge too.
+    if (!in && obj && caller == g_chunk_zone_check_return && g_driven.count(*reinterpret_cast<const uint32_t*>(obj + kObjHandle))) {
+        g_chunks_kept_in_zone.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    if (in || !g_on || caller != g_zone_check_return || !obj) return in;
+    // Destroyed already (adopt() took it this frame; the object goes at the frame's end): the game's second destroy
+    // would do nothing (world::destroy_object skips a destroyed object), so it is not asked to.
+    if (obj[kObjFlags] & kObjDestroyed) return true;
+    // OpenRFG64: where the static world around it is in the host (world_mirror's area mode on big maps).
+    if (!pxbridge::ready() || !world_mirror::ready_at(reinterpret_cast<const float*>(obj + layout::object_pos), 16.0f)) {
+        ++g_zone_deleted[kZoneNotReady];
+        return in;
+    }
+    const uint32_t mflags = *reinterpret_cast<const uint32_t*>(obj + kMoverFlags);
+    void* const* attach = reinterpret_cast<void* const*>(obj + kObjAttach);  // three pointers
+    const bool has_instance = *reinterpret_cast<uint8_t* const*>(obj + kGmRenderInstance) != nullptr;
+    const bool has_body = *reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle) != 0xFFFFFFFFu;
+    const int why = !(mflags & kMoverLoadBalanced)         ? kZoneNotDebris
+                    : (mflags & kMoverFading)               ? kZoneFading
+                    : !has_instance                         ? kZoneNoInstance
+                    : !has_body                             ? kZoneNoBody
+                    : (attach[0] || attach[1] || attach[2]) ? kZoneAttached
+                                                            : -1;
+    if (why >= 0) {
+        ++g_zone_deleted[why];
+        return in;
+    }
+    const uint32_t handle = *reinterpret_cast<const uint32_t*>(obj + kObjHandle);
+    const auto [it, first] = g_adopt_now.try_emplace(handle, g_zone_frame);
+    if (first) {
+        ++g_zone_kept;
+    } else if (g_zone_frame - it->second > kZoneKeepFrames) {
+        g_adopt_now.erase(it);
+        ++g_zone_left_to_game;
+        return in;
+    }
+    return true;
+}
+
+void adopt() {
+    uint8_t* w = world();
+    uint8_t* const* all = *reinterpret_cast<uint8_t* const**>(w + kWorldAllObjects);
+    const uint16_t* movers = *reinterpret_cast<const uint16_t* const*>(w + kWorldGeneralMovers);
+    const int n = *reinterpret_cast<const int*>(w + kWorldGeneralMoverCount);
+    if (!all || !movers || n <= 0) return;
+    uint8_t* const* bodies = static_cast<uint8_t* const*>(rfg::addr(r::Hk_rigid_bodies));
+    const auto is_fading = rfg::fn<bool(__cdecl*)(uint8_t*)>(r::object_mover_is_fading_for_delete);
+    const auto destroy = rfg::fn<bool(__thiscall*)(void*, uint8_t*, bool)>(r::world__destroy_object);
+    uint32_t budget = kAdoptPerFrame;
+    const uint32_t now_ms = rfg::global<uint32_t>(r::Frametime_total_milliseconds);
+    ++g_zone_frame;
+    if (g_adopt_now.size() > 16384) g_adopt_now.clear();  // the game removed them otherwise
+    if (g_first_seen.size() > 65536) {  // pieces the game removed while they waited
+        for (auto it = g_first_seen.begin(); it != g_first_seen.end();)
+            it = now_ms - it->second.since_ms > 4 * g_adopt_delay_ms + 10000 ? g_first_seen.erase(it) : std::next(it);
+    }
+    const uint32_t wait_ms =
+        g_waiting > kMaxWaiting ? uint32_t(uint64_t(g_adopt_delay_ms) * kMaxWaiting / g_waiting) : g_adopt_delay_ms;
+    uint32_t waiting = 0;
+    g_waiting_list.clear();
+    g_time_movers += uint64_t(n);
+    for (int i = 0; i < n && budget && !g_free.empty(); ++i) {
+        uint8_t* obj = all[movers[i]];
+        if (!obj || (obj[kObjFlags] & kObjDestroyed)) continue;
+        const uint32_t mflags = *reinterpret_cast<const uint32_t*>(obj + kMoverFlags);
+        if (!(mflags & kMoverLoadBalanced) || (mflags & kMoverFading) || is_fading(obj)) continue;
+        uint8_t* inst = *reinterpret_cast<uint8_t**>(obj + kGmRenderInstance);
+        if (!inst) continue;
+        void* const* attach = reinterpret_cast<void* const*>(obj + kObjAttach);  // three pointers
+        if (attach[0] || attach[1] || attach[2]) continue;  // constrained or attached: stays with the game
+        const uint32_t handle = *reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle);
+        if (handle == 0xFFFFFFFFu) continue;
+        const uint8_t* body = bodies[handle];
+        if (!body) continue;
+        const uint8_t motion = body[kBodyMotionType];
+        if (motion == 0 || motion == 4 || motion == 5) continue;  // invalid, keyframed, fixed
+        const uint32_t obj_handle = *reinterpret_cast<const uint32_t*>(obj + kObjHandle);
+        // OpenRFG64: on a big map the host holds the static world only where it is wanted (world_mirror's area mode):
+        // a piece goes over once the ground and buildings around it, and where it is headed, are there. Asking for
+        // them while it waits (or is past waiting) brings them; meanwhile it stays with Havok.
+        const float* alv = reinterpret_cast<const float*>(body + kBodyLinVel);
+        const float reach = 8.0f + 0.5f * std::min(std::sqrt(alv[0] * alv[0] + alv[2] * alv[2]), 32.0f);
+        const bool area_ready = world_mirror::ready_at(hs::body_transform(body).pos, reach);
+        bool at_rest = false, waited = false;
+        if (g_adopt_delay_ms) {
+            const auto [seen, first_sight] = g_first_seen.try_emplace(obj_handle, Waiting{now_ms, 0, false});
+            Waiting& wt = seen->second;
+            if (first_sight) push_new_piece_by_blow(body, handle, now_ms);
+            const float* lv = reinterpret_cast<const float*>(body + kBodyLinVel);
+            const float* av = reinterpret_cast<const float*>(body + kBodyAngVel);
+            const bool calm = lv[0] * lv[0] + lv[1] * lv[1] + lv[2] * lv[2] < kCalmSpeed * kCalmSpeed &&
+                              av[0] * av[0] + av[1] * av[1] + av[2] * av[2] < kCalmSpin * kCalmSpin;
+            if (calm && !wt.calm) wt.calm_since_ms = now_ms;
+            wt.calm = calm;
+            const bool left_zone = !g_adopt_now.empty() && g_adopt_now.count(obj_handle);  // goes over now
+            // a world-only piece (it may become one while it waits, settling into its class) goes now, gentle: it may
+            // lie in what it broke off (PhysX shot one such through the ground)
+            const bool world_only = g_world_only_at_once &&
+                                    (*reinterpret_cast<const uint32_t*>(body + kBodyFilterInfo) & 0x7F) == kLayerWorldOnly;
+            const bool from_driven =
+                !g_driven.empty() && g_driven.count(*reinterpret_cast<const uint32_t*>(obj + kGmOriginalObject)) != 0;
+            const bool due = left_zone || world_only || from_driven || now_ms - wt.since_ms >= wait_ms;
+            if (!due || !area_ready) {
+                if (due && !wt.area_waited) {
+                    wt.area_waited = true;
+                    ++g_area_waits;
+                }
+                g_waiting_list.emplace_back(obj_handle, inst);
+                ++waiting;
+                continue;
+            }
+            at_rest = calm && now_ms - wt.calm_since_ms >= kAtRestMs;
+            waited = world_only || from_driven || now_ms - wt.since_ms >= kGentleAfterMs;
+            if (world_only) ++g_world_only_went;
+            if (from_driven) ++g_from_driven_went;
+        } else if (!area_ready) {
+            ++g_area_waits;
+            continue;
+        }
+        Parts parts;
+        if (!walk_guarded(hs::body_shape(body), parts) || parts.has_triangles || parts.parts.empty()) continue;
+        const float inv_mass = *reinterpret_cast<const float*>(body + kBodyInvMass);
+        const float mass = inv_mass > 1e-6f ? 1.0f / inv_mass : 100.0f;
+        const bool heavy = g_solid && mass >= g_push_mass;
+        const uint32_t shape = intern_shape(parts, heavy ? ipc::kShapeHeavy : 0);
+        if (!shape) break;  // the ring is full
+        const hs::Transform t = hs::body_transform(body);
+        float q[4];
+        const float c0[3] = {t.rot[0][0], t.rot[1][0], t.rot[2][0]}, c1[3] = {t.rot[0][1], t.rot[1][1], t.rot[2][1]},
+                    c2[3] = {t.rot[0][2], t.rot[1][2], t.rot[2][2]};
+        quat_from_cols(c0, c1, c2, q);
+        const float* lv = reinterpret_cast<const float*>(body + kBodyLinVel);
+        const float* av = reinterpret_cast<const float*>(body + kBodyAngVel);
+        const uint32_t slot = g_free.back();
+        if (!pxbridge::create_body(slot, shape, {t.pos[0], t.pos[1], t.pos[2]}, {q[0], q[1], q[2], q[3]},
+                                   {lv[0], lv[1], lv[2]}, {av[0], av[1], av[2]}, mass,
+                                   ipc::kBodyMass | (at_rest ? ipc::kBodyAtRest : 0u) |
+                                       (waited ? ipc::kBodyGentle : 0u)))
+            break;  // the ring is full
+        g_free.pop_back();
+        ++g_mass_hist[mass_bucket(mass)];
+        for (const float radius : parts.radii) {
+            g_radius_min = std::min(g_radius_min, radius), g_radius_max = std::max(g_radius_max, radius);
+            g_radius_sum += radius;
+            ++g_radius_n;
+        }
+        ++g_adopted_top_types[std::min<uint8_t>(hs::type_of(hs::body_shape(body)), hs::kTypeCount)];
+        // The render instance is ours now: with the pointer cleared the general_mover does not release it. Its
+        // reference on its chunk becomes the piece's too (with srid cleared world::free_object keeps it): without it
+        // the chunk unloaded once the building's zone streamed out, the pieces drawing from freed memory (the first
+        // campaign session: stretched triangles at a distance, then a crash in rl_scene_renderer::render).
+        if (*reinterpret_cast<const uint16_t*>(obj + kObjRenderAlpha) <
+            uint16_t(rfg::global<uint32_t>(r::Lparam_super_overbrighten)))
+            ++g_adopted_faded;
+        const uint32_t srid = *reinterpret_cast<const uint32_t*>(obj + kObjSrid);
+        const bool holds = srid && (obj[kObjStreamFlags] & kObjStreamHeld);
+        if (holds) *reinterpret_cast<uint32_t*>(obj + kObjSrid) = 0;
+        const uint32_t chunk_uid = *reinterpret_cast<const uint32_t*>(obj + kMoverChunkUid);
+        const uint32_t original = *reinterpret_cast<const uint32_t*>(obj + kGmOriginalObject);
+        *reinterpret_cast<uint8_t**>(obj + kGmRenderInstance) = nullptr;
+        // Its collision shape outlives its body: the piece's stand-ins use it (a convex vertices shape owns its
+        // data; any other kind is left alone, and its stand-ins are boxes).
+        const uint8_t* own_shape = hs::body_shape(body);
+        if (own_shape && hs::type_of(own_shape) == hs::kConvexVertices)
+            rfg::fn<void(__thiscall*)(const void*)>(r::hkReferencedObject__addReference)(own_shape);
+        else
+            own_shape = nullptr;
+        destroy(w, obj, false);
+        if (g_adopt_delay_ms) {
+            g_first_seen.erase(obj_handle);
+            ++(at_rest ? g_went_at_rest : g_went_moving);
+        }
+        if (!g_adopt_now.empty() && g_adopt_now.erase(obj_handle)) ++g_zone_kept_adopted;
+        Piece& p = g_pieces[slot];
+        p = Piece{};
+        p.inst = inst;
+        p.fresh = 1;
+        p.born_ms = session::since_start_ms();
+        p.srid = holds ? srid : 0;
+        if (p.srid) {
+            uint32_t& sharing = g_srid_pieces[p.srid];
+            if (sharing++) g_refs_to_release.push_back(p.srid);  // the container is held already
+            g_srid_peak = std::max(g_srid_peak, sharing);
+        }
+        p.chunk_uid = chunk_uid;
+        p.original = original;
+        if (chunk_uid != kNoChunk) ++g_chunk_pieces[chunk_uid];
+        ++(holds ? g_refs_taken : g_refs_missing);
+        if (g_drop_meshes) {
+            AcquireSRWLockExclusive(&g_piece_set_lock);
+            g_piece_set.insert(inst);
+            ReleaseSRWLockExclusive(&g_piece_set_lock);
+            // The compile the game asked for when the piece split off makes a mesh that would only be given back:
+            // aborted at its next stop (or given back as before if it is done first). A mesh it already has goes in
+            // the next render task, where the batchable bit is set again too.
+            cancel_compile(inst);
+        }
+        queue_instance_fix(inst);
+        if (slot < g_seen_state.size()) g_seen_state[slot] = 0;
+        p.heavy = heavy ? 1 : 0;
+        p.shape = own_shape;
+        p.mass = mass;
+        p.physical_material = uint8_t(body_property(body, 3));
+        p.effect_material = uint8_t(body_property(body, 4));
+        bounds(parts, p);
+        g_largest_radius = std::max(g_largest_radius, std::min(p.radius, 50.0f));
+        ++g_stats.adopted;
+        ++g_total_adopted;
+        --budget;
+    }
+    g_waiting = waiting;
+    g_waiting_peak = std::max(g_waiting_peak, waiting);
+}
+
+// ---- per frame ----
+
+// Render task (below): the sim/render handshake, the render thread waiting.
+uint32_t g_unpiles_left = 0;  // this frame's budget (piles)
+// The render task's parts over the level (it adds to the frame): total and longest per frame, and their time in the
+// frames where the whole task took over 1 ms.
+struct TaskPart {
+    double total = 0, longest = 0, in_slow = 0;
+};
+enum { kTaskMoves, kTaskSplits, kTaskPiles, kTaskRest, kTaskParts };
+TaskPart g_task[kTaskParts];
+uint64_t g_task_frames = 0, g_task_slow = 0;
+double g_split_ms = 0;  // this frame's time in unpile()
+void note_task_frame(const double (&ms)[kTaskParts]) {
+    double sum = 0;
+    for (double v : ms) sum += v;
+    ++g_task_frames;
+    const bool slow = sum > 1.0;
+    g_task_slow += slow;
+    for (int k = 0; k < kTaskParts; ++k) {
+        g_task[k].total += ms[k];
+        g_task[k].longest = std::max(g_task[k].longest, ms[k]);
+        if (slow) g_task[k].in_slow += ms[k];
+    }
+}
+bool unpile(uint32_t slot, const ipc::BodyPose& b, double now_ms);  // piles
+bool moved_from_pile(const Piece& p, const ipc::BodyPose& b);       // piles
+extern bool g_piles_on;                                             // piles
+
+// Render task, first: the pieces' instances whose compiled mesh arrived (or that were just taken over) give it back
+// and are drawn batched again (Experiment.PhysXDebrisDropMeshes, PhysXDebrisBatch). A queued instance that is no
+// piece's any more (given up, or a pile's) is left alone.
+void fix_piece_instances() {
+    static std::vector<uint8_t*> work;
+    AcquireSRWLockExclusive(&g_fix_lock);
+    work.swap(g_fix_queue);
+    ReleaseSRWLockExclusive(&g_fix_lock);
+    if (work.empty()) return;
+    const auto delete_mesh = rfg::fn<void(__cdecl*)(void*)>(r::rl_delete_mesh_recompile_data);
+    size_t done = 0, drops = 0;
+    for (; done < work.size() && drops < kDropPerFrame; ++done) {
+        uint8_t* inst = work[done];
+        AcquireSRWLockShared(&g_piece_set_lock);
+        const bool piece = g_piece_set.count(inst) != 0;
+        ReleaseSRWLockShared(&g_piece_set_lock);
+        if (!piece) continue;
+        void*& mesh = *reinterpret_cast<void**>(inst + kInstRecompileData);
+        if (g_drop_meshes && mesh) {
+            delete_mesh(mesh);
+            mesh = nullptr;
+            ++drops;
+            ++g_meshes_dropped;
+        }
+        uint16_t& flags = *reinterpret_cast<uint16_t*>(inst + kInstFlags);
+        if (g_batch && !(flags & kInstBatchable)) {
+            flags |= kInstBatchable;
+            ++g_batch_restored;
+        }
+    }
+    if (done < work.size()) {  // the game's delete queue takes a few hundred a frame: the rest next frame
+        AcquireSRWLockExclusive(&g_fix_lock);
+        g_fix_queue.insert(g_fix_queue.begin(), work.begin() + done, work.end());
+        ReleaseSRWLockExclusive(&g_fix_lock);
+    }
+    work.clear();
+}
+
+void queue_instance_fix(uint8_t* inst) {
+    AcquireSRWLockExclusive(&g_fix_lock);
+    g_fix_queue.push_back(inst);
+    ReleaseSRWLockExclusive(&g_fix_lock);
+}
+
+// rl_destroyable_model_instance::set_compiled_cache_data(rl_mesh_recompile_data*, rl_mesh_recompile_parameters*): a
+// compiled mesh arrives (rl_mesh_recompile_finalize); it returns the one it replaces.
+void*(__fastcall* o_set_compiled)(uint8_t* RFG_EDX_TYPE, void*, void*) = nullptr;
+void* __fastcall d_set_compiled(uint8_t* inst RFG_EDX_PARAM, void* data, void* params) {
+    void* old = o_set_compiled(inst RFG_EDX_PASS, data, params);
+    AcquireSRWLockShared(&g_piece_set_lock);
+    const bool piece = g_piece_set.count(inst) != 0;
+    ReleaseSRWLockShared(&g_piece_set_lock);
+    if (piece) queue_instance_fix(inst);
+    return old;
+}
+
+// Where a moving body is drawn: between the host's last two poses, this far along. Over its period alone (16.7 ms) they
+// finished in time and stood still until the next pose when the host took 30 ms a step: the whole scene stuttered.
+float pose_alpha(const ipc::SnapshotHeader* s) {
+    const float alpha = float(session::ticks_to_ms(session::qpc() - s->publish_qpc)) / pxbridge::step_period_ms();
+    return alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+}
+
+void pose_between(const ipc::BodyPose& b, float alpha, float pos[3], float q[4]) {
+    pos[0] = b.prev_pos.x + (b.pos.x - b.prev_pos.x) * alpha;
+    pos[1] = b.prev_pos.y + (b.pos.y - b.prev_pos.y) * alpha;
+    pos[2] = b.prev_pos.z + (b.pos.z - b.prev_pos.z) * alpha;
+    ipc::Quat a = b.prev_rot, c = b.rot;
+    if (a.x * c.x + a.y * c.y + a.z * c.z + a.w * c.w < 0) c = {-c.x, -c.y, -c.z, -c.w};
+    q[0] = a.x + (c.x - a.x) * alpha, q[1] = a.y + (c.y - a.y) * alpha, q[2] = a.z + (c.z - a.z) * alpha,
+    q[3] = a.w + (c.w - a.w) * alpha;
+    const float inv = 1.0f / std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    for (int k = 0; k < 4; ++k) q[k] *= inv;
+}
+
+// One slot that moves or changed state since the render task last acted on it.
+void move_piece(uint32_t i, uint8_t state, const ipc::BodyPose& b, float alpha, double now_ms) {
+    g_seen_state[i] = state;
+    Piece& p = g_pieces[i];
+    if (!p.inst || i == g_player_slot) return;
+    p.fresh = 0;
+    g_spatial[i] = (state & ipc::kPoseAlive) ? Spatial{b.pos.x, b.pos.y, b.pos.z, p.radius} : Spatial{0, 0, 0, -1.0f};
+    // Still: frozen by the host, or asleep in PhysX (a third of a levelled map's pieces fell asleep before the host
+    // froze them, and stayed out of the piles). Either wakes when something touches it.
+    const bool still = (state & ipc::kPoseAlive) && !(state & ipc::kPoseAwake);
+    if (!still) {
+        p.frozen_since_ms = 0;
+    } else {
+        if (!p.frozen_since_ms) p.frozen_since_ms = now_ms;
+        if (g_piles_on && p.pile == kNoPile && !p.candidate) {
+            p.candidate = 1;
+            g_pile_candidates.insert(i);
+        }
+    }
+    if (p.pile != kNoPile) {  // its pile draws it; once PhysX moved it, it goes on its own again
+        if (!still && moved_from_pile(p, b)) {
+            const int64_t t0 = session::qpc();
+            if (g_unpiles_left && unpile(i, b, now_ms))
+                --g_unpiles_left;
+            else
+                g_seen_state[i] = 0;  // looked at again next frame
+            g_split_ms += session::ticks_to_ms(session::qpc() - t0);
+        }
+        return;
+    }
+    if (!(state & ipc::kPoseAlive)) return;  // not created yet in the host
+    const bool awake = (state & ipc::kPoseAwake) != 0;
+    if (!awake && !p.settle) return;  // at rest and already placed there
+    float pos[3], q[4];
+    if (awake) {
+        pose_between(b, alpha, pos, q);
+    } else {
+        pos[0] = b.pos.x, pos[1] = b.pos.y, pos[2] = b.pos.z;
+        q[0] = b.rot.x, q[1] = b.rot.y, q[2] = b.rot.z, q[3] = b.rot.w;
+    }
+    p.settle = awake ? 1 : 0;
+    if (b.pos.y < kLowY && b.prev_pos.y >= kLowY && g_low_logged < kLowLogged &&
+        std::find(g_low_slots, g_low_slots + g_low_logged, i) == g_low_slots + g_low_logged) {
+        g_low_slots[g_low_logged++] = i;
+        LOG("debris offload: piece %u went below %.0f m at (%.1f, %.1f, %.1f), from (%.1f, %.1f, %.1f) a step before", i,
+            double(kLowY), double(b.pos.x), double(b.pos.y), double(b.pos.z), double(b.prev_pos.x),
+            double(b.prev_pos.y), double(b.prev_pos.z));
+    }
+    if (pos[1] < kFloorY) {
+        give_up(i, true);
+        ++g_fell;
+        return;
+    }
+    if (move_instance_if_moved(p.inst, pos, q)) ++g_stats.moved;
+}
+
+// The slots to look at: awake in the host, or a state other than the one last acted on; 16 a step (SSE2).
+void move_pieces() {
+    bool fresh = false;
+    const ipc::SnapshotHeader* s = pxbridge::snapshot(&fresh);
+    if (!s) return;
+    const ipc::BodyPose* poses = pxbridge::poses(s);
+    const uint8_t* states = pxbridge::states(s);
+    const uint32_t slots = std::min<uint32_t>(s->slots, g_slots);
+    if (g_seen_state.size() < size_t(g_slots) + 16) g_seen_state.resize(size_t(g_slots) + 16, 0);
+    if (g_spatial.size() < g_slots) g_spatial.resize(g_slots, Spatial{0, 0, 0, -1.0f});
+    const float alpha = pose_alpha(s);
+    const double now_ms = session::since_start_ms();
+    const __m128i awake = _mm_set1_epi8(char(ipc::kPoseAwake));
+    for (uint32_t first = 0; first < slots; first += 16) {
+        // The state bytes past `slots` are within the snapshot (max_bodies is a multiple of 16) but not looked at.
+        const __m128i now = _mm_loadu_si128(reinterpret_cast<const __m128i*>(states + first));
+        const __m128i seen = _mm_loadu_si128(reinterpret_cast<const __m128i*>(g_seen_state.data() + first));
+        uint32_t mask = (~uint32_t(_mm_movemask_epi8(_mm_cmpeq_epi8(now, seen))) |
+                         uint32_t(_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_and_si128(now, awake), awake)))) &
+                        0xFFFFu;
+        if (slots - first < 16) mask &= (1u << (slots - first)) - 1;
+        while (mask) {
+            unsigned long bit;
+            _BitScanForward(&bit, mask);
+            mask &= mask - 1;
+            const uint32_t i = first + bit;
+            move_piece(i, states[i], poses[i], alpha, now_ms);
+        }
+    }
+}
+
+// Render task: the pieces still waiting in Havok give back their compiled meshes and are drawn batched, as the pieces
+// are. The game owns their instances, so each is looked up again first (the game may have removed it since adopt()).
+void batch_waiting() {
+    if (!g_batch) return;
+    const auto delete_mesh = rfg::fn<void(__cdecl*)(void*)>(r::rl_delete_mesh_recompile_data);
+    uint32_t drops = 0;
+    for (const auto& [handle, inst] : g_waiting_list) {
+        if (!waiting_object(handle, inst)) continue;
+        if (g_drop_meshes && drops < kDropPerFrame) {
+            void*& mesh = *reinterpret_cast<void**>(inst + kInstRecompileData);
+            if (mesh) {
+                delete_mesh(mesh);
+                mesh = nullptr;
+                ++drops;
+                ++g_meshes_dropped;
+            }
+        }
+        uint16_t& flags = *reinterpret_cast<uint16_t*>(inst + kInstFlags);
+        if (!(flags & kInstBatchable)) {
+            flags |= kInstBatchable;
+            ++g_batch_restored;
+        }
+    }
+}
+
+constexpr float kPlayerJump = 3.0f;  // m in one frame: a teleport, not a move
+
+void player_proxy() {
+    uint8_t* player = rfg::fn<uint8_t*(__cdecl*)()>(r::player_get_local_player)();
+    if (!player) return;
+    const float* p = reinterpret_cast<const float*>(player + layout::object_pos);
+    const ipc::Vec3 centre{p[0], p[1] + 0.9f, p[2]};
+    if (!g_player_ready) {
+        // A capsule as a hull: two rings of 12 points, 0.35 m radius, 1.1 m apart, plus the poles.
+        std::vector<ipc::Vec3> v;
+        for (int ring = 0; ring < 2; ++ring)
+            for (int s = 0; s < 12; ++s) {
+                const float a = 6.2831853f * float(s) / 12.0f;
+                v.push_back({0.35f * std::cos(a), ring ? 0.55f : -0.55f, 0.35f * std::sin(a)});
+            }
+        v.push_back({0, 0.9f, 0});
+        v.push_back({0, -0.9f, 0});
+        if (!send_part(kPlayerShape, 0, v, g_solid ? ipc::kShapePlayer : 0)) return;
+        if (!pxbridge::create_body(g_player_slot, kPlayerShape, centre, {0, 0, 0, 1}, {0, 0, 0}, {0, 0, 0}, 90.0f,
+                                   ipc::kBodyKinematic | ipc::kBodyMass))
+            return;
+        g_pieces[g_player_slot].inst = nullptr;
+        g_player_ready = true;
+        return;
+    }
+    // A jump (a respawn, getting into or out of a vehicle) is a teleport: swept through a pile, the capsule flung
+    // the pieces it passed at the speed of the jump.
+    static ipc::Vec3 last{};
+    const float dx = centre.x - last.x, dy = centre.y - last.y, dz = centre.z - last.z;
+    ipc::KinematicTarget c{};
+    c.h = {uint16_t(ipc::Cmd::KinematicTarget), 0, sizeof(c)};
+    c.slot = g_player_slot;
+    c.flags = dx * dx + dy * dy + dz * dz > kPlayerJump * kPlayerJump ? ipc::kTargetTeleport : 0u;
+    c.pos = centre;
+    c.rot = {0, 0, 0, 1};
+    if (pxbridge::send_record(&c, sizeof(c))) last = centre;
+}
+
+// ---- vehicles and walkers in the pile ----
+
+// The Havok bodies of vehicles (a walker is several: its hull, legs and arms) have kinematic stand-ins in the host
+// that follow them every frame, push the pieces out of their way and wake the frozen ones ahead of them
+// (ipc::kBodyPusher). Before, vehicles and walkers went through piles as if nothing was there. One way only: the
+// vehicles do not feel the pieces, so a car ploughs through rubble instead of riding over it. Loose chunks of
+// buildings (rfg movers come loose, the clusters that break up further when shot) push the pieces the same way: they
+// stay in Havok, where the pieces are not.
+constexpr uint32_t kVehicleSlots = 2048;      // host slots below the player's: vehicles and loose chunks
+constexpr uint32_t kSlotsKeptFree = 64;       // a chunk parked to make room comes back with more than this many free
+constexpr float kVehicleRange = 200.0f;       // m from the player
+// Loose chunks come into the host from this far while they are awake in Havok, and from kChunkBackRange asleep. Left in Havok
+// awake, a building's top came to lie on chunks keyframed to the host, which to Havok weigh infinitely much: thrown off at up
+// to 78 m/s, 1,900 t of it over the end of the map (research/docs/08 §15). Once at rest over
+// kChunkParkRange from the player they are parked: no body in the host, their Havok body keyframed and still where it lies.
+// Handed back to Havok's physics as they used to be, they sank through the piles, which Havok does not see (research/docs/08
+// §15); kept in the host for good, a long match had a thousand of them, and the solver's buffers killed the host.
+constexpr float kChunkRange = 400.0f, kChunkBackRange = 110.0f, kChunkParkRange = 150.0f;
+constexpr float kChunkAreaM = 24.0f;  // OpenRFG64: around a chunk, the static world that must be in the host first
+constexpr double kVehicleScanMs = 250.0, kVehicleScanSoonMs = 50.0;  // with a chunk just made, to have it out of Havok
+constexpr float kVehicleJump = 4.0f;          // m in one frame: a teleport (a spawn, a reset), not a move
+constexpr size_t kProxyMaxParts = 256;        // a body of more convex parts is left out (a large part of a building)
+constexpr int8_t kObjTypeMover = 2, kSubTypeMoverRfg = 1;  // OT_MOVER, OT_SUB_MOVER_RFG
+constexpr int8_t kObjTypeVehicle = 3;         // OT_VEHICLE (walkers too)
+const uint32_t& kEntityWorld = layout::hk_world_object_world;        // hkpWorldObject::m_world: null once the body left the world
+const uint32_t& kDestroyableExisting = layout::destroyable_existing_children;  // rfg_destroyable_shape::num_existing_child_shapes
+uint32_t g_vehicle_first = 0;                 // first of the proxy slots
+
+// A tracked body holds a reference of ours, so its memory stays valid until we let go of it, whatever the game does.
+void body_add_ref(const uint8_t* body) { rfg::fn<void(__thiscall*)(const void*)>(r::hkReferencedObject__addReference)(body); }
+void body_release(const uint8_t* body) { rfg::fn<void(__thiscall*)(const void*)>(r::hkReferencedObject__removeReference)(body); }
+
+struct VehicleProxy {
+    const uint8_t* body;  // referenced
+    uint32_t slot;
+    uint32_t signature;  // a chunk's shape: 1 + its pieces (it loses some when shot: the proxy is made again)
+    float pos[3], q[4];
+    bool seen;
+    bool chunk;
+    float travelled;     // m since the last diagnostics log (Telemetry.Enabled)
+    uint32_t targets;    // moves sent since then
+    // Telemetry.Enabled: how its shape moved. A chunk's origin can be metres from the chunk (its building's), so the
+    // origin's path says little; the middle of its shape's bounds says more.
+    float mid[3] = {}, half = 0;                // in its own frame; half the bounds' diagonal
+    float mid_from[3] = {}, mid_last[3] = {};   // in the world: at the last log, at its last move
+    float mid_path = 0, turned = 0;             // m, degrees since the last log, move by move
+    uint32_t turned_back = 0;                   // moves that turned it back against the one before
+    float turn_axis[3] = {};
+    float top_speed = 0, top_spin = 0;          // Havok's velocities at its moves, the largest
+    // Experiment.PhysXChunks: a loose chunk simulated in the host, its Havok body keyframed to follow it.
+    bool driven = false;
+    uint32_t handle = 0xFFFFFFFFu;  // its Havok body's handle
+    uint32_t obj_handle = 0;        // its object's
+    uint8_t motion = 0;             // its Havok motion type before (given back when it leaves the host)
+    uint32_t parts = 0;             // its convex parts in the host
+    float mass = 0;                 // kg, as the game counts it
+    std::vector<uint32_t> part_keys;  // each part's shape key in its destroyable (ContactEvent::part -> subpiece)
+    std::vector<uint8_t> part_state;  // each part: kPartInBody, or kPartGone once the game has broken it off
+    int32_t keys_missing = 0;         // subpieces its shape counts that gave no part (no usable hull)
+    double posed_at = 0;              // ms: when it was made, then its last pose from the host
+    // Until the host's first pose of it moving, it flies on from where and how it was made (fly_on).
+    bool flying = false;
+    double born_ms = 0;
+    float born_mid[3] = {}, born_q[4] = {}, born_lv[3] = {}, born_av[3] = {};
+    uint8_t still_frames = 0;         // frames the host has had it at rest: past a few its keyframes stop
+    uint32_t made_in_scan = 0;
+    double crack_energy = 0;          // J banked to crack it, of what it lost as its parts broke
+    double crack_seen_cost = 0;       // J: the least any section would take, when it last looked
+    double crack_next_ms = 0;
+    float crack_at[3] = {};           // the last hit, in its frame
+    float crack_normal[3] = {};       // and its direction
+    float support_lo[3] = {};         // the box of what it bears on, in its frame
+    float support_hi[3] = {};
+    double snap_next_ms = 0;
+    // This frame's keyframe (apply_chunk_keyframes): where its middle was when it went out, and the frame's length it
+    // was given. For a body found far from its target after Havok's step (put_back).
+    bool kf_sent = false;
+    float kf_from[3] = {};
+    float kf_dt = 0;
+};
+std::vector<VehicleProxy> g_vehicles;
+std::vector<uint32_t> g_vehicle_free;
+
+// Experiment.PhysXChunkTrace: chunk_trace.csv. N: into the host, A: its shape changed and it is made again, G: gone from
+// Havok's world, R: past the range, I: out of Havok's islands within it; with frames on, F: a pose, H: held without one.
+FILE* g_chunk_trace = nullptr;
+bool g_chunk_trace_frames = false;
+void trace_chunk(char kind, const VehicleProxy& v);
+void point_of(const float pos[3], const float q[4], const float p[3], float out[3]);
+std::unordered_map<const uint8_t*, uint32_t> g_vehicle_of_body;  // its place in g_vehicles
+struct ParkedChunk {
+    uint32_t signature;   // its shape's, to see the game break it
+    uint32_t handle;      // its Havok body's
+    uint32_t obj_handle;
+    uint8_t motion;       // its Havok motion type before it was driven
+    float mid[3];         // where it lies
+};
+std::unordered_map<const uint8_t*, ParkedChunk> g_parked;  // by Havok body, referenced
+uint32_t g_chunks_parked = 0, g_chunks_unparked = 0;
+uint32_t g_chunks_no_driver_peak = 0;  // chunks keyframed with no driver in the host, at most at once: the game's own, or a leak
+// How driven chunks ended, and with how many parts, at the level's end.
+enum ChunkEnd { kEndGone, kEndRange, kEndIslands, kEndCount };
+uint32_t g_chunk_ends[kEndCount] = {}, g_chunk_end_parts[kEndCount] = {};
+uint32_t g_chunk_ends_logged = 0;
+void note_chunk_end(ChunkEnd end, const VehicleProxy& v, const float* player);
+uint8_t* object_of_handle(uint32_t handle);
+std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> g_chunks_gone_by;  // the function that destroyed them (0: none did): how many, parts
+
+// ---- loose chunks in PhysX (Experiment.PhysXChunks, research/docs/08, C1) ----
+
+// A loose chunk is a dynamic body in the host, with its Havok mass and velocities, and its Havok body, keyframed,
+// follows it (havok_body_apply_hard_keyframe every frame): the game draws it, the player stands on it and weapons hit
+// it where PhysX has it. It lands on the pieces, collides with the other chunks and is pushed by what the game pushes
+// it with (d_impulse passes those on). Its destruction contacts in Havok are held back (d_add_contact): keyframed, it
+// would break against the player and the pieces still in Havok as an infinitely heavy body. In C1 nothing breaks it on
+// impact; weapons still do.
+bool g_chunks_in_physx = false;
+float g_chunk_break_kn = 0;     // Experiment.PhysXChunkBreakKN
+float break_energy_of(const uint8_t* body, uint32_t key);
+float break_strength_of(const uint8_t* body, uint32_t key);
+constexpr uint8_t kChunkMotionKeyframed = 4;     // hkpMotion::MOTION_KEYFRAMED
+constexpr uint8_t kChunkMotionFixed = 5;         // hkpMotion::MOTION_FIXED
+constexpr float kChunkFlySpeed = 0.5f;           // m/s: a chunk slower than this just waits for its first pose
+constexpr double kChunkFlyMs = 150.0;            // and no chunk flies on longer than this
+const uint32_t& kDestroyableMass = layout::destroyable_mass;      // rfg_destroyable_shape::mass
+constexpr uint32_t kChunkShapeBase = 0xC0000000u; // host shape ids of chunks: one per proxy slot, made anew each time
+constexpr size_t kChunkMaxParts = 20000;          // the largest types have about 13,000 pieces
+std::vector<std::pair<uint32_t, uint8_t>> g_motion_restores;  // Havok handle, motion type: after the scan
+std::vector<uint32_t> g_keyframe_now;  // Havok handles of chunks newly driven: keyframed after the scan
+struct ChunkImpulse {
+    uint32_t handle;
+    float j[3];
+};
+std::vector<ChunkImpulse> g_chunk_impulses_queued;  // the game's pushes on driven chunks, sent at the end of the frame
+SRWLOCK g_chunk_impulse_lock = SRWLOCK_INIT;
+uint32_t g_chunks_driven = 0, g_chunks_too_large = 0, g_chunk_motion_fixed = 0;
+uint32_t g_chunks_waited_for_mirror = 0, g_chunks_held = 0, g_chunks_given_back = 0, g_chunk_frames_flown = 0;
+float g_follow_peak = 0;   // m: a chunk's middle from its target after a Havok step, the most this level
+uint32_t g_follow_far = 0;  // chunk-frames over 1 m off
+uint32_t g_chunk_parts_last = 0;    // chunk_shape's parts, for its caller
+std::vector<uint32_t> g_chunk_keys_last;  // and their shape keys
+uint32_t g_chunks_in_havok = 0;     // loose chunks within reach left in Havok at the last scan
+float g_follow_max = 0;             // m: a driven chunk's Havok body from where it was sent, the most since asked
+uint32_t g_chunks_logged = 0;
+uint64_t g_chunk_parts_sent = 0, g_chunk_impulses_sent = 0;
+std::atomic<uint32_t> g_chunk_contacts_held{0};
+
+// A transform's rotation as a quaternion, if it is one (no scale, shear or mirroring to lose).
+bool rotation_of(const hs::Transform& t, float q[4]) {
+    const auto& m = t.rot;
+    for (int a = 0; a < 3; ++a)
+        for (int b = a; b < 3; ++b) {
+            const float d = m[0][a] * m[0][b] + m[1][a] * m[1][b] + m[2][a] * m[2][b];
+            if (std::fabs(d - (a == b ? 1.0f : 0.0f)) > 1e-4f) return false;
+        }
+    const float det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+                      m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                      m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    if (det <= 0.0f) return false;
+    const float c0[3] = {m[0][0], m[1][0], m[2][0]}, c1[3] = {m[0][1], m[1][1], m[2][1]},
+                c2[3] = {m[0][2], m[1][2], m[2][2]};
+    quat_from_cols(c0, c1, c2, q);
+    return true;
+}
+
+// A chunk's parts for the host: each in its own frame, placed in the body's frame. They are building pieces, whose
+// hulls the host cooked for the static world already: it finds them by their points (ipc::ShapePartPlaced).
+struct PlacedParts : hs::Sink {
+    struct Part {
+        std::vector<ipc::Vec3> v;
+        float radius;
+        ipc::Vec3 pos;
+        ipc::Quat rot;
+        float reach;  // the farthest point from pos
+        uint32_t key; // its shape key in the chunk's destroyable (the subpiece an impact on it hits)
+    };
+    std::vector<Part> parts;
+    size_t used = 0;     // parts filled this time (the vectors keep their room between chunks)
+    bool other = false;  // triangles or a height field: not a body of convex pieces
+    Part& next() {
+        if (used == parts.size()) parts.emplace_back();
+        return parts[used++];
+    }
+    void fill(Part& p, const float (*v)[3], int n, float radius, const float pos[3], const float q[4], uint32_t key) {
+        p.key = key;
+        p.v.resize(size_t(std::min(n, 255)));
+        p.reach = 0;
+        for (size_t i = 0; i < p.v.size(); ++i) {
+            p.v[i] = {v[i][0], v[i][1], v[i][2]};
+            p.reach = std::max(p.reach, std::sqrt(v[i][0] * v[i][0] + v[i][1] * v[i][1] + v[i][2] * v[i][2]));
+        }
+        p.reach += radius;
+        p.radius = radius;
+        p.pos = {pos[0], pos[1], pos[2]};
+        p.rot = {q[0], q[1], q[2], q[3]};
+    }
+    void triangle(const float*, const float*, const float*) override { other = true; }
+    void convex(const float (*v)[3], int n, float radius, uint32_t key) override {  // a scaled or mirrored part, as it is
+        if (n < 3) return;
+        const float zero[3] = {0, 0, 0}, unit[4] = {0, 0, 0, 1};
+        fill(next(), v, n, radius, zero, unit, key);
+    }
+    void convex_placed(const float (*local)[3], int n, float radius, const hs::Transform& t, uint32_t key) override {
+        float q[4];
+        if (!rotation_of(t, q)) return hs::Sink::convex_placed(local, n, radius, t, key);
+        if (n < 3) return;
+        fill(next(), local, n, radius, t.pos, q, key);
+    }
+    void height_field(const uint8_t*, const hs::Transform&) override { other = true; }
+    void unsupported(uint8_t) override { other = true; }
+};
+
+bool walk_sink_guarded(const uint8_t* shape, hs::Sink& s) {
+    __try {
+        return hs::walk(shape, hs::Transform::identity(), s);
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return false;
+    }
+}
+
+// The chunk's parts sent as host shape kChunkShapeBase | slot: part 0 drops what that shape held before. Returns the
+// shape, or 0: none, too large, or no room in the ring for all of it now (the next scan tries again).
+uint32_t chunk_shape(const uint8_t* body, uint32_t slot, float mid[3], float& half) {
+    static PlacedParts p;
+    p.used = 0;
+    p.other = false;
+    if (!walk_sink_guarded(hs::body_shape(body), p) || p.other || !p.used) return 0;
+    if (p.used > kChunkMaxParts) {
+        ++g_chunks_too_large;
+        return 0;
+    }
+    size_t bytes = 0;
+    for (size_t i = 0; i < p.used; ++i) bytes += sizeof(ipc::ShapePartPlaced) + p.parts[i].v.size() * sizeof(ipc::Vec3) + 8;
+    if (pxbridge::ring_free() < bytes + (1u << 20)) return 0;  // all of it at once, with room to spare
+    const uint32_t id = kChunkShapeBase | slot;
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    static std::vector<uint8_t> buf;
+    for (size_t i = 0; i < p.used; ++i) {
+        const PlacedParts::Part& part = p.parts[i];
+        const float c[3] = {part.pos.x, part.pos.y, part.pos.z};
+        for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], c[k] - part.reach), hi[k] = std::max(hi[k], c[k] + part.reach);
+        buf.assign((sizeof(ipc::ShapePartPlaced) + part.v.size() * sizeof(ipc::Vec3) + 7) & ~size_t(7), 0);
+        auto* rec = reinterpret_cast<ipc::ShapePartPlaced*>(buf.data());
+        rec->h = {uint16_t(ipc::Cmd::ShapePartPlaced), 0, uint32_t(buf.size())};
+        rec->shape = id;
+        rec->part = uint32_t(i);
+        rec->vertex_count = uint32_t(part.v.size());
+        // The player stands on it in Havok, so the player's capsule here does not push it; its contacts are reported.
+        rec->flags = ipc::kShapeHeavy | ipc::kShapeChunk;
+        rec->radius = part.radius;
+        rec->pos = part.pos;
+        rec->rot = part.rot;
+        rec->break_energy = break_energy_of(body, part.key);
+        rec->break_strength = break_strength_of(body, part.key);
+        memcpy(rec + 1, part.v.data(), part.v.size() * sizeof(ipc::Vec3));
+        if (!pxbridge::send_record(buf.data(), uint32_t(buf.size()))) return 0;
+    }
+    g_chunk_parts_sent += p.used;
+    g_chunk_parts_last = uint32_t(p.used);
+    g_chunk_keys_last.resize(p.used);
+    for (size_t i = 0; i < p.used; ++i) g_chunk_keys_last[i] = p.parts[i].key;
+    for (int k = 0; k < 3; ++k) mid[k] = 0.5f * (lo[k] + hi[k]);
+    half = 0.5f * std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) + (hi[1] - lo[1]) * (hi[1] - lo[1]) +
+                            (hi[2] - lo[2]) * (hi[2] - lo[2]));
+    return id;
+}
+
+// A chunk's mass as the game counts it (rfg_destroyable_shape::mass, what its collision energy uses). Havok's is
+// infinite once the body is keyframed.
+float chunk_mass(const uint8_t* body) {
+    const uint8_t* shape = hs::body_shape(body);
+    if (shape &&
+        *reinterpret_cast<const uintptr_t*>(shape) == uintptr_t(rfg::addr(r::rfg_destroyable_shape_bvtree_vftable))) {
+        const float m = *reinterpret_cast<const float*>(shape + kDestroyableMass);
+        if (m > 0.0f && std::isfinite(m)) return m;
+    }
+    const float m = rfg::fn<float(__cdecl*)(const void*)>(r::havok_body_get_mass)(body);
+    return m > 0.0f && std::isfinite(m) ? m : 1000.0f;
+}
+
+// The game deletes whatever enters the world's border: Havok's broad phase limits and, in Wrecking Crew, a kill volume
+// over the whole map from 10 m under the lowest terrain (request_aabb_phantom, game_aabb_phantom::addOverlappingCollidable).
+// A chunk in the host, crushed from below, sinks as it loses its parts, while its bounds go on holding what it was: its
+// bounds reached the volume with the rest of it well above the ground, and hundreds of parts were gone in a frame
+// (research/docs/08 §15). The host keeps a chunk on the ground; it has no need of this.
+const uint32_t& kDestroyableBmin = layout::destroyable_bmin;      // rfg_destroyable_shape::local_bmin, then local_bmax
+void(__cdecl* o_delete_outside)(uint8_t*) = nullptr;
+std::atomic<uint32_t> g_chunks_kept_inside{0}, g_chunks_kept_logged{0};
+uint32_t g_chunk_kept_handles[16];
+void __cdecl d_delete_outside(uint8_t* obj) {
+    if (obj && !g_driven.empty() && g_driven.count(*reinterpret_cast<const uint32_t*>(obj + kObjHandle))) {
+        const uint32_t n = g_chunks_kept_inside.fetch_add(1, std::memory_order_relaxed);
+        if (n < 16) g_chunk_kept_handles[n] = *reinterpret_cast<const uint32_t*>(obj + kObjHandle);
+        return;
+    }
+    o_delete_outside(obj);
+}
+
+// What a chunk comes to the host with: its Havok velocities, short of what only Havok's solver can give. A blast does not throw
+// a heavy chunk fast and nothing falls faster than the buildings are tall; lying on a body keyframed to the host, a 772 t
+// chunk went at 49 m/s (research/docs/08 §15). A new chunk has up to some 200 ms loose in Havok before a scan finds it, inside what
+// it broke from and what that lay on, all infinitely heavy to it: a 596 t section came at 9.8 m/s off a parent at 2.6, and the next
+// split of it at 36 m/s. So what breaks off a chunk in the host keeps that chunk's motion at that point, and one off a building only
+// what a blast could give it (§17). A chunk made again has PhysX's velocities (from_host): those stand.
+constexpr float kChunkFallSpeed = 35.0f;             // m/s: a fall of 60 m
+constexpr float kChunkHeavyKg = 5000.0f;
+constexpr float kChunkThrowSpeed = 20.0f, kChunkThrowUp = 10.0f;  // m/s, a heavy one: across, and up
+constexpr float kChunkBlastJ = 2.0e6f;               // the most a blast gives a heavy chunk, across and up
+constexpr float kSplitKick = 1.5f;                   // m/s: what a split adds to what it broke from
+constexpr float kSplitSpin = 0.5f;                   // rad/s
+constexpr double kSplitKeptMs = 1000.0;              // a split is remembered this long
+constexpr float kSplitReach = 8.0f;                  // m past where it reached: a new chunk there came of it
+struct ChunkSplit {
+    double ms;
+    float p0[3], q0[4], p1[3], q1[4];  // the chunk's last two poses in the host
+    float middle[3], reach;
+};
+std::vector<ChunkSplit> g_chunk_splits;
+uint32_t g_chunks_slowed = 0;
+void point_of(const float pos[3], const float q[4], const float p[3], float out[3]);
+
+// The velocity, m/s, of the point `at` as part of the chunk that last split around it, with its spin. False: none did lately.
+bool split_motion_at(const float at[3], double now, float v[3], float& spin, double& age_s) {
+    while (!g_chunk_splits.empty() && now - g_chunk_splits.front().ms > kSplitKeptMs) g_chunk_splits.erase(g_chunk_splits.begin());
+    for (size_t i = g_chunk_splits.size(); i-- > 0;) {
+        const ChunkSplit& c = g_chunk_splits[i];
+        const float d[3] = {at[0] - c.middle[0], at[1] - c.middle[1], at[2] - c.middle[2]};
+        if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > c.reach * c.reach) continue;
+        const float zero[3] = {0, 0, 0}, off[3] = {at[0] - c.p1[0], at[1] - c.p1[1], at[2] - c.p1[2]};
+        const float back[4] = {-c.q1[0], -c.q1[1], -c.q1[2], c.q1[3]};
+        float local[3], now_at[3], was_at[3];
+        point_of(zero, back, off, local);
+        point_of(c.p1, c.q1, local, now_at);
+        point_of(c.p0, c.q0, local, was_at);
+        const float hz = pxbridge::step_hz();  // in the host's own time: m/s as its bodies have them
+        for (int k = 0; k < 3; ++k) v[k] = (now_at[k] - was_at[k]) * hz;
+        // q1 * conjugate(q0): its w is the cosine of half the turn.
+        const float w = std::fabs(c.q1[3] * c.q0[3] + c.q1[0] * c.q0[0] + c.q1[1] * c.q0[1] + c.q1[2] * c.q0[2]);
+        spin = 2.0f * std::acos(std::min(w, 1.0f)) * hz;
+        age_s = (now - c.ms) / 1000.0;
+        return true;
+    }
+    return false;
+}
+
+void chunk_start_velocity(const uint8_t* body, float mass, float half, uint32_t obj_handle, bool from_host, const float middle[3], float lv[3], float av[3]) {
+    memcpy(lv, body + kBodyLinVel, 3 * sizeof(float));
+    memcpy(av, body + kBodyAngVel, 3 * sizeof(float));
+    // A body keyframed to the host moves per second of real time, and with the host behind that is less than per second of its own
+    // time: a chunk made again or broken off in slow motion lost that much of its speed.
+    const float behind = std::clamp(pxbridge::step_period_ms() * pxbridge::step_hz() / 1000.0f, 1.0f, 3.0f);
+    float was_v[3] = {}, was_spin = 0;
+    double age_s = 0;
+    const bool off_chunk = !from_host && split_motion_at(middle, session::since_start_ms(), was_v, was_spin, age_s);
+    if (from_host || off_chunk) {
+        for (int k = 0; k < 3; ++k) {
+            lv[k] *= behind;
+            av[k] *= behind;
+        }
+    }
+    const float speed_was = std::sqrt(lv[0] * lv[0] + lv[1] * lv[1] + lv[2] * lv[2]);
+    const float spin_was = std::sqrt(av[0] * av[0] + av[1] * av[1] + av[2] * av[2]);
+    const bool heavy = mass >= kChunkHeavyKg;
+    float across_limit = heavy ? kChunkThrowSpeed : kChunkFallSpeed;
+    float up_limit = heavy ? kChunkThrowUp : kChunkFallSpeed;
+    float spin_limit = -1.0f;
+    bool slowed = false;
+    if (heavy && !from_host) {
+        if (off_chunk) {
+            was_v[1] -= 9.81f * float(age_s);
+            const float d[3] = {lv[0] - was_v[0], lv[1] - was_v[1], lv[2] - was_v[2]};
+            const float off = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            const float expected = std::sqrt(was_v[0] * was_v[0] + was_v[1] * was_v[1] + was_v[2] * was_v[2]);
+            // Only ever slower: what lay still beside it, and came loose as it went, stays as it is.
+            if (off > kSplitKick && speed_was > expected + kSplitKick) {
+                for (int k = 0; k < 3; ++k) lv[k] = was_v[k] + d[k] * kSplitKick / off;
+                slowed = true;
+            }
+            spin_limit = was_spin + kSplitSpin;
+        } else {
+            const float blast = std::sqrt(2.0f * kChunkBlastJ / mass);
+            across_limit = std::min(across_limit, blast);
+            up_limit = std::min(up_limit, blast);
+        }
+    }
+    const float across = std::sqrt(lv[0] * lv[0] + lv[2] * lv[2]);
+    if (across > across_limit) {
+        lv[0] *= across_limit / across;
+        lv[2] *= across_limit / across;
+        slowed = true;
+    }
+    if (lv[1] > up_limit || lv[1] < -kChunkFallSpeed) {
+        lv[1] = std::min(std::max(lv[1], -kChunkFallSpeed), up_limit);
+        slowed = true;
+    }
+    if (spin_limit < 0.0f) spin_limit = across_limit / std::max(half, 1.0f);
+    if (spin_was > spin_limit) {
+        for (int k = 0; k < 3; ++k) av[k] *= spin_limit / spin_was;
+        slowed = true;
+    }
+    if (!slowed) return;
+    if (g_chunks_slowed++ < 24)
+        LOG("debris offload: loose chunk %08X (%.1f t, %.1f m across) came at %.1f m/s, %.1f rad/s: slowed to %.1f m/s, %.1f rad/s (what it broke from: %.1f m/s, %.1f rad/s)",
+            obj_handle, double(mass) / 1000.0, double(2.0f * half), double(speed_was), double(spin_was),
+            double(std::sqrt(lv[0] * lv[0] + lv[1] * lv[1] + lv[2] * lv[2])), double(std::sqrt(av[0] * av[0] + av[1] * av[1] + av[2] * av[2])),
+            double(std::sqrt(was_v[0] * was_v[0] + was_v[1] * was_v[1] + was_v[2] * was_v[2])), double(was_spin));
+}
+
+void set_motion(uint32_t handle, uint8_t motion) {
+    rfg::fn<void(__cdecl*)(uint32_t, uint32_t)>(r::havok_body_set_motion_type)(handle, motion);
+}
+
+// ---- C2c: a driven chunk's subpieces (research/docs/08 §8, §10) ----
+//
+// rfg_destroyable_shape::objects holds an rfg_subpiece (0x24 bytes) for each shape key, owned by the shape it is in
+// (my_owner_gm_handle, an offset from the field) unless it went (flag 0x100000). The shape's parent holds an
+// rfg_subpiece_base (0x40) for each key: its centre of mass in the chunk's frame, its mass, flag 0x20 for an
+// indestructible material.
+constexpr uint8_t kPartInBody = 0, kPartGone = 2;
+const uint32_t &kDestroyableObjects = layout::destroyable_objects, &kDestroyableParent = layout::destroyable_parent;
+constexpr uint32_t kSubpieceSize = 0x24, kSubpieceOwner = 0x08, kSubpieceFlags = 0x18, kSubpieceGone = 0x100000;
+const uint32_t &kBaseObjects = layout::base_destroyable_objects, &kBaseNumObjects = layout::base_destroyable_num_objects;
+constexpr uint32_t kBaseObjectSize = 0x40, kBaseCentre = 0x24, kBaseMass = 0x30, kBaseFlags = 0x3F;
+constexpr uint8_t kBaseIndestructible = 0x20;
+
+// A chunk the game has let go of (crushed to the end, deleted) has no subpieces any more: both readers below check for
+// that and for keys past the table, or they read near address 0 + key * size. There, one landed on another thread's
+// stack guard page, which is no access violation, and took the game down. Should another bad pointer get that far,
+// it is caught as well.
+int subpiece_read_filter(DWORD code) {
+    return code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_GUARD_PAGE ? EXCEPTION_EXECUTE_HANDLER
+                                                                              : EXCEPTION_CONTINUE_SEARCH;
+}
+
+const uint8_t* destroyable_of(const uint8_t* body) {
+    const uint8_t* shape = hs::body_shape(body);
+    return shape && *reinterpret_cast<const uintptr_t*>(shape) ==
+                        uintptr_t(rfg::addr(r::rfg_destroyable_shape_bvtree_vftable))
+               ? shape
+               : nullptr;
+}
+
+// Where each part's subpiece is now: 1 in the shape, 0 gone, 2 in another shape (it broke away as a chunk of its own).
+// False if the game's memory could not be read.
+bool place_parts(const uint8_t* shape, const uint32_t* keys, const uint8_t* state, uint32_t n, uint8_t* place) {
+    __try {
+        const uint8_t* objects = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableObjects);
+        const uint8_t* parent = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableParent);
+        if (!objects || !parent) return false;
+        const uint32_t count = *reinterpret_cast<const uint32_t*>(parent + kBaseNumObjects);
+        for (uint32_t i = 0; i < n; ++i) {
+            place[i] = 0;
+            if (state[i] == kPartGone || keys[i] >= count) continue;
+            const uint8_t* sub = objects + size_t(keys[i]) * kSubpieceSize;
+            if (*reinterpret_cast<const uint32_t*>(sub + kSubpieceFlags) & kSubpieceGone) continue;
+            const int32_t off = *reinterpret_cast<const int32_t*>(sub + kSubpieceOwner);
+            if (off == 0 || off == -1) continue;
+            place[i] = rfg::rel_ptr(sub + kSubpieceOwner) == shape ? 1 : 2;
+        }
+        return true;
+    } __except (subpiece_read_filter(GetExceptionCode())) {
+        return false;
+    }
+}
+
+// A subpiece's centre of mass (the chunk's frame), its mass, and whether its material breaks. False: not readable.
+bool subpiece_base(const uint8_t* shape, uint32_t key, float centre[3], float& mass, bool& breakable) {
+    __try {
+        const uint8_t* parent = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableParent);
+        if (!parent || key >= *reinterpret_cast<const uint32_t*>(parent + kBaseNumObjects)) return false;
+        const uint8_t* base = rfg::rel_ptr(parent + kBaseObjects);
+        const uint8_t* b = base + size_t(key) * kBaseObjectSize;
+        const float* c = reinterpret_cast<const float*>(b + kBaseCentre);
+        centre[0] = c[0], centre[1] = c[1], centre[2] = c[2];
+        mass = *reinterpret_cast<const float*>(b + kBaseMass);
+        breakable = !(b[kBaseFlags] & kBaseIndestructible);
+        return true;
+    } __except (subpiece_read_filter(GetExceptionCode())) {
+        return false;
+    }
+}
+
+double g_next_vehicle_scan = 0;
+uint32_t g_vehicle_proxies_made = 0, g_chunk_proxies_made = 0, g_vehicle_proxies_peak = 0, g_vehicle_shapes_failed = 0;
+uint32_t g_proxy_shapes_too_large = 0;
+
+uint32_t shape_signature(const uint8_t* body) {
+    const uint8_t* shape = hs::body_shape(body);
+    if (!shape || *reinterpret_cast<const uintptr_t*>(shape) != uintptr_t(rfg::addr(r::rfg_destroyable_shape_bvtree_vftable)))
+        return 0;
+    return 1u + *reinterpret_cast<const uint32_t*>(shape + kDestroyableExisting);
+}
+
+// A vehicle body's shape for the host: its convex parts, and the box around its triangles if it has any.
+struct VehicleParts : Parts {
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    bool has_mesh = false;
+    void triangle(const float* a, const float* b, const float* c) override {
+        has_mesh = true;
+        for (const float* p : {a, b, c})
+            for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], p[k]), hi[k] = std::max(hi[k], p[k]);
+    }
+    void unsupported(uint8_t) override {}
+};
+
+uint32_t vehicle_shape(const uint8_t* body, float mid[3], float& half) {
+    VehicleParts p;
+    walk_guarded(hs::body_shape(body), p);  // what could be read
+    if (p.has_mesh && p.hi[0] >= p.lo[0]) {
+        std::vector<ipc::Vec3> box;
+        for (int i = 0; i < 8; ++i)
+            box.push_back({(i & 1) ? p.hi[0] : p.lo[0], (i & 2) ? p.hi[1] : p.lo[1], (i & 4) ? p.hi[2] : p.lo[2]});
+        p.parts.push_back(std::move(box));
+        p.radii.push_back(0.0f);
+    }
+    if (p.parts.empty()) return 0;
+    if (p.parts.size() > kProxyMaxParts) {
+        ++g_proxy_shapes_too_large;
+        return 0;
+    }
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    for (const std::vector<ipc::Vec3>& part : p.parts)
+        for (const ipc::Vec3& v : part) {
+            const float c[3] = {v.x, v.y, v.z};
+            for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], c[k]), hi[k] = std::max(hi[k], c[k]);
+        }
+    for (int k = 0; k < 3; ++k) mid[k] = 0.5f * (lo[k] + hi[k]);
+    half = 0.5f * std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) + (hi[1] - lo[1]) * (hi[1] - lo[1]) +
+                            (hi[2] - lo[2]) * (hi[2] - lo[2]));
+    return intern_shape(p, 0);
+}
+
+// Whether a body's layer collides with debris in the game's layer table: a walker's legs and arms do, the big
+// capsule around its hull (layer 14) does not, and in the host it would push a bubble through every pile.
+constexpr uint32_t kLayerDebris = 41;  // COLLIDE_RFG_NORMAL_FAST
+bool layer_bit(uint32_t a, uint32_t b) {
+    const uint8_t* filter = rfg::global<uint8_t*>(r::Havok_filter);
+    const uint32_t* table = filter ? *reinterpret_cast<const uint32_t* const*>(filter + layout::game_filter_layer_table) : nullptr;
+    if (!table || a >= 128 || b >= 128) return false;
+    const uint32_t bit = a * 128 + b;
+    return (table[bit >> 5] >> (bit & 31)) & 1u;
+}
+bool touches_debris(const uint8_t* body) {
+    return layer_bit(*reinterpret_cast<const uint32_t*>(body + kBodyFilterInfo) & 0x7F, kLayerDebris);
+}
+
+void body_pose(const uint8_t* body, float pos[3], float q[4]) {
+    const hs::Transform t = hs::body_transform(body);
+    const float c0[3] = {t.rot[0][0], t.rot[1][0], t.rot[2][0]}, c1[3] = {t.rot[0][1], t.rot[1][1], t.rot[2][1]},
+                c2[3] = {t.rot[0][2], t.rot[1][2], t.rot[2][2]};
+    quat_from_cols(c0, c1, c2, q);
+    memcpy(pos, t.pos, 12);
+}
+
+// Havok caps a body's speed and spin at its motion's hkUFloat8 codes (hkpRigidBody::getMaxLinearVelocity +0x19A,
+// getMaxAngularVelocity +0x19B; the value is ((table[code] + 0x3B800) << 12) as a float's bits). The game's movers
+// have 103 (41.2 m/s) and 68 (4.03 rad/s): a keyframed chunk could not follow a host body faster than that, and a
+// chunk the host turned faster than 4 rad/s fell further behind in its turn every frame (a chunk off by over 1 m in
+// nearly every frame of two of the user's sessions; every chunk put back in a replay had exactly 4.0 rad/s, 2026-11-09).
+// A driven chunk gets 116 (about 98 m/s and 98 rad/s); the game's own codes come back with its motion.
+const uint32_t &kBodyMaxLinVel = layout::hk_body_max_lin_vel, &kBodyMaxAngVel = layout::hk_body_max_ang_vel;
+constexpr uint8_t kDrivenMaxVel = 116;
+std::unordered_map<const uint8_t*, uint16_t> g_raised_caps;  // Havok body -> its own codes (linear | angular << 8)
+void raise_caps(const uint8_t* body) {
+    uint8_t* b = const_cast<uint8_t*>(body);
+    if (b[kBodyMaxLinVel] >= kDrivenMaxVel && b[kBodyMaxAngVel] >= kDrivenMaxVel) return;
+    g_raised_caps.try_emplace(body, uint16_t(b[kBodyMaxLinVel] | (b[kBodyMaxAngVel] << 8)));
+    b[kBodyMaxLinVel] = std::max(b[kBodyMaxLinVel], kDrivenMaxVel);
+    b[kBodyMaxAngVel] = std::max(b[kBodyMaxAngVel], kDrivenMaxVel);
+}
+void restore_caps(const uint8_t* body) {
+    const auto it = g_raised_caps.find(body);
+    if (it == g_raised_caps.end()) return;
+    if (*reinterpret_cast<void* const*>(body + kEntityWorld)) {
+        uint8_t* b = const_cast<uint8_t*>(body);
+        b[kBodyMaxLinVel] = uint8_t(it->second & 0xFF);
+        b[kBodyMaxAngVel] = uint8_t(it->second >> 8);
+    }
+    g_raised_caps.erase(it);
+}
+
+// `restore`: a driven chunk's Havok body moves on its own again (given back after the scan: changing a body's motion
+// can move it between the islands being walked); without it, it is made again at once and stays keyframed.
+void drop_vehicle(size_t i, bool restore = true, bool quiet = false) {
+    const VehicleProxy& v = g_vehicles[i];
+    if (!restore) trace_chunk('A', v);
+    pxbridge::destroy_body(v.slot, quiet);
+    g_vehicle_cooling.push_back({v.slot, pxbridge::frame()});
+    if (v.driven) {
+        g_driven.erase(v.obj_handle);
+        // Not one the game itself made fixed meanwhile (anchored): it is out of the islands for that.
+        if (restore && *reinterpret_cast<void* const*>(v.body + kEntityWorld) && v.body[kBodyMotionType] != kChunkMotionFixed)
+            g_motion_restores.emplace_back(v.handle, v.motion);
+        // Made in this scan and dropped in it, it was restored and then keyframed with nothing to drive it: it went on at its
+        // velocity and spin, without gravity, for good (the chunks floating in the sky of a session that filled the slots).
+        if (restore) g_keyframe_now.erase(std::remove(g_keyframe_now.begin(), g_keyframe_now.end(), v.handle), g_keyframe_now.end());
+    }
+    if (!*reinterpret_cast<void* const*>(v.body + kEntityWorld)) g_raised_caps.erase(v.body);
+    g_vehicle_of_body.erase(v.body);
+    body_release(v.body);
+    if (i + 1 < g_vehicles.size()) {
+        g_vehicles[i] = g_vehicles.back();
+        g_vehicle_of_body[g_vehicles[i].body] = uint32_t(i);
+    }
+    g_vehicles.pop_back();
+}
+
+// A keyframed body keeps its velocities until told otherwise. Its last keyframes should leave one at rest with none, but one that had
+// not quite arrived (a long frame) kept what it had, and with no more keyframes to correct it turned where it lay for ever.
+uint32_t g_chunks_stopped = 0;
+float g_chunks_stopped_spin = 0;
+void stop_havok_body(const uint8_t* body) {
+    float* lv = reinterpret_cast<float*>(const_cast<uint8_t*>(body) + kBodyLinVel);
+    float* av = reinterpret_cast<float*>(const_cast<uint8_t*>(body) + kBodyAngVel);
+    const float spin2 = av[0] * av[0] + av[1] * av[1] + av[2] * av[2];
+    if (spin2 == 0.0f && lv[0] == 0.0f && lv[1] == 0.0f && lv[2] == 0.0f) return;
+    if (spin2 > 1e-6f) {  // past rounding: a turn in under two hours
+        ++g_chunks_stopped;
+        g_chunks_stopped_spin = std::max(g_chunks_stopped_spin, std::sqrt(spin2));
+    }
+    lv[0] = lv[1] = lv[2] = 0.0f;
+    av[0] = av[1] = av[2] = 0.0f;
+}
+
+// No body in the host, its Havok body keyframed and still where it lies (its object stays in g_driven: no destruction from
+// Havok's contacts).
+void park_chunk(size_t i) {
+    const VehicleProxy& v = g_vehicles[i];
+    stop_havok_body(v.body);
+    float m[3];
+    point_of(v.pos, v.q, v.mid, m);
+    ParkedChunk p{v.signature, v.handle, v.obj_handle, v.motion, {m[0], m[1], m[2]}};
+    trace_chunk('P', v);
+    const uint32_t handle = v.obj_handle;
+    body_add_ref(v.body);
+    g_parked[v.body] = p;
+    drop_vehicle(i, false, true);
+    g_driven.insert(handle);
+    ++g_chunks_parked;
+}
+
+// The slots are all taken: the chunk farthest from the player that lies still is parked, or if none does the farthest gives way
+// to Havok; its slot is free a few frames on, for a later scan. Not one made in this scan.
+uint32_t g_scan_number = 0;
+uint32_t g_chunks_given_way = 0;
+void make_chunk_slot(const float* player_pos) {
+    size_t still = g_vehicles.size(), any = g_vehicles.size();
+    float still2 = -1.0f, any2 = -1.0f;
+    for (size_t k = 0; k < g_vehicles.size(); ++k) {
+        const VehicleProxy& v = g_vehicles[k];
+        if (!v.chunk || v.made_in_scan == g_scan_number) continue;
+        const float dx = v.pos[0] - player_pos[0], dy = v.pos[1] - player_pos[1], dz = v.pos[2] - player_pos[2];
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > any2) any2 = d2, any = k;
+        if (v.driven && v.still_frames >= 4 && d2 > still2) still2 = d2, still = k;
+    }
+    if (still < g_vehicles.size()) {
+        park_chunk(still);
+    } else if (any < g_vehicles.size()) {
+        drop_vehicle(any);
+        ++g_chunks_given_way;
+    }
+}
+
+void restore_motions() {
+    uint8_t* const* bodies = static_cast<uint8_t* const*>(rfg::addr(r::Hk_rigid_bodies));
+    for (const auto& [handle, motion] : g_motion_restores) {
+        if (handle != 0xFFFFFFFFu)
+            if (const uint8_t* body = bodies[handle]) restore_caps(body);
+        set_motion(handle, motion);
+    }
+    g_motion_restores.clear();
+}
+
+// Four times a second: the vehicle bodies in Havok's simulation islands within range of the player get proxies,
+// and proxies whose body left the islands or the range go.
+void scan_vehicles(const float* player_pos) {
+    uint8_t* hw = rfg::global<uint8_t*>(r::Havok_world);
+    if (!hw) return;
+    const auto object_of = rfg::fn<uint8_t*(__cdecl*)(const uint8_t*)>(r::object_from_world_obj);
+    for (VehicleProxy& v : g_vehicles) v.seen = false;
+    ++g_scan_number;
+    uint32_t chunks_in_range = 0, chunks_no_driver = 0;
+    bool mirror_asked = false, mirror_ready = false;
+    for (uint32_t list = 0; list < 2; ++list) {  // m_activeSimulationIslands, m_inactiveSimulationIslands
+        const uint8_t* const* islands = *reinterpret_cast<uint8_t* const* const*>(hw + (list ? layout::hk_world_inactive_islands : layout::hk_world_active_islands));
+        const int ni = *reinterpret_cast<const int*>(hw + (list ? layout::hk_world_inactive_island_count : layout::hk_world_active_island_count));
+        for (int i = 0; islands && i < ni; ++i) {
+            const uint8_t* island = islands[i];
+            if (!island) continue;
+            const uint8_t* const* entities = *reinterpret_cast<const uint8_t* const* const*>(island + layout::hk_island_entities);
+            const int ne = *reinterpret_cast<const int*>(island + layout::hk_island_entity_count);
+            for (int e = 0; entities && e < ne; ++e) {
+                const uint8_t* body = entities[e];
+                const uint8_t* obj = body ? object_of(body) : nullptr;
+                if (!obj) continue;
+                const bool vehicle = int8_t(obj[kObjType]) == kObjTypeVehicle;
+                const bool chunk = int8_t(obj[kObjType]) == kObjTypeMover && int8_t(obj[kObjType + 1]) == kSubTypeMoverRfg;
+                if (!(vehicle || chunk) || !touches_debris(body)) continue;
+                float pos[3], q[4];
+                body_pose(body, pos, q);
+                const auto known = g_vehicle_of_body.find(body);
+                auto it = known != g_vehicle_of_body.end() ? g_vehicles.begin() + known->second : g_vehicles.end();
+                const float dx = pos[0] - player_pos[0], dy = pos[1] - player_pos[1], dz = pos[2] - player_pos[2];
+                const uint32_t signature = chunk ? shape_signature(body) : 0;
+                // Parked: it comes back when the player does, or when the game breaks it.
+                bool unparked = false, back_at_rest = false;
+                uint8_t parked_motion = 0;
+                if (chunk) {
+                    const auto parked = g_parked.find(body);
+                    if (parked != g_parked.end()) {
+                        const float* m = parked->second.mid;
+                        const float mx = m[0] - player_pos[0], my = m[1] - player_pos[1], mz = m[2] - player_pos[2];
+                        const bool whole = parked->second.signature == signature;
+                        // OpenRFG64: and once the static world around it is in the host (asked for when in range).
+                        if (whole && (mx * mx + my * my + mz * mz > kChunkBackRange * kChunkBackRange || g_vehicle_free.size() <= kSlotsKeptFree ||
+                                      (world_mirror::partial() && !world_mirror::ready_at(m, kChunkAreaM))))
+                            continue;
+                        unparked = true;
+                        g_driven.erase(parked->second.obj_handle);  // back as it comes into the host
+                        back_at_rest = whole;
+                        parked_motion = parked->second.motion;
+                        g_parked.erase(parked);
+                        body_release(body);
+                        ++g_chunks_unparked;
+                    }
+                }
+                if (!unparked && !(it != g_vehicles.end() && it->driven)) {
+                    const float range = !chunk ? kVehicleRange : list == 0 ? kChunkRange : kChunkBackRange;
+                    if (dx * dx + dy * dy + dz * dz > range * range) continue;
+                }
+                if (chunk) ++chunks_in_range;
+                bool keyframed = unparked;  // a driven chunk made again: its Havok body stays keyframed
+                uint8_t motion = unparked ? parked_motion : body[kBodyMotionType];
+                chunks_no_driver += chunk && !unparked && motion == kChunkMotionKeyframed && !(it != g_vehicles.end() && it->driven);
+                if (it != g_vehicles.end()) {
+                    if (it->signature == signature) {
+                        it->seen = true;
+                        continue;
+                    }
+                    keyframed = it->driven;
+                    if (keyframed) motion = it->motion;
+                    drop_vehicle(size_t(it - g_vehicles.begin()), false);  // a chunk that lost pieces: made again
+                }
+                // Keyframed or fixed in Havok by the game itself (a chunk held in place): not ours to drive.
+                const bool drive = chunk && g_chunks_in_physx &&
+                                   (keyframed || (motion != kChunkMotionKeyframed && motion != kChunkMotionFixed));
+                // The world mirror notices a building's lost pieces on its own 250 ms clock. A chunk that came to the
+                // host ahead of that lay with every part in its own static twin: tens of thousands of contacts on one
+                // body in a moment, and with them a solver that never recovered and a GPU crash (research/docs/08, C3).
+                // It stays in Havok until its parts have left: a frame or so.
+                if (drive && !keyframed) {
+                    if (!mirror_asked) {
+                        mirror_asked = true;
+                        mirror_ready = world_mirror::catch_up();
+                    }
+                    // OpenRFG64: and the static world around it is in the host (world_mirror's area mode).
+                    if (!mirror_ready || (world_mirror::partial() && !world_mirror::ready_at(pos, kChunkAreaM))) {
+                        g_next_vehicle_scan = 0;
+                        ++g_chunks_waited_for_mirror;
+                        continue;
+                    }
+                }
+                if (g_vehicle_free.empty()) {
+                    make_chunk_slot(player_pos);
+                    g_next_vehicle_scan = std::min(g_next_vehicle_scan, session::since_start_ms() + kVehicleScanSoonMs);
+                }
+                if (g_vehicle_free.empty()) {
+                    if (keyframed) g_motion_restores.emplace_back(*reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle), motion);
+                    continue;
+                }
+                const uint32_t slot = g_vehicle_free.back();
+                float mid[3], half = 0;
+                const uint32_t shape = drive ? chunk_shape(body, slot, mid, half) : vehicle_shape(body, mid, half);
+                if (!shape) {
+                    ++g_vehicle_shapes_failed;
+                    if (keyframed) g_motion_restores.emplace_back(*reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle), motion);
+                    continue;
+                }
+                bool made;
+                float start_lv[3] = {}, start_av[3] = {};
+                if (drive) {
+                    // Its Havok mass and velocities (a driven chunk made again has PhysX's, from its keyframing).
+                    float middle[3];
+                    point_of(pos, q, mid, middle);
+                    chunk_start_velocity(body, chunk_mass(body), half, *reinterpret_cast<const uint32_t*>(obj + kObjHandle), keyframed, middle, start_lv, start_av);
+                    const float* lv = start_lv;
+                    const float* av = start_av;
+                    made = pxbridge::create_body(slot, shape, {pos[0], pos[1], pos[2]}, {q[0], q[1], q[2], q[3]},
+                                                 {lv[0], lv[1], lv[2]}, {av[0], av[1], av[2]}, chunk_mass(body),
+                                                 ipc::kBodyMass | ipc::kBodyChunk | ipc::kBodyGentle | (back_at_rest ? ipc::kBodyAtRest : 0u),
+                                                 g_chunk_break_kn);
+                } else {
+                    made = pxbridge::create_body(slot, shape, {pos[0], pos[1], pos[2]}, {q[0], q[1], q[2], q[3]},
+                                                 {0, 0, 0}, {0, 0, 0}, 1000.0f,
+                                                 ipc::kBodyKinematic | ipc::kBodyMass | ipc::kBodyPusher);
+                }
+                if (!made) {  // the ring is full: next scan
+                    if (keyframed) g_motion_restores.emplace_back(*reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle), motion);
+                    restore_motions();
+                    for (uint32_t h : g_keyframe_now) set_motion(h, kChunkMotionKeyframed);
+                    g_keyframe_now.clear();
+                    return;
+                }
+                g_vehicle_free.pop_back();
+                body_add_ref(body);
+                VehicleProxy v{body, slot, signature, {pos[0], pos[1], pos[2]}, {q[0], q[1], q[2], q[3]}, true, chunk, 0.0f, 0};
+                memcpy(v.mid, mid, sizeof(mid));
+                v.half = half;
+                if (drive) {
+                    v.driven = true;
+                    v.made_in_scan = g_scan_number;
+                    v.handle = *reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle);
+                    v.obj_handle = *reinterpret_cast<const uint32_t*>(obj + kObjHandle);
+                    v.motion = motion;
+                    v.posed_at = session::since_start_ms();
+                    v.parts = g_chunk_parts_last;
+                    v.part_keys = g_chunk_keys_last;
+                    v.part_state.assign(v.part_keys.size(), 0);
+                    {
+                        std::vector<uint32_t> keys = v.part_keys;
+                        std::sort(keys.begin(), keys.end());
+                        const size_t distinct = size_t(std::unique(keys.begin(), keys.end()) - keys.begin());
+                        v.keys_missing = int32_t(signature) - 1 - int32_t(distinct);
+                    }
+                    v.mass = chunk_mass(body);
+                    {
+                        const float* lv = start_lv;
+                        const float* av = start_av;
+                        v.flying = lv[0] * lv[0] + lv[1] * lv[1] + lv[2] * lv[2] > kChunkFlySpeed * kChunkFlySpeed;
+                        v.born_ms = session::since_start_ms();
+                        point_of(pos, q, mid, v.born_mid);
+                        memcpy(v.born_q, q, sizeof(q));
+                        memcpy(v.born_lv, lv, sizeof(v.born_lv));
+                        memcpy(v.born_av, av, sizeof(v.born_av));
+                    }
+                    g_driven.insert(v.obj_handle);
+                    if (!keyframed) g_keyframe_now.push_back(v.handle);
+                    ++g_chunks_driven;
+                    if (g_chunks_logged < 12) {
+                        ++g_chunks_logged;
+                        const float* lv = reinterpret_cast<const float*>(body + kBodyLinVel);
+                        LOG("debris offload: loose chunk %08X into the host%s: slot %u, %u parts, %.0f kg, %.1f m across, "
+                            "%.1f m/s", v.obj_handle, keyframed ? " again (lost pieces)" : "", slot, v.parts,
+                            double(v.mass), double(2 * half),
+                            double(std::sqrt(lv[0] * lv[0] + lv[1] * lv[1] + lv[2] * lv[2])));
+                    }
+                }
+                hs::body_transform(body).apply(mid, v.mid_from);
+                memcpy(v.mid_last, v.mid_from, sizeof(v.mid_last));
+                g_vehicles.push_back(v);
+                g_vehicle_of_body[body] = uint32_t(g_vehicles.size() - 1);
+                trace_chunk('N', g_vehicles.back());
+                ++(chunk ? g_chunk_proxies_made : g_vehicle_proxies_made);
+            }
+        }
+    }
+    g_chunks_no_driver_peak = std::max(g_chunks_no_driver_peak, chunks_no_driver);
+    // Lying still far from the player: parked.
+    for (size_t i = g_vehicles.size(); i-- > 0;) {
+        const VehicleProxy& v = g_vehicles[i];
+        if (!v.driven || !v.seen || v.still_frames < 4) continue;
+        float m[3];
+        point_of(v.pos, v.q, v.mid, m);
+        const float dx = m[0] - player_pos[0], dy = m[1] - player_pos[1], dz = m[2] - player_pos[2];
+        if (dx * dx + dy * dy + dz * dz <= kChunkParkRange * kChunkParkRange) continue;
+        park_chunk(i);
+    }
+    // A parked chunk the game has taken out of its world.
+    for (auto at = g_parked.begin(); at != g_parked.end();) {
+        if (*reinterpret_cast<void* const*>(at->first + kEntityWorld)) {
+            ++at;
+            continue;
+        }
+        g_driven.erase(at->second.obj_handle);
+        g_raised_caps.erase(at->first);
+        body_release(at->first);
+        at = g_parked.erase(at);
+    }
+    for (size_t i = g_vehicles.size(); i-- > 0;) {
+        if (g_vehicles[i].seen) continue;
+        const VehicleProxy& v = g_vehicles[i];
+        const float dx = v.pos[0] - player_pos[0], dy = v.pos[1] - player_pos[1], dz = v.pos[2] - player_pos[2];
+        if (v.driven) note_chunk_end(dx * dx + dy * dy + dz * dz > kChunkRange * kChunkRange ? kEndRange : kEndIslands, v, player_pos);
+        drop_vehicle(i);
+    }
+    restore_motions();
+    for (uint32_t h : g_keyframe_now) set_motion(h, kChunkMotionKeyframed);
+    g_keyframe_now.clear();
+    uint32_t driven = 0;
+    for (const VehicleProxy& v : g_vehicles) driven += v.driven ? 1 : 0;
+    g_chunks_in_havok = chunks_in_range > driven ? chunks_in_range - driven : 0;
+    g_vehicle_proxies_peak = std::max(g_vehicle_proxies_peak, uint32_t(g_vehicles.size()));
+}
+
+// Telemetry.Enabled: a proxy's move to `q`, for log_busy_proxies (v.q is still the pose before it).
+void note_proxy_move(VehicleProxy& v, const float q[4]) {
+    float m[3];
+    hs::body_transform(v.body).apply(v.mid, m);
+    const float dx = m[0] - v.mid_last[0], dy = m[1] - v.mid_last[1], dz = m[2] - v.mid_last[2];
+    v.mid_path += std::sqrt(dx * dx + dy * dy + dz * dz);
+    memcpy(v.mid_last, m, sizeof(m));
+    // The turn since its last move, q * conjugate(v.q), with w >= 0.
+    const float* a = q;
+    const float* b = v.q;
+    float t[4] = {-a[3] * b[0] + a[0] * b[3] - a[1] * b[2] + a[2] * b[1],
+                  -a[3] * b[1] + a[0] * b[2] + a[1] * b[3] - a[2] * b[0],
+                  -a[3] * b[2] - a[0] * b[1] + a[1] * b[0] + a[2] * b[3],
+                  a[3] * b[3] + a[0] * b[0] + a[1] * b[1] + a[2] * b[2]};
+    if (t[3] < 0) t[0] = -t[0], t[1] = -t[1], t[2] = -t[2], t[3] = -t[3];
+    const float s = std::sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]);
+    v.turned += 2.0f * std::atan2(s, t[3]) * 57.29578f;
+    if (s > 1e-6f) {
+        const float axis[3] = {t[0] / s, t[1] / s, t[2] / s};
+        if (axis[0] * v.turn_axis[0] + axis[1] * v.turn_axis[1] + axis[2] * v.turn_axis[2] < -0.5f) ++v.turned_back;
+        memcpy(v.turn_axis, axis, sizeof(axis));
+    }
+    const float* lv = reinterpret_cast<const float*>(v.body + kBodyLinVel);
+    const float* av = reinterpret_cast<const float*>(v.body + kBodyAngVel);
+    v.top_speed = std::max(v.top_speed, std::sqrt(lv[0] * lv[0] + lv[1] * lv[1] + lv[2] * lv[2]));
+    v.top_spin = std::max(v.top_spin, std::sqrt(av[0] * av[0] + av[1] * av[1] + av[2] * av[2]));
+}
+
+void rows_from_quat(const ipc::Quat& q, float rot[9]);
+void point_of(const float pos[3], const float q[4], const float p[3], float out[3]);
+
+// A chunk just made has no pose yet: the host makes it at the next step or two, and the step after that gives the first
+// one. Standing still for that long, a block in full fall stopped dead at every fracture and went on 60-90 ms later
+// (research/docs/08 §15). So it flies on, falling and turning, and the host starts it from where it is by then.
+void fly_on(VehicleProxy& v, double now) {
+    const float t = float((now - v.born_ms) / 1000.0);
+    const float mid[3] = {v.born_mid[0] + v.born_lv[0] * t, v.born_mid[1] + v.born_lv[1] * t - 4.905f * t * t, v.born_mid[2] + v.born_lv[2] * t};
+    const float wx = v.born_av[0], wy = v.born_av[1], wz = v.born_av[2];
+    const float w = std::sqrt(wx * wx + wy * wy + wz * wz), half = 0.5f * w * t;
+    if (w * t > 1e-5f) {  // the turn w * t, then the pose it was made with
+        const float s = std::sin(half) / w, c = std::cos(half);
+        const float* b = v.born_q;
+        float q[4] = {c * b[0] + s * (wx * b[3] + wy * b[2] - wz * b[1]), c * b[1] + s * (wy * b[3] + wz * b[0] - wx * b[2]),
+                      c * b[2] + s * (wz * b[3] + wx * b[1] - wy * b[0]), c * b[3] - s * (wx * b[0] + wy * b[1] + wz * b[2])};
+        const float inv = 1.0f / std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+        for (int k = 0; k < 4; ++k) v.q[k] = q[k] * inv;
+    }
+    static const float origin[3] = {0, 0, 0};
+    float turned[3];
+    point_of(origin, v.q, v.mid, turned);
+    for (int k = 0; k < 3; ++k) v.pos[k] = mid[k] - turned[k];
+}
+
+void trace_chunk(char kind, const VehicleProxy& v) {
+    if (!g_chunk_trace || !v.driven) return;
+    float m[3];
+    point_of(v.pos, v.q, v.mid, m);
+    const float* lv = reinterpret_cast<const float*>(v.body + kBodyLinVel);
+    fprintf(g_chunk_trace, "%c,%u,%.2f,%08X,%u,%u,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\n", kind, pxbridge::frame(),
+            session::since_start_ms(), v.obj_handle, v.slot, v.parts, double(v.mass) / 1000.0, double(m[0]), double(m[1]),
+            double(m[2]), double(lv[0]), double(lv[1]), double(lv[2]));
+}
+
+void note_chunk_end(ChunkEnd end, const VehicleProxy& v, const float* player) {
+    ++g_chunk_ends[end];
+    g_chunk_end_parts[end] += v.parts;
+    trace_chunk(end == kEndGone ? 'G' : end == kEndRange ? 'R' : 'I', v);
+    const uint32_t by = end == kEndGone ? ::census::destroyer_of(v.obj_handle) : 0;
+    if (end == kEndGone) {
+        auto& gone = g_chunks_gone_by[by];
+        ++gone.first;
+        gone.second += v.parts;
+    }
+    if (v.parts < 10 || g_chunk_ends_logged >= 48) return;
+    ++g_chunk_ends_logged;
+    float m[3];
+    point_of(v.pos, v.q, v.mid, m);
+    const float dx = m[0] - player[0], dy = m[1] - player[1], dz = m[2] - player[2];
+    LOG("debris offload: loose chunk %08X left the host, %s: %u parts, %.1f t at (%.1f, %.1f, %.1f), %.0f m from the player, its Havok "
+        "motion type %u; destroyed by %08X (0: by nothing lately), the object %s",
+        v.obj_handle, end == kEndGone ? "gone from Havok's world" : end == kEndRange ? "past the range" : "out of Havok's islands",
+        v.parts, double(v.mass) / 1000.0, double(m[0]), double(m[1]), double(m[2]), std::sqrt(dx * dx + dy * dy + dz * dz),
+        uint32_t(v.body[kBodyMotionType]), by, object_of_handle(v.obj_handle) ? "still there" : "gone");
+}
+
+// Where a point of a body's frame is, the body at pos, q. A chunk's origin is its building's, up to tens of metres from
+// the chunk: spinning, its origin showed 185 m/s and followed "22 m off", where the chunk itself did nothing of the kind.
+void point_of(const float pos[3], const float q[4], const float p[3], float out[3]) {
+    const float t[3] = {2.0f * (q[1] * p[2] - q[2] * p[1]), 2.0f * (q[2] * p[0] - q[0] * p[2]),
+                        2.0f * (q[0] * p[1] - q[1] * p[0])};
+    out[0] = pos[0] + p[0] + q[3] * t[0] + q[1] * t[2] - q[2] * t[1];
+    out[1] = pos[1] + p[1] + q[3] * t[1] + q[2] * t[0] - q[0] * t[2];
+    out[2] = pos[2] + p[2] + q[3] * t[2] + q[0] * t[1] - q[1] * t[0];
+}
+
+// The game's pushes on driven chunks (d_impulse, inside Havok's step) go to the host now, through their centre of mass.
+void send_chunk_impulses() {
+    AcquireSRWLockExclusive(&g_chunk_impulse_lock);
+    std::vector<ChunkImpulse> queued;
+    queued.swap(g_chunk_impulses_queued);
+    ReleaseSRWLockExclusive(&g_chunk_impulse_lock);
+    for (const ChunkImpulse& ci : queued)
+        for (const VehicleProxy& v : g_vehicles) {
+            if (!v.driven || v.handle != ci.handle) continue;
+            ipc::Impulse c{};
+            c.h = {uint16_t(ipc::Cmd::Impulse), 0, sizeof(c)};
+            c.slot = v.slot;
+            c.mode = ipc::kImpulseAtCentre;
+            c.impulse = {ci.j[0], ci.j[1], ci.j[2]};
+            if (pxbridge::send_record(&c, sizeof(c))) ++g_chunk_impulses_sent;
+            break;
+        }
+}
+
+// The parts of loose chunks that broke off in the host under their load (research/docs/08 §12): the game breaks them too,
+// each with a destruction contact on its subpiece with flag 0x10, as a vehicle ramming a wall has it: all its links
+// break, whatever their strength (rfg_dyn_apply_damage_to_subpiece). And the game's own contact
+// (rfg_dyn_multi_add_pre_collide_contact, as Havok's contact listener makes them) goes on with what the chunk had: for
+// each part broken against a building, which then breaks there too; for the part that carried the most in its step, if
+// the chunk had enough for the game's slice test (kChunkSliceEnergy), which may cut it in two. That is the chunk; the
+// building as the second object; the chunk's kinetic energy as its damage; the point and normal in each one's own
+// frame; the subpieces hit; flag 8 with a building. The game applies a contact of two objects only when both are
+// rfg_movers (buildings, chunks: rfg_dyn_apply_object_complex), so the ground, rocks and other objects are no second
+// object: the chunk takes it alone. Nor is another chunk: each chunk's parts break under their own load. Flag 8 throws
+// what breaks off along the normal, 0.01 * sqrt(what the link had left to take) m/s for each link
+// (apply_impulse_collision), and the game has it only on a fixed side (a building, pushed in). On the chunk's own
+// subpieces it threw them up from a landing at up to 100 m/s: a jet of pieces into the sky from wherever a chunk came down.
+//
+// The game's damage (rfg_dyn_apply_single_object_collision, research/docs/08 §8): the subpiece hit loses the damage
+// from its hit points and breaks off at 0. A chunk of more than 100 subpieces is sliced in two when the damage passes
+// Slice_min_damage (1,000,000) and the chunk moves into the contact faster than a random 1-10 m/s (a third or two
+// thirds of that for heavy materials), one slice in the world every 10 frames at most. That speed is its Havok body's
+// when the contact is applied (rfg_dyn_do_collide_post, in the next Havok step), and keyframed to PhysX the body then
+// moves as PhysX left it after the impact, nearly still. So until the next frame, a chunk with impacts has its Havok
+// velocity read (d_get_velocity) as the host's before the impact.
+constexpr double kChunkSliceEnergy = 1000000.0;  // J: Slice_min_damage
+uint64_t g_chunk_events = 0, g_chunk_events_weak = 0, g_chunk_events_orphan = 0, g_chunk_impacts = 0;
+uint64_t g_chunk_impacts_building = 0, g_chunk_impacts_sliceable = 0;
+double g_chunk_energy_max = 0, g_chunk_energy_sum = 0;
+uint32_t g_impacts_logged = 0;
+
+struct VelocityOverride {
+    uint32_t handle;
+    float v[3];
+};
+constexpr int kVelocityOverrides = 64;
+VelocityOverride g_velocity_over[kVelocityOverrides];
+std::atomic<int> g_velocity_overs{0};
+std::atomic<uint64_t> g_velocity_reads{0};  // the game's reads answered from them
+void(__cdecl* o_get_velocity)(uint32_t, float*) = nullptr;
+
+void __cdecl d_get_velocity(uint32_t handle, float* out) {
+    o_get_velocity(handle, out);
+    const int n = g_velocity_overs.load(std::memory_order_acquire);
+    for (int i = 0; i < n; ++i)
+        if (g_velocity_over[i].handle == handle) {
+            out[0] = g_velocity_over[i].v[0];
+            out[1] = g_velocity_over[i].v[1];
+            out[2] = g_velocity_over[i].v[2];
+            g_velocity_reads.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+}
+
+// The first impact of the frame gives the chunk's velocity: from the earliest step, before the impact.
+void override_velocity(uint32_t handle, const ipc::Vec3& v) {
+    const int n = g_velocity_overs.load(std::memory_order_relaxed);
+    for (int i = 0; i < n; ++i)
+        if (g_velocity_over[i].handle == handle) return;
+    if (n >= kVelocityOverrides || !o_get_velocity) return;
+    g_velocity_over[n] = {handle, {v.x, v.y, v.z}};
+    g_velocity_overs.store(n + 1, std::memory_order_release);
+}
+
+VehicleProxy* driven_at(uint32_t slot) {
+    for (VehicleProxy& v : g_vehicles)
+        if (v.driven && v.slot == slot) return &v;
+    return nullptr;
+}
+
+// A driven chunk's body loses the parts the game broke off (crushed, shot, blown, split away) the frame after, not at
+// the next scan, which made the whole body again up to 250 ms later: it sinks into what it crushes, and the pieces
+// that broke off come over where nothing is left. If the parts left are not what the game counts, the scan makes it
+// again, as before. A part that went into a chunk of its own has the scan run at once, to take that chunk over.
+constexpr double kChunkPoseWaitMs = 5000.0;  // ms a driven chunk may be without a pose from the host
+constexpr int kCollisionsKept = 896;       // of the game's 1,024 destruction contacts a frame, what ours may fill
+constexpr uint32_t kCrushDamage = 600000;  // enough for the most a link takes (Link_area_damage_scalar 15 x 559,241),
+                                           // under Slice_min_damage
+float g_crush_j_per_kg = 0;
+uint64_t g_crushed = 0, g_parts_removed = 0, g_sync_mismatch = 0;
+double g_crushed_kg = 0;
+uint32_t g_syncs_logged = 0, g_crushes_logged = 0;
+
+bool send_remove_parts(uint32_t slot, const std::vector<uint32_t>& parts, float mass) {
+    static std::vector<uint8_t> buf;
+    const size_t bytes = (sizeof(ipc::RemoveParts) + parts.size() * sizeof(uint32_t) + 7) & ~size_t(7);
+    buf.assign(bytes, 0);
+    auto* rec = reinterpret_cast<ipc::RemoveParts*>(buf.data());
+    rec->h = {uint16_t(ipc::Cmd::RemoveParts), 0, uint32_t(bytes)};
+    rec->slot = slot;
+    rec->count = uint32_t(parts.size());
+    rec->mass = mass;
+    memcpy(rec + 1, parts.data(), parts.size() * sizeof(uint32_t));
+    return pxbridge::send_record(buf.data(), uint32_t(bytes));
+}
+
+// A chunk in the host broke in two in the game: how it moved, for what comes of it (chunk_start_velocity).
+void note_split(const VehicleProxy& v) {
+    const ipc::SnapshotHeader* s = pxbridge::snapshot(nullptr);
+    const ipc::BodyPose* poses = s ? pxbridge::poses(s) : nullptr;
+    if (!poses || v.slot >= s->slots) return;
+    const ipc::BodyPose& b = poses[v.slot];
+    ChunkSplit c{};
+    c.ms = session::since_start_ms();
+    c.p0[0] = b.prev_pos.x, c.p0[1] = b.prev_pos.y, c.p0[2] = b.prev_pos.z;
+    c.q0[0] = b.prev_rot.x, c.q0[1] = b.prev_rot.y, c.q0[2] = b.prev_rot.z, c.q0[3] = b.prev_rot.w;
+    c.p1[0] = b.pos.x, c.p1[1] = b.pos.y, c.p1[2] = b.pos.z;
+    c.q1[0] = b.rot.x, c.q1[1] = b.rot.y, c.q1[2] = b.rot.z, c.q1[3] = b.rot.w;
+    point_of(c.p1, c.q1, v.mid, c.middle);
+    c.reach = v.half + kSplitReach;
+    g_chunk_splits.push_back(c);
+}
+
+void sync_chunks() {
+    static std::vector<uint8_t> place;
+    static std::vector<uint32_t> gone, keys_in;
+    for (VehicleProxy& v : g_vehicles) {
+        if (!v.driven || v.part_state.size() != v.part_keys.size()) continue;
+        if (!*reinterpret_cast<void* const*>(v.body + kEntityWorld)) continue;  // gone: move_vehicles drops it
+        const uint8_t* shape = destroyable_of(v.body);
+        if (!shape) continue;
+        const uint32_t existing = *reinterpret_cast<const uint32_t*>(shape + kDestroyableExisting);
+        if (1u + existing == v.signature) continue;
+        place.resize(v.part_keys.size());
+        if (!place_parts(shape, v.part_keys.data(), v.part_state.data(), uint32_t(place.size()), place.data())) continue;
+        bool split = false;
+        gone.clear();
+        keys_in.clear();
+        for (size_t i = 0; i < place.size(); ++i) {
+            if (v.part_state[i] == kPartGone) continue;
+            if (place[i] == 1) {
+                keys_in.push_back(v.part_keys[i]);
+                continue;
+            }
+            gone.push_back(uint32_t(i));
+            split |= place[i] == 2;
+        }
+        std::sort(keys_in.begin(), keys_in.end());
+        const int32_t in = int32_t(std::unique(keys_in.begin(), keys_in.end()) - keys_in.begin());
+        if (in + v.keys_missing != int32_t(existing)) {
+            if (g_sync_mismatch++ < 4)
+                LOG("debris offload: loose chunk %08X: %d of its subpieces are in it (%d without a part), the game counts "
+                    "%u: made again at the next scan", v.obj_handle, in, v.keys_missing, existing);
+            continue;
+        }
+        if (!gone.empty()) {
+            const float mass = chunk_mass(v.body);
+            if (!send_remove_parts(v.slot, gone, mass)) continue;  // the ring is full: next frame
+            for (uint32_t i : gone) v.part_state[i] = kPartGone;
+            v.parts -= std::min(v.parts, uint32_t(gone.size()));
+            v.mass = mass;
+            g_parts_removed += gone.size();
+            if (g_syncs_logged < 8) {
+                ++g_syncs_logged;
+                LOG("debris offload: loose chunk %08X lost %zu parts in the game (%u left, %.0f t)%s", v.obj_handle,
+                    gone.size(), v.parts, double(mass) / 1000.0, split ? "; some broke away as a chunk" : "");
+            }
+        }
+        v.signature = 1u + existing;
+        if (split) {
+            g_next_vehicle_scan = 0;
+            note_split(v);
+        }
+    }
+}
+
+void flag_crush(uint32_t obj_handle, uint32_t key, int from) {
+    uint8_t* events = static_cast<uint8_t*>(rfg::addr(r::RFG_dyn_collisions));
+    const int n = std::min(rfg::global<int>(r::Num_rfg_dyn_collisions), 1024);
+    for (int i = n; i-- > from;) {
+        uint8_t* e = events + size_t(i) * layout::collision_event_size;  // rfg_collision_event
+        if (*reinterpret_cast<const uint32_t*>(e + layout::collision_event_object) == obj_handle &&
+            *reinterpret_cast<const uint32_t*>(e + layout::collision_event_key) == key) {
+            e[layout::collision_event_flags] |= 0x10;
+            return;
+        }
+    }
+}
+
+
+// False: the game's contacts are full this frame.
+bool break_in_game(VehicleProxy& v, uint8_t* a, uint32_t key, const float na[3]) {
+    const int from = rfg::global<int>(r::Num_rfg_dyn_collisions);
+    if (from >= kCollisionsKept) return false;
+    const uint8_t* shape = destroyable_of(v.body);
+    float centre[3], mass = 0;
+    bool breakable = false;
+    if (!*reinterpret_cast<void* const*>(v.body + kEntityWorld) || !shape ||
+        !subpiece_base(shape, key, centre, mass, breakable))
+        return true;  // the chunk is going: nothing to break
+    static const float zero[3] = {0, 0, 0};
+    rfg::fn<bool(__cdecl*)(uint8_t*, uint8_t*, uint32_t, const float*, const float*, const float*, const float*, uint32_t,
+                           uint32_t, bool)>(r::rfg_dyn_multi_add_pre_collide_contact)(
+        a, nullptr, kCrushDamage, centre, na, zero, zero, key, 0xFFFFFFFFu, false);
+    flag_crush(v.obj_handle, key, from);
+    ++g_crushed;
+    g_crushed_kg += mass;
+    return true;
+}
+
+uint8_t* object_of_handle(uint32_t handle) {
+    return rfg::fn<uint8_t*(__fastcall*)(void* RFG_EDX_TYPE, uint32_t)>(r::world__object_from_handle)(world() RFG_EDX_ARG, handle);
+}
+
+// ---- cracks (research/docs/08 §17) ----
+//
+// Left to itself a chunk loses only the parts it touches, and wears away from the contact. Here what it loses as they break is
+// banked, and once that pays for the links across a section near the hit, they break: it splits at its weakest place there, and
+// the game's own shardify makes the new chunk. Sections are looked for across the chunk's own axes, which are its building's, so
+// cuts tend to follow floors and walls; a little tilt and the parts by a cut changing sides for weaker links leave it uneven. A
+// cut along the hit's direction goes first, as in anything crushed: across it, a block landing upright would only stand on itself.
+const uint32_t& kDestroyableLinks = layout::destroyable_links;
+constexpr uint32_t kSubpieceLinks = 0x04, kSubpieceNumLinks = 0x23;
+const uint32_t &kBaseLinks = layout::base_destroyable_links, &kBaseNumLinks = layout::base_destroyable_num_links;
+constexpr uint32_t kLinkBaseSize = 0x10, kLinkBaseEnds = 0x08;  // rfg_link_base: a file record, the same on x64
+constexpr float kLinkDamageScalar = 15.0f;     // Link_area_damage_scalar: a link takes this many times a contact's damage (J)
+constexpr uint32_t kCrackMinParts = 100, kCrackMinSideParts = 30;
+constexpr float kCrackMinSideMass = 0.15f;     // of the chunk, each side of a cut
+constexpr float kCrackMinExtent = 3.0f;        // m along an axis, to be cut across it
+constexpr float kCrackBand = 1.5f;             // m either side of a cut where parts may change sides
+constexpr double kCrackEveryMs = 300.0;        // a chunk looks for a crack at most this often
+constexpr uint32_t kCracksPerFrame = 2;
+constexpr double kSnapEveryMs = 1000.0;        // a chunk looks for where it snaps at most this often
+constexpr float kSnapSeenWeight = 0.7f;        // of its weight, reported on what holds it. Less: it also lies on what does not report (small pieces)
+constexpr float kSnapBearing = 1.0f;           // m: a cut this far inside the edge of what it bears on still leaves that side hanging
+float g_snap_radians = 0;                      // Experiment.PhysXChunkSnapMrad
+uint64_t g_snaps = 0;
+constexpr uint32_t kLinksPerEvent = 7;         // the game adds a link to an event holding fewer than this
+float g_crack_share = 0;
+uint64_t g_cracks = 0, g_crack_links = 0;
+double g_crack_joules = 0;
+uint32_t g_cracks_logged = 0;
+
+struct CrackNode {
+    float p[3];
+    float mass;
+    uint32_t key;
+};
+struct CrackLink {
+    uint32_t index, a, b;
+    float cost;  // J; infinite if it cannot break
+};
+
+// The chunk's subpieces and the live links between them. False: the game's memory could not be read.
+bool read_crack_graph(const uint8_t* shape, const uint32_t* keys, const uint8_t* place, uint32_t n, int32_t* node_of_key,
+                      uint32_t key_count, CrackNode* nodes, uint32_t& node_count, CrackLink* links, uint32_t& link_count,
+                      uint32_t link_room) {
+    node_count = link_count = 0;
+    __try {
+        const uint8_t* objects = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableObjects);
+        const uint8_t* live = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableLinks);
+        const uint8_t* parent = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableParent);
+        if (!objects || !live || !parent) return false;
+        const uint8_t* base_objects = rfg::rel_ptr(parent + kBaseObjects);
+        const uint8_t* base_links = rfg::rel_ptr(parent + kBaseLinks);
+        const uint32_t num_links = *reinterpret_cast<const uint32_t*>(parent + kBaseNumLinks);
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint32_t key = keys[i];
+            if (place[i] != 1 || key >= key_count || node_of_key[key] >= 0) continue;
+            const uint8_t* b = base_objects + size_t(key) * kBaseObjectSize;
+            const float* c = reinterpret_cast<const float*>(b + kBaseCentre);
+            CrackNode& node = nodes[node_count];
+            node.p[0] = c[0], node.p[1] = c[1], node.p[2] = c[2];
+            node.mass = *reinterpret_cast<const float*>(b + kBaseMass);
+            node.key = key;
+            node_of_key[key] = int32_t(node_count++);
+        }
+        for (uint32_t i = 0; i < node_count; ++i) {
+            const uint32_t key = nodes[i].key;
+            const uint8_t* sub = objects + size_t(key) * kSubpieceSize;
+            const uint32_t count = sub[kSubpieceNumLinks];
+            const uint16_t* list = reinterpret_cast<const uint16_t*>(rfg::rel_ptr(sub + kSubpieceLinks));
+            for (uint32_t j = 0; j < count; ++j) {
+                const uint32_t index = list[j];
+                if (index >= num_links || link_count >= link_room) continue;
+                const int16_t* ends = reinterpret_cast<const int16_t*>(base_links + size_t(index) * kLinkBaseSize + kLinkBaseEnds);
+                const int32_t other = uint32_t(ends[0]) == key ? ends[1] : ends[0];
+                if (other < 0 || uint32_t(other) >= key_count || uint32_t(other) <= key || node_of_key[other] < 0) continue;  // each once
+                const int32_t yield = *reinterpret_cast<const int32_t*>(live + size_t(index) * 4);
+                if (yield <= 0) continue;
+                const bool holds = ((base_objects + size_t(key) * kBaseObjectSize)[kBaseFlags] & kBaseIndestructible) ||
+                                   ((base_objects + size_t(other) * kBaseObjectSize)[kBaseFlags] & kBaseIndestructible);
+                links[link_count++] = {index, i, uint32_t(node_of_key[other]), holds ? std::numeric_limits<float>::infinity() : float(yield) / kLinkDamageScalar};
+            }
+        }
+        return true;
+    } __except (subpiece_read_filter(GetExceptionCode())) {
+        return false;
+    }
+}
+
+// The game's materials as they are loaded (rfg_physical_material), once in a log.
+void log_materials() {
+    static bool logged = false;
+    if (logged) return;
+    logged = true;
+    const int n = rfg::global<int>(r::Num_rfg_physical_materials);
+    const auto by_index = rfg::fn<const uint8_t*(__cdecl*)(uint8_t)>(r::rfg_get_physical_material_by_index);
+    for (int i = 0; i < n && i < 255; ++i) {
+        const uint8_t* m = by_index(uint8_t(i));
+        if (!m) continue;
+        LOG("debris offload: material %d %.32s: density %.0f, brittleness %.2f, restitution %.2f, friction %.2f, link strength %u, flags %08X", i,
+            reinterpret_cast<const char*>(m), double(*reinterpret_cast<const float*>(m + layout::material_density)), double(*reinterpret_cast<const float*>(m + layout::material_brittleness)),
+            double(*reinterpret_cast<const float*>(m + layout::material_restitution)), double(*reinterpret_cast<const float*>(m + layout::material_friction)),
+            *reinterpret_cast<const uint32_t*>(m + layout::material_link_strength), *reinterpret_cast<const uint32_t*>(m + layout::material_flags));
+    }
+}
+
+float crack_rand(uint32_t& seed) {  // -1 to 1. Its own: the game's random draws stay as they are
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    return float(seed % 2001u) / 1000.0f - 1.0f;
+}
+
+// The game's table for a subpiece's material, against normal concrete: its links' strength for the load it takes, what the table
+// calls brittleness (glass 0.2, concrete 1, steel 2-10: more of it, tougher) for the energy.
+bool g_chunk_materials = true;
+constexpr uint32_t kBaseMaterial = 0x3C;
+const uint32_t &kMaterialBrittleness = layout::material_brittleness, &kMaterialLinkStrength = layout::material_link_strength;
+constexpr float kRefLinkStrength = 235000.0f, kRefBrittleness = 1.11f;  // Concrete-Normal
+int subpiece_material_index(const uint8_t* shape, uint32_t key) {
+    __try {
+        const uint8_t* parent = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableParent);
+        if (!parent || key >= *reinterpret_cast<const uint32_t*>(parent + kBaseNumObjects)) return -1;
+        const uint8_t* base = rfg::rel_ptr(parent + kBaseObjects);
+        return base[size_t(key) * kBaseObjectSize + kBaseMaterial];
+    } __except (subpiece_read_filter(GetExceptionCode())) {
+        return -1;
+    }
+}
+void subpiece_material(const uint8_t* shape, uint32_t key, float& strength, float& toughness) {
+    strength = toughness = 1.0f;
+    if (!g_chunk_materials) return;
+    const int index = subpiece_material_index(shape, key);
+    if (index < 0) return;
+    const uint8_t* m = rfg::fn<const uint8_t*(__cdecl*)(uint8_t)>(r::rfg_get_physical_material_by_index)(uint8_t(index));
+    if (!m) return;
+    strength = std::clamp(float(*reinterpret_cast<const uint32_t*>(m + kMaterialLinkStrength)) / kRefLinkStrength, 0.05f, 8.0f);
+    toughness = std::clamp(*reinterpret_cast<const float*>(m + kMaterialBrittleness) / kRefBrittleness, 0.1f, 8.0f);
+}
+
+// What breaking a part off takes from the chunk: its mass's worth, by what it is made of. 0: it does not break.
+float break_energy_of(const uint8_t* body, uint32_t key) {
+    const uint8_t* shape = destroyable_of(body);
+    float centre[3], mass = 0;
+    bool breakable = false;
+    if (!shape || !subpiece_base(shape, key, centre, mass, breakable) || !breakable || !(mass > 0.0f)) return 0.0f;
+    float strength, toughness;
+    subpiece_material(shape, key, strength, toughness);
+    return std::max(1.0f, mass * g_crush_j_per_kg * toughness) * (g_crush_j_per_kg > 0.0f ? 1.0f : 0.0f);
+}
+
+float break_strength_of(const uint8_t* body, uint32_t key) {
+    const uint8_t* shape = destroyable_of(body);
+    float strength = 1.0f, toughness;
+    if (shape) subpiece_material(shape, key, strength, toughness);
+    return strength;
+}
+
+// True: its links are on their way to break. snap: under its own weight, past the edge of what it bears on (support_lo, support_hi);
+// else with what it has banked, near the last hit.
+bool try_crack(VehicleProxy& v, uint8_t* obj, double now, bool snap) {
+    static std::vector<uint8_t> place, side, best_side;
+    static std::vector<int32_t> node_of_key;
+    static std::vector<CrackNode> nodes;
+    static std::vector<CrackLink> links;
+    static std::vector<float> to_same, to_other;
+    static std::vector<uint32_t> cut;
+    (snap ? v.snap_next_ms : v.crack_next_ms) = now + (snap ? kSnapEveryMs : kCrackEveryMs);
+    log_materials();
+    if (v.parts < kCrackMinParts) return false;
+    const uint8_t* shape = destroyable_of(v.body);
+    if (!shape || !*reinterpret_cast<void* const*>(v.body + kEntityWorld)) return false;
+    place.resize(v.part_keys.size());
+    if (!place_parts(shape, v.part_keys.data(), v.part_state.data(), uint32_t(place.size()), place.data())) return false;
+    const uint8_t* parent = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableParent);
+    const uint32_t key_count = *reinterpret_cast<const uint32_t*>(parent + kBaseNumObjects);
+    node_of_key.assign(key_count, -1);
+    nodes.resize(place.size());
+    links.resize(place.size() * 16);
+    uint32_t node_count = 0, link_count = 0;
+    if (!read_crack_graph(shape, v.part_keys.data(), place.data(), uint32_t(place.size()), node_of_key.data(), key_count, nodes.data(),
+                          node_count, links.data(), link_count, uint32_t(links.size())) ||
+        node_count < kCrackMinParts || !link_count)
+        return false;
+    float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+    double total_mass = 0, moment[3] = {};
+    for (uint32_t i = 0; i < node_count; ++i) {
+        for (int k = 0; k < 3; ++k) {
+            lo[k] = std::min(lo[k], nodes[i].p[k]);
+            hi[k] = std::max(hi[k], nodes[i].p[k]);
+            moment[k] += double(nodes[i].p[k]) * nodes[i].mass;
+        }
+        total_mass += nodes[i].mass;
+    }
+    const float half = 0.5f * std::max({hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+    if (!(half > 0.0f) || !(total_mass > 0.0)) return false;
+    // Gravity in the chunk's frame: each of its axes (rvec, uvec, fvec) against the world's up.
+    float rows[9];
+    rows_from_quat(ipc::Quat{v.q[0], v.q[1], v.q[2], v.q[3]}, rows);
+    const float down[3] = {-rows[1], -rows[4], -rows[7]};
+    uint32_t seed = (v.obj_handle ^ pxbridge::frame()) * 2654435761u | 1u;
+    side.resize(node_count);
+    best_side.resize(node_count);
+    double best_score = 1e30, best_cost = 0, cheapest = 1e30, best_gives = 0, best_hung = 0, best_arm = 0;
+    int best_axis = -1;
+    float best_at = 0, best_m[3] = {}, best_d = 0;
+    static const float kAt[] = {0.2f, 0.35f, 0.5f, 0.65f, 0.8f};
+    for (int axis = 0; axis < 3; ++axis) {
+        const float len = hi[axis] - lo[axis];
+        if (len < kCrackMinExtent) continue;
+        const int k1 = (axis + 1) % 3, k2 = (axis + 2) % 3;
+        for (const float f : kAt) {
+            float m[3];
+            m[axis] = 1.0f;
+            m[k1] = 0.12f * crack_rand(seed);
+            m[k2] = 0.12f * crack_rand(seed);
+            float c[3] = {0.5f * (lo[0] + hi[0]), 0.5f * (lo[1] + hi[1]), 0.5f * (lo[2] + hi[2])};
+            c[axis] = lo[axis] + f * len;
+            const float d = m[0] * c[0] + m[1] * c[1] + m[2] * c[2];
+            double mass_a = 0, moment_a[3] = {};
+            uint32_t count_a = 0;
+            for (uint32_t i = 0; i < node_count; ++i) {
+                const CrackNode& node = nodes[i];
+                const bool a = m[0] * node.p[0] + m[1] * node.p[1] + m[2] * node.p[2] > d;
+                side[i] = a ? 1 : 0;
+                if (a) {
+                    mass_a += node.mass;
+                    ++count_a;
+                    for (int k = 0; k < 3; ++k) moment_a[k] += double(node.p[k]) * node.mass;
+                }
+            }
+            if (count_a < kCrackMinSideParts || node_count - count_a < kCrackMinSideParts) continue;
+            if (std::min(mass_a, total_mass - mass_a) < double(kCrackMinSideMass) * total_mass) continue;
+            double cost = 0, sum[3] = {};
+            uint32_t crossing = 0;
+            for (uint32_t l = 0; l < link_count; ++l)
+                if (side[links[l].a] != side[links[l].b]) {
+                    cost += double(links[l].cost);
+                    ++crossing;
+                    for (int k = 0; k < 3; ++k) sum[k] += double(nodes[links[l].a].p[k]);
+                }
+            if (cost <= 0.0 || !std::isfinite(cost)) continue;  // already apart there, or something holds it
+            cheapest = std::min(cheapest, cost);
+            double score, gives = 0, hung = 0, arm = 0;
+            if (snap) {
+                // A side hangs if nothing under it holds it: with something on both sides of the cut, nothing hangs there. (A slab lying
+                // flat bears along its length, and one held at both ends is left whole.)
+                float bears_lo = 0, bears_hi = 0;
+                for (int k = 0; k < 3; ++k) {
+                    bears_lo += std::min(m[k] * v.support_lo[k], m[k] * v.support_hi[k]);
+                    bears_hi += std::max(m[k] * v.support_lo[k], m[k] * v.support_hi[k]);
+                }
+                const bool all_on_a = bears_lo > d - kSnapBearing, all_on_b = bears_hi < d + kSnapBearing;
+                if (!all_on_a && !all_on_b) continue;
+                const bool held_a = all_on_a && all_on_b ? bears_lo + bears_hi > 2.0f * d : all_on_a;
+                // What hangs past the cut: its weight, times how far across gravity its middle is from the cut, bent this far.
+                hung = held_a ? total_mass - mass_a : mass_a;
+                double r[3];
+                for (int k = 0; k < 3; ++k) {
+                    const double hung_moment = held_a ? moment[k] - moment_a[k] : moment_a[k];
+                    r[k] = hung_moment / hung - sum[k] / double(crossing);
+                }
+                const double along = r[0] * down[0] + r[1] * down[1] + r[2] * down[2];
+                arm = std::sqrt(std::max(0.0, r[0] * r[0] + r[1] * r[1] + r[2] * r[2] - along * along));
+                gives = hung * 9.81 * arm * double(g_snap_radians);
+                if (gives < cost) continue;
+                score = cost / gives;
+            } else {
+                if (cost > v.crack_energy) continue;
+                const float from_hit = std::fabs(m[0] * v.crack_at[0] + m[1] * v.crack_at[1] + m[2] * v.crack_at[2] - d) / half;
+                const float across = std::fabs(m[0] * v.crack_normal[0] + m[1] * v.crack_normal[1] + m[2] * v.crack_normal[2]);
+                score = cost / v.crack_energy + 0.6 * double(from_hit) + 0.6 * double(across) + 0.1 * double(crack_rand(seed));
+            }
+            if (score < best_score) {
+                best_score = score;
+                best_cost = cost;
+                best_gives = gives;
+                best_hung = hung;
+                best_arm = arm;
+                best_axis = axis;
+                best_at = c[axis];
+                memcpy(best_m, m, sizeof(m));
+                best_d = d;
+                best_side = side;
+            }
+        }
+    }
+    if (best_axis < 0) {  // nothing it can pay for: not looked for again until it can
+        if (!snap) v.crack_seen_cost = cheapest < 1e30 ? 0.95 * cheapest : v.crack_energy * 2.0 + 1.0;
+        return false;
+    }
+    // By the cut, parts go to the side they hold on to more.
+    to_same.resize(node_count);
+    to_other.resize(node_count);
+    for (int pass = 0; pass < 3; ++pass) {
+        std::fill(to_same.begin(), to_same.begin() + node_count, 0.0f);
+        std::fill(to_other.begin(), to_other.begin() + node_count, 0.0f);
+        for (uint32_t l = 0; l < link_count; ++l) {
+            const CrackLink& link = links[l];
+            const float cost = std::min(link.cost, 1e12f);
+            if (best_side[link.a] == best_side[link.b]) {
+                to_same[link.a] += cost;
+                to_same[link.b] += cost;
+            } else {
+                to_other[link.a] += cost;
+                to_other[link.b] += cost;
+            }
+        }
+        for (uint32_t i = 0; i < node_count; ++i) {
+            if ((i + uint32_t(pass)) & 1u) continue;  // neighbours do not swap places
+            const CrackNode& node = nodes[i];
+            if (std::fabs(best_m[0] * node.p[0] + best_m[1] * node.p[1] + best_m[2] * node.p[2] - best_d) < kCrackBand && to_other[i] > to_same[i])
+                best_side[i] ^= 1;
+        }
+    }
+    double cost = 0, mass_a = 0;
+    uint32_t count_a = 0;
+    for (uint32_t i = 0; i < node_count; ++i)
+        if (best_side[i]) {
+            mass_a += nodes[i].mass;
+            ++count_a;
+        }
+    cut.clear();
+    for (uint32_t l = 0; l < link_count; ++l)
+        if (best_side[links[l].a] != best_side[links[l].b]) {
+            cost += double(links[l].cost);
+            cut.push_back(links[l].index);
+        }
+    const double smaller = std::min(mass_a, total_mass - mass_a);
+    if (cut.empty() || !std::isfinite(cost) || count_a < kCrackMinSideParts || node_count - count_a < kCrackMinSideParts ||
+        smaller < double(kCrackMinSideMass) * total_mass)
+        return false;
+    if (rfg::global<int>(r::Num_rfg_dyn_collisions) + int(cut.size() / kLinksPerEvent) + 2 >= kCollisionsKept) {
+        (snap ? v.snap_next_ms : v.crack_next_ms) = 0;  // the game's contacts are full this frame
+        return false;
+    }
+    const auto add = rfg::fn<bool(__cdecl*)(uint8_t*, uint32_t, const uint32_t*, uint8_t, bool)>(r::rfg_dyn_add_pre_collide_link_broken);
+    for (const uint32_t index : cut) add(obj, 1, &index, 0, false);
+    const double had = v.crack_energy;
+    v.crack_energy = 0;  // the strain is out of it
+    v.crack_seen_cost = 0;
+    ++(snap ? g_snaps : g_cracks);
+    g_crack_links += cut.size();
+    g_crack_joules += cost;
+    trace_chunk(snap ? 'S' : 'C', v);
+    if (g_cracks_logged < 40) {
+        ++g_cracks_logged;
+        LOG("debris offload: loose chunk %08X (%u subpieces, %.0f t) %s across axis %d at %.1f m: %zu of %u links, %.0f kJ of the %.0f kJ %s "
+            "(the plane alone %.0f kJ), %.0f t on the smaller side",
+            v.obj_handle, node_count, total_mass / 1000.0, snap ? "snaps" : "cracks", best_axis, double(best_at), cut.size(), link_count, cost / 1000.0,
+            (snap ? best_gives : had) / 1000.0, snap ? "its weight gives" : "it had", best_cost / 1000.0, smaller / 1000.0);
+        if (snap)
+            LOG("debris offload: loose chunk %08X: %.0f t hung %.1f m out; it bears from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f) in its frame, it spans "
+                "(%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f)",
+                v.obj_handle, best_hung / 1000.0, best_arm, double(v.support_lo[0]), double(v.support_lo[1]), double(v.support_lo[2]), double(v.support_hi[0]),
+                double(v.support_hi[1]), double(v.support_hi[2]), double(lo[0]), double(lo[1]), double(lo[2]), double(hi[0]), double(hi[1]), double(hi[2]));
+    }
+    return true;
+}
+
+// The mass of a shape's subpieces still in it. False: the game's memory could not be read.
+bool shape_mass(const uint8_t* shape, double& kg) {
+    kg = 0;
+    __try {
+        const uint8_t* objects = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableObjects);
+        const uint8_t* parent = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableParent);
+        if (!objects || !parent) return false;
+        const uint32_t count = *reinterpret_cast<const uint32_t*>(parent + kBaseNumObjects);
+        const uint8_t* base = rfg::rel_ptr(parent + kBaseObjects);
+        for (uint32_t key = 0; key < count; ++key) {
+            const uint8_t* sub = objects + size_t(key) * kSubpieceSize;
+            if (*reinterpret_cast<const uint32_t*>(sub + kSubpieceFlags) & kSubpieceGone) continue;
+            const int32_t off = *reinterpret_cast<const int32_t*>(sub + kSubpieceOwner);
+            if (off == 0 || off == -1 || rfg::rel_ptr(sub + kSubpieceOwner) != shape) continue;
+            kg += double(*reinterpret_cast<const float*>(base + size_t(key) * kBaseObjectSize + kBaseMass));
+        }
+        return true;
+    } __except (subpiece_read_filter(GetExceptionCode())) {
+        return false;
+    }
+}
+
+// Adds what a shape's subpieces weigh and how many there are, by material. False: the game's memory could not be read.
+bool shape_materials(const uint8_t* shape, double* kg, uint32_t* count_of, double* kg_held) {
+    __try {
+        const uint8_t* parent = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableParent);
+        if (!parent) return false;
+        const uint32_t count = *reinterpret_cast<const uint32_t*>(parent + kBaseNumObjects);
+        const uint8_t* base = rfg::rel_ptr(parent + kBaseObjects);
+        for (uint32_t key = 0; key < count; ++key) {
+            const uint8_t* b = base + size_t(key) * kBaseObjectSize;
+            const uint8_t index = b[kBaseMaterial];
+            const double mass = double(*reinterpret_cast<const float*>(b + kBaseMass));
+            kg[index] += mass;
+            ++count_of[index];
+            if (b[kBaseFlags] & kBaseIndestructible) kg_held[index] += mass;
+        }
+        return true;
+    } __except (subpiece_read_filter(GetExceptionCode())) {
+        return false;
+    }
+}
+
+// What a building loses where a chunk breaks against it: the chunk's mass there, from the piece hit outward through its links.
+// Without this the stump broke only at what was touched, and held up better than what came down on it.
+float g_stump_share = 0;
+const uint32_t &kObjDestroyableShape = layout::rfg_mover_destroyable_shape, &kObjHasDestroyable = layout::rfg_mover_has_destroyable;
+constexpr uint32_t kStumpDamage = 900000;     // under Slice_min_damage
+constexpr int kStumpPartsPerHit = 4;
+constexpr float kStumpFromAbove = 0.3f;       // the contact's normal, up: as the host's reports of what holds a chunk
+std::unordered_map<uint32_t, double> g_stump_owed;  // by the building's object: kg it has yet to lose
+struct StumpLost {
+    double kg = 0;
+    float x = 0, z = 0;  // where the building's object stands
+};
+std::unordered_map<uint32_t, StumpLost> g_stump_by;  // by the building's object: what it lost so far
+std::unordered_set<uint64_t> g_stump_done;          // this frame: (object, key)
+uint64_t g_stump_parts = 0;
+double g_stump_kg = 0;
+
+// The subpieces linked to this one, in the same shape. False: the game's memory could not be read.
+bool linked_keys(const uint8_t* shape, uint32_t key, uint32_t* out, uint32_t room, uint32_t& n) {
+    n = 0;
+    __try {
+        const uint8_t* objects = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableObjects);
+        const uint8_t* live = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableLinks);
+        const uint8_t* parent = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableParent);
+        if (!objects || !live || !parent) return false;
+        const uint32_t key_count = *reinterpret_cast<const uint32_t*>(parent + kBaseNumObjects);
+        const uint32_t num_links = *reinterpret_cast<const uint32_t*>(parent + kBaseNumLinks);
+        if (key >= key_count) return false;
+        const uint8_t* base_links = rfg::rel_ptr(parent + kBaseLinks);
+        const uint8_t* sub = objects + size_t(key) * kSubpieceSize;
+        const uint32_t count = sub[kSubpieceNumLinks];
+        const uint16_t* list = reinterpret_cast<const uint16_t*>(rfg::rel_ptr(sub + kSubpieceLinks));
+        for (uint32_t j = 0; j < count && n < room; ++j) {
+            const uint32_t index = list[j];
+            if (index >= num_links || *reinterpret_cast<const int32_t*>(live + size_t(index) * 4) <= 0) continue;
+            const int16_t* ends = reinterpret_cast<const int16_t*>(base_links + size_t(index) * kLinkBaseSize + kLinkBaseEnds);
+            const int32_t other = uint32_t(ends[0]) == key ? ends[1] : ends[0];
+            if (other >= 0 && uint32_t(other) < key_count) out[n++] = uint32_t(other);
+        }
+        return true;
+    } __except (subpiece_read_filter(GetExceptionCode())) {
+        return false;
+    }
+}
+
+// A subpiece that holds its building to the ground (rfg_subpiece::anchor_yield, its hit points, above 0 only for these). True if
+// the game's memory could not be read.
+bool subpiece_anchored(const uint8_t* shape, uint32_t key) {
+    __try {
+        const uint8_t* objects = *reinterpret_cast<uint8_t* const*>(shape + kDestroyableObjects);
+        return !objects || *reinterpret_cast<const int32_t*>(objects + size_t(key) * kSubpieceSize) > 0;
+    } __except (subpiece_read_filter(GetExceptionCode())) {
+        return true;
+    }
+}
+
+void crush_stump(uint8_t* b, uint32_t key, double energy, const float nb[3]) {
+    if (!(g_stump_share > 0.0f) || !(g_crush_j_per_kg > 0.0f) || b[kObjHasDestroyable] != 1) return;
+    const uint8_t* shape = *reinterpret_cast<uint8_t* const*>(b + kObjDestroyableShape);
+    if (!shape) return;
+    // Its foundation stays, like the ground: what lands on a building crushes what stands, not what holds it up.
+    if (subpiece_anchored(shape, key)) return;
+    const uint32_t handle = *reinterpret_cast<const uint32_t*>(b + kObjHandle);
+    double& owed = g_stump_owed[handle];
+    owed = std::min(owed + energy / double(g_crush_j_per_kg) * double(g_stump_share), 8000.0);
+    uint32_t queue[64];
+    uint32_t head = 0, tail = 0;
+    queue[tail++] = key;
+    uint32_t seen[64];
+    uint32_t seen_n = 0;
+    seen[seen_n++] = key;
+    int broken = 0;
+    static const float zero[3] = {0, 0, 0};
+    const auto add_contact = rfg::fn<bool(__cdecl*)(uint8_t*, uint8_t*, uint32_t, const float*, const float*, const float*, const float*, uint32_t, uint32_t, bool)>(
+        r::rfg_dyn_multi_add_pre_collide_contact);
+    while (head < tail && broken < kStumpPartsPerHit) {
+        const uint32_t k = queue[head++];
+        if (subpiece_anchored(shape, k)) continue;
+        uint8_t in_shape = 0;
+        const uint8_t state = 0;
+        if (!place_parts(shape, &k, &state, 1, &in_shape)) return;
+        if (in_shape == 1 && !g_stump_done.count(uint64_t(handle) << 32 | k)) {
+            float centre[3], mass = 0;
+            bool breakable = false;
+            if (!subpiece_base(shape, k, centre, mass, breakable)) return;
+            if (breakable) {
+                if (owed < double(mass)) return;
+                const int from = rfg::global<int>(r::Num_rfg_dyn_collisions);
+                if (from >= kCollisionsKept) return;
+                add_contact(b, nullptr, kStumpDamage, centre, nb, zero, zero, k, 0xFFFFFFFFu, false);
+                flag_crush(handle, k, from);
+                g_stump_done.insert(uint64_t(handle) << 32 | k);
+                owed -= double(mass);
+                ++broken;
+                ++g_stump_parts;
+                g_stump_kg += double(mass);
+                StumpLost& lost = g_stump_by[handle];
+                lost.kg += double(mass);
+                lost.x = reinterpret_cast<const float*>(b + layout::object_pos)[0];
+                lost.z = reinterpret_cast<const float*>(b + layout::object_pos)[2];
+            }
+        }
+        uint32_t next[16];
+        uint32_t n = 0;
+        if (!linked_keys(shape, k, next, 16, n)) return;
+        for (uint32_t j = 0; j < n && tail < 64 && seen_n < 64; ++j) {
+            bool known = false;
+            for (uint32_t s = 0; s < seen_n; ++s) known |= seen[s] == next[j];
+            if (known) continue;
+            seen[seen_n++] = next[j];
+            queue[tail++] = next[j];
+        }
+    }
+}
+
+void process_chunk_events() {
+    g_velocity_overs.store(0, std::memory_order_release);  // the last frame's impacts are applied
+    static ipc::ContactEvent buf[256];
+    static std::vector<ipc::ContactEvent> later;  // the game's contacts were full: next frame
+    static std::vector<ipc::ContactEvent> now;
+    static std::vector<uint32_t> crack_asked, snap_asked;
+    crack_asked.clear();
+    snap_asked.clear();
+    g_stump_done.clear();
+    now.swap(later);
+    later.clear();
+    const uint32_t n = pxbridge::take_events(buf, 256);
+    now.insert(now.end(), buf, buf + n);
+    const auto add_contact = rfg::fn<bool(__cdecl*)(uint8_t*, uint8_t*, uint32_t, const float*, const float*,
+                                                    const float*, const float*, uint32_t, uint32_t, bool)>(
+        r::rfg_dyn_multi_add_pre_collide_contact);
+    const auto to_local = rfg::fn<void(__cdecl*)(float*, float*, const float*, const float*, const float*, const float*)>(
+        r::convert_point_direction_from_world_to_local);
+    for (const ipc::ContactEvent& e : now) {
+        if (e.part == ipc::kEventNone) {  // where a chunk bears on what holds it
+            VehicleProxy* held = g_snap_radians > 0.0f ? driven_at(e.slot) : nullptr;
+            if (held && e.total >= kSnapSeenWeight * held->mass * 9.81f) {
+                held->support_lo[0] = e.normal.x, held->support_lo[1] = e.normal.y, held->support_lo[2] = e.normal.z;
+                held->support_hi[0] = e.velocity.x, held->support_hi[1] = e.velocity.y, held->support_hi[2] = e.velocity.z;
+                snap_asked.push_back(held->slot);
+            }
+            continue;
+        }
+        ++g_chunk_events;
+        VehicleProxy* c = driven_at(e.slot);
+        uint8_t* a = c ? object_of_handle(c->obj_handle) : nullptr;
+        const uint32_t key_a = c && e.part < c->part_keys.size() ? c->part_keys[e.part] : 0xFFFFFFFFu;
+        if (!a || key_a == 0xFFFFFFFFu) {  // the chunk left the host meanwhile
+            ++g_chunk_events_orphan;
+            continue;
+        }
+        uint8_t* b = nullptr;
+        uint32_t key_b = 0xFFFFFFFFu;
+        if (e.other != ipc::kEventNone && (e.other & ipc::kEventStatic)) {
+            b = world_mirror::object_of_group(e.other & ~ipc::kEventStatic);
+            // The game reads the subpiece by its key unchecked: a building without one (a mesh) is no second object.
+            if (b && (int8_t(b[kObjType]) != kObjTypeMover || int8_t(b[kObjType + 1]) != kSubTypeMoverRfg ||
+                      (b[kObjFlags] & kObjDestroyed) || e.other_key == ipc::kEventNone))
+                b = nullptr;
+            key_b = b ? e.other_key : 0xFFFFFFFFu;
+        }
+        const float wp[3] = {e.point.x, e.point.y, e.point.z};
+        const float wn[3] = {e.normal.x, e.normal.y, e.normal.z}, wn_b[3] = {-wn[0], -wn[1], -wn[2]};
+        float pa[3], na[3], pb[3] = {0, 0, 0}, nb[3] = {0, 0, 0};
+        to_local(pa, na, wp, wn, reinterpret_cast<const float*>(a + layout::object_pos), reinterpret_cast<const float*>(a + layout::object_orient));
+        if (b) to_local(pb, nb, wp, wn_b, reinterpret_cast<const float*>(b + layout::object_pos), reinterpret_cast<const float*>(b + layout::object_orient));
+        if (!break_in_game(*c, a, key_a, na)) {
+            later.push_back(e);
+            continue;
+        }
+        if (g_crack_share > 0.0f && e.lost > 0.0f) {
+            c->crack_energy += double(e.lost) * double(g_crack_share);
+            memcpy(c->crack_at, pa, sizeof(pa));
+            memcpy(c->crack_normal, na, sizeof(na));
+            crack_asked.push_back(c->slot);
+        }
+        const double whole = double(e.total);
+        if (b) {
+            // Landing on it: a chunk going along a wall breaks only what it touches, by the game's contact below.
+            if (wn[1] > kStumpFromAbove) crush_stump(b, key_b, double(e.energy), nb);
+        } else if (e.under != ipc::kEventNone && (e.under & ipc::kEventStatic) && g_stump_share > 0.0f) {  // through rubble
+            uint8_t* u = world_mirror::object_of_group(e.under & ~ipc::kEventStatic);
+            if (u && int8_t(u[kObjType]) == kObjTypeMover && int8_t(u[kObjType + 1]) == kSubTypeMoverRfg && !(u[kObjFlags] & kObjDestroyed)) {
+                float pu[3], nu[3];
+                to_local(pu, nu, wp, wn_b, reinterpret_cast<const float*>(u + layout::object_pos), reinterpret_cast<const float*>(u + layout::object_orient));
+                crush_stump(u, e.under_key, double(e.energy), nu);
+            }
+        }
+        if (!(b || whole >= kChunkSliceEnergy)) {
+            ++g_chunk_events_weak;
+            continue;
+        }
+        const uint32_t damage = uint32_t(std::clamp(whole, double(kCrushDamage), 4.0e9));
+        override_velocity(c->handle, e.velocity);
+        add_contact(a, b, damage, pa, na, pb, nb, key_a, key_b, b != nullptr);
+        ++g_chunk_impacts;
+        g_chunk_impacts_building += b ? 1 : 0;
+        // Into the contact: against the normal, which points to the chunk.
+        const double into = -(double(e.velocity.x) * wn[0] + double(e.velocity.y) * wn[1] + double(e.velocity.z) * wn[2]);
+        g_chunk_impacts_sliceable += damage > 1000000u && into > 1.0 ? 1 : 0;
+        g_chunk_energy_max = std::max(g_chunk_energy_max, double(damage));
+        g_chunk_energy_sum += double(damage);
+        if (g_impacts_logged < 24) {
+            ++g_impacts_logged;
+            LOG("debris offload: the game's contact on loose chunk %08X (%.0f t) at (%.1f, %.1f, %.1f), host step %u: %.0f "
+                "kJ as damage (the part took %.0f kJ); against %s, the chunk at %.1f m/s before, %.1f into the contact; "
+                "subpiece key %08X",
+                c->obj_handle, double(c->mass) / 1000.0, double(wp[0]), double(wp[1]), double(wp[2]), e.step,
+                double(damage) / 1000.0, double(e.energy) / 1000.0,
+                b                                ? "a building"
+                : e.other == ipc::kEventNone     ? "the ground or a mesh"
+                : (e.other & ipc::kEventStatic) ? "a static object"
+                : driven_at(e.other)             ? "another chunk"
+                                                 : "a piece",
+                std::sqrt(double(e.velocity.x) * e.velocity.x + double(e.velocity.y) * e.velocity.y +
+                          double(e.velocity.z) * e.velocity.z),
+                into, key_a);
+        }
+    }
+    const double at = session::since_start_ms();
+    for (const uint32_t slot : snap_asked) {  // one a frame: each goes through the whole chunk
+        VehicleProxy* c = driven_at(slot);
+        if (!c || c->parts < kCrackMinParts || at < c->snap_next_ms || at < c->crack_next_ms) continue;
+        uint8_t* a = object_of_handle(c->obj_handle);
+        if (!a) continue;
+        try_crack(*c, a, at, true);
+        break;
+    }
+    if (crack_asked.empty()) return;
+    std::sort(crack_asked.begin(), crack_asked.end());
+    crack_asked.erase(std::unique(crack_asked.begin(), crack_asked.end()), crack_asked.end());
+    uint32_t looked = 0;
+    for (const uint32_t slot : crack_asked) {
+        VehicleProxy* c = driven_at(slot);
+        if (!c || at < c->crack_next_ms || c->crack_energy < c->crack_seen_cost) continue;
+        uint8_t* a = object_of_handle(c->obj_handle);
+        if (!a) continue;
+        try_crack(*c, a, at, false);
+        if (++looked >= kCracksPerFrame) break;
+    }
+}
+
+// Each driven chunk's Havok body goes to its target, set at the end of the last frame (move_vehicles), at the start of this
+// one, right after the game has worked out the frame's length: Havok's one step of the frame (Havok_use_single_step) takes
+// just that, so it lands exactly there. Done at a frame's end with the last frame's length, a long frame after it (a scan,
+// a chunk's shape, a building's export) sent the body too far for a step: a chunk warped and came back the frame after.
+void apply_chunk_keyframes() {
+    if (!g_chunks_in_physx || g_vehicles.empty()) return;
+    const float dt = rfg::global<float>(r::Frametime);
+    if (!(dt > 1e-5f)) return;
+    const auto apply = rfg::fn<void(__cdecl*)(uint32_t, const float*, const float*, float)>(r::havok_body_apply_hard_keyframe);
+    for (VehicleProxy& v : g_vehicles) {
+        v.kf_sent = false;
+        if (!v.driven || !*reinterpret_cast<void* const*>(v.body + kEntityWorld)) continue;
+        if (v.still_frames >= 4) {  // at rest there: no more keyframes
+            stop_havok_body(v.body);
+            continue;
+        }
+        raise_caps(v.body);
+        float hp[3], hq[4];
+        body_pose(v.body, hp, hq);
+        point_of(hp, hq, v.mid, v.kf_from);
+        v.kf_dt = dt;
+        v.kf_sent = true;
+        float rot[9];
+        rows_from_quat(ipc::Quat{v.q[0], v.q[1], v.q[2], v.q[3]}, rot);
+        apply(v.handle, rot, v.pos, dt);
+    }
+}
+
+// A driven chunk's Havok body found far from where this frame's keyframe should have taken it (or, at rest, from where
+// the host has it) is put there. Two of the user's avenue sessions (2026-11-07/08) had a chunk off by over 1 m in
+// nearly every frame of the match, 3 km once, where others had 1-50 such frames: the chunk the game draws flickered
+// between two places. The first few each level go to the log with what the frame did, to find why.
+// In a replay (2026-11-09) every case was a target faster than Havok lets a keyframed body go: 1.5-1.7 m asked in one
+// 4-18 ms frame, 0.07-0.25 m done, the spin left at exactly 4.0 rad/s. A chunk turning faster than that in the host
+// lags in its turn too, which its middle may not show: put back past kPutBackTurn as well.
+constexpr float kPutBackM = 1.5f;
+constexpr float kPutBackTurn = 0.6f;  // rad, about 34 degrees
+constexpr uint32_t kPutBackLogs = 8;
+uint32_t g_put_back = 0, g_put_back_logged = 0;
+void put_back(VehicleProxy& v, const float at[3], const float sent[3], float off, float turn) {
+    if (++g_put_back % 100 == 0) LOG("debris offload: loose chunks put back on their targets %u times this level", g_put_back);
+    if (g_put_back_logged < kPutBackLogs) {
+        ++g_put_back_logged;
+        const float* lv = reinterpret_cast<const float*>(v.body + kBodyLinVel);
+        const float* av = reinterpret_cast<const float*>(v.body + kBodyAngVel);
+        auto dist = [](const float* a, const float* b) {
+            return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
+        };
+        char kf[160] = "no keyframe this frame (at rest)";
+        if (v.kf_sent)
+            snprintf(kf, sizeof(kf), "its keyframe asked %.2f m in %.2f ms, Havok's step took it %.2f m (the frame "
+                     "now says %.2f ms)", double(dist(sent, v.kf_from)), double(v.kf_dt) * 1000.0,
+                     double(dist(at, v.kf_from)), double(rfg::global<float>(r::Frametime)) * 1000.0);
+        LOG("debris offload: loose chunk %08X (%u parts, %.1f t) was %.2f m and %.0f degrees from its target after "
+            "Havok's step: %s; Havok's velocity now %.1f m/s, %.1f rad/s; motion type %u, still for %u frames: put back",
+            v.obj_handle, v.parts, double(v.mass) / 1000.0, double(off), double(turn) * 57.29578, kf,
+            double(std::sqrt(lv[0] * lv[0] + lv[1] * lv[1] + lv[2] * lv[2])),
+            double(std::sqrt(av[0] * av[0] + av[1] * av[1] + av[2] * av[2])), unsigned(v.body[kBodyMotionType]),
+            unsigned(v.still_frames));
+    }
+    float rot[9];
+    rows_from_quat(ipc::Quat{v.q[0], v.q[1], v.q[2], v.q[3]}, rot);
+    rfg::fn<void(__cdecl*)(uint32_t, const float*, const float*)>(r::havok_body_set_pos_orient_by_handle)(v.handle, v.pos,
+                                                                                                         rot);
+    float* lvw = reinterpret_cast<float*>(const_cast<uint8_t*>(v.body) + kBodyLinVel);
+    float* avw = reinterpret_cast<float*>(const_cast<uint8_t*>(v.body) + kBodyAngVel);
+    lvw[0] = lvw[1] = lvw[2] = 0.0f;
+    avw[0] = avw[1] = avw[2] = 0.0f;
+}
+
+// Every frame: each proxy follows its body (a body that left the world takes its proxy with it), and each driven
+// chunk's target follows its body in the host.
+void move_vehicles() {
+    uint8_t* player = rfg::fn<uint8_t*(__cdecl*)()>(r::player_get_local_player)();
+    if (!player) return;
+    const double now = session::since_start_ms();
+    if (g_chunks_in_physx && !pxbridge::active()) {  // the host is gone: the game's physics has them again
+        for (size_t i = g_vehicles.size(); i-- > 0;)
+            if (g_vehicles[i].driven) {
+                drop_vehicle(i);
+                ++g_chunks_given_back;
+            }
+        for (const auto& [body, p] : g_parked) {
+            if (*reinterpret_cast<void* const*>(body + kEntityWorld)) g_motion_restores.emplace_back(p.handle, p.motion);
+            g_driven.erase(p.obj_handle);
+            body_release(body);
+        }
+        g_parked.clear();
+        restore_motions();
+        g_chunks_in_physx = false;
+        LOG("debris offload: the PhysX host is gone: loose chunks are the game's own again");
+    }
+    if (g_chunks_in_physx) sync_chunks();  // before the scan, which would make a body that lost parts again
+    static bool chunk_made_waiting = false;
+    static double scanned_at = 0;
+    if (g_chunks_in_physx && ::census::take_chunks_made()) chunk_made_waiting = true;
+    if (now >= g_next_vehicle_scan || (chunk_made_waiting && now - scanned_at >= kVehicleScanSoonMs)) {
+        g_next_vehicle_scan = now + kVehicleScanMs;
+        scanned_at = now;
+        chunk_made_waiting = false;
+        scan_vehicles(reinterpret_cast<const float*>(player + layout::object_pos));
+    }
+    send_chunk_impulses();
+    if (g_chunks_in_physx) process_chunk_events();
+    for (uint32_t n = std::min(g_chunks_kept_inside.load(std::memory_order_relaxed), 16u); g_chunks_kept_logged.load(std::memory_order_relaxed) < n;) {
+        const uint32_t handle = g_chunk_kept_handles[g_chunks_kept_logged.fetch_add(1, std::memory_order_relaxed)];
+        for (const VehicleProxy& v : g_vehicles) {
+            if (v.obj_handle != handle || !v.driven) continue;
+            const uint8_t* shape = hs::body_shape(v.body);
+            float low = 1e9f;
+            if (shape && *reinterpret_cast<const uintptr_t*>(shape) == uintptr_t(rfg::addr(r::rfg_destroyable_shape_bvtree_vftable))) {
+                const float* b = reinterpret_cast<const float*>(shape + kDestroyableBmin);
+                for (int c = 0; c < 8; ++c) {
+                    const float corner[3] = {b[c & 1 ? 3 : 0], b[c & 2 ? 4 : 1], b[c & 4 ? 5 : 2]};
+                    float at[3];
+                    point_of(v.pos, v.q, corner, at);
+                    low = std::min(low, at[1]);
+                }
+            }
+            float m[3];
+            point_of(v.pos, v.q, v.mid, m);
+            LOG("debris offload: loose chunk %08X (%u parts, %.1f t) kept: the game was deleting it for entering the world's border; "
+                "its middle at (%.1f, %.1f, %.1f), the bottom of its bounds at y %.1f",
+                handle, v.parts, double(v.mass) / 1000.0, double(m[0]), double(m[1]), double(m[2]), double(low));
+            break;
+        }
+    }
+    const ipc::SnapshotHeader* snap = g_chunks_in_physx ? pxbridge::snapshot(nullptr) : nullptr;
+    const ipc::BodyPose* snap_poses = snap ? pxbridge::poses(snap) : nullptr;
+    const uint8_t* snap_states = snap ? pxbridge::states(snap) : nullptr;
+    const float alpha = snap ? pose_alpha(snap) : 1.0f;
+    for (size_t i = g_vehicles.size(); i-- > 0;) {
+        VehicleProxy& v = g_vehicles[i];
+        if (!*reinterpret_cast<void* const*>(v.body + kEntityWorld)) {
+            if (v.driven) note_chunk_end(kEndGone, v, reinterpret_cast<const float*>(player + layout::object_pos));
+            drop_vehicle(i, false);  // gone from Havok's world
+            continue;
+        }
+        if (v.driven) {
+            // Off the map's end, falling for good: the game's kill volume and zone rule do not take a chunk in the host.
+            float below[3];
+            point_of(v.pos, v.q, v.mid, below);
+            if (below[1] < kFloorY)
+                if (uint8_t* gone = object_of_handle(v.obj_handle))
+                    rfg::fn<bool(__thiscall*)(void*, uint8_t*, bool)>(r::world__destroy_object)(world(), gone, false);
+            if (v.flying) {
+                const bool moving = snap_poses && v.slot < snap->slots &&
+                                    (snap_states[v.slot] & (ipc::kPoseAlive | ipc::kPoseAwake)) == (ipc::kPoseAlive | ipc::kPoseAwake);
+                if (!moving && now - v.born_ms < kChunkFlyMs) {
+                    fly_on(v, now);
+                    ++g_chunk_frames_flown;
+                    if (g_chunk_trace_frames) trace_chunk('H', v);
+                    continue;
+                }
+                v.flying = false;
+            }
+            if (!snap_poses || v.slot >= snap->slots || !(snap_states[v.slot] & ipc::kPoseAlive)) {
+                // No pose (the host has not made it yet, behind a building's removal, or never will). Keyframed, the
+                // body would go on at its last velocity in a straight line, through everything and without falling,
+                // as long as no pose came: a whole chunk gliding off out of sight. It waits where it is: a chunk just
+                // come loose hardly moves yet. Past kChunkPoseWaitMs it goes back to the game's physics.
+                if (now - v.posed_at >= kChunkPoseWaitMs) {
+                    drop_vehicle(i);
+                    ++g_chunks_given_back;
+                    restore_motions();
+                    continue;
+                }
+                ++g_chunks_held;  // its target stays
+                if (g_chunk_trace_frames) trace_chunk('H', v);
+                continue;
+            }
+            v.posed_at = now;
+            const ipc::BodyPose& b = snap_poses[v.slot];
+            {
+                float hp[3], hq[4], at[3], sent[3];
+                body_pose(v.body, hp, hq);  // where Havok's step took it: the target sent last frame
+                point_of(hp, hq, v.mid, at);
+                point_of(v.pos, v.q, v.mid, sent);
+                const float ex = at[0] - sent[0], ey = at[1] - sent[1], ez = at[2] - sent[2];
+                const float off = std::sqrt(ex * ex + ey * ey + ez * ez);
+                g_follow_max = std::max(g_follow_max, off);
+                g_follow_peak = std::max(g_follow_peak, off);
+                g_follow_far += off > 1.0f ? 1 : 0;
+                const float dot = std::fabs(hq[0] * v.q[0] + hq[1] * v.q[1] + hq[2] * v.q[2] + hq[3] * v.q[3]);
+                const float turn = 2.0f * std::acos(std::min(dot, 1.0f));
+                if (off > kPutBackM || turn > kPutBackTurn) put_back(v, at, sent, off, turn);
+            }
+            if (v.body[kBodyMotionType] != kChunkMotionKeyframed) {  // the game made it move on its own again
+                set_motion(v.handle, kChunkMotionKeyframed);
+                ++g_chunk_motion_fixed;
+            }
+            if (snap_states[v.slot] & ipc::kPoseAwake) {
+                v.still_frames = 0;
+                pose_between(b, alpha, v.pos, v.q);
+            } else {
+                v.still_frames = uint8_t(std::min(v.still_frames + 1, 8));
+                v.pos[0] = b.pos.x, v.pos[1] = b.pos.y, v.pos[2] = b.pos.z;
+                v.q[0] = b.rot.x, v.q[1] = b.rot.y, v.q[2] = b.rot.z, v.q[3] = b.rot.w;
+            }
+            if (g_chunk_trace_frames) trace_chunk('F', v);
+            continue;
+        }
+        float pos[3], q[4];
+        body_pose(v.body, pos, q);
+        const float dx = pos[0] - v.pos[0], dy = pos[1] - v.pos[1], dz = pos[2] - v.pos[2];
+        const float moved2 = dx * dx + dy * dy + dz * dz;
+        const float same = std::fabs(q[0] * v.q[0] + q[1] * v.q[1] + q[2] * v.q[2] + q[3] * v.q[3]);
+        // Parked, or settling by millimetres (and the rounding of its rotation, which alone moved every proxy every
+        // frame): within 5 mm and half a degree of where its proxy was last put.
+        if (moved2 < 25e-6f && same > 0.99999f) continue;
+        if (g_diag) note_proxy_move(v, q);
+        ipc::KinematicTarget c{};
+        c.h = {uint16_t(ipc::Cmd::KinematicTarget), 0, sizeof(c)};
+        c.slot = v.slot;
+        c.flags = moved2 > kVehicleJump * kVehicleJump ? ipc::kTargetTeleport : 0u;
+        c.pos = {pos[0], pos[1], pos[2]};
+        c.rot = {q[0], q[1], q[2], q[3]};
+        if (!pxbridge::send_record(&c, sizeof(c))) return;
+        memcpy(v.pos, pos, sizeof(pos));
+        memcpy(v.q, q, sizeof(q));
+        v.travelled += std::sqrt(moved2);
+        ++v.targets;
+    }
+}
+
+// Telemetry.Enabled, every 10 s: the proxies that moved the most (the host logs the ones that woke the most pieces,
+// by slot).
+void log_busy_proxies() {
+    std::vector<const VehicleProxy*> busy;
+    for (const VehicleProxy& v : g_vehicles)
+        if (v.targets) busy.push_back(&v);
+    std::sort(busy.begin(), busy.end(), [](const VehicleProxy* a, const VehicleProxy* b) { return a->targets > b->targets; });
+    for (size_t i = 0; i < busy.size() && i < 4; ++i) {
+        const VehicleProxy& v = *busy[i];
+        const float nx = v.mid_last[0] - v.mid_from[0], ny = v.mid_last[1] - v.mid_from[1],
+                    nz = v.mid_last[2] - v.mid_from[2];
+        LOG("proxies: slot %u (%s, at %.1f %.1f %.1f, its middle %.1f m from there, %.1f m across): %u moves, %.2f m "
+            "in all; its middle %.2f m (%.2f m from where it was), turned %.0f deg (%u times back); Havok's "
+            "velocities up to %.1f m/s, %.1f rad/s", v.slot, v.chunk ? "building chunk" : "vehicle", double(v.pos[0]),
+            double(v.pos[1]), double(v.pos[2]),
+            double(std::sqrt(v.mid[0] * v.mid[0] + v.mid[1] * v.mid[1] + v.mid[2] * v.mid[2])), double(2 * v.half),
+            v.targets, double(v.travelled), double(v.mid_path), double(std::sqrt(nx * nx + ny * ny + nz * nz)),
+            double(v.turned), v.turned_back, double(v.top_speed), double(v.top_spin));
+    }
+    if (!busy.empty()) LOG("proxies: %zu of %zu moved in the last 10 s", busy.size(), g_vehicles.size());
+    for (VehicleProxy& v : g_vehicles) {
+        v.travelled = 0, v.targets = 0;
+        v.mid_path = v.turned = v.top_speed = v.top_spin = 0;
+        v.turned_back = 0;
+        memcpy(v.mid_from, v.mid_last, sizeof(v.mid_from));
+    }
+}
+
+void reset_vehicles() {  // the level's end (Havok's world still there) and start-up
+    for (const VehicleProxy& v : g_vehicles) body_release(v.body);
+    g_vehicles.clear();
+    g_vehicle_of_body.clear();
+    for (const auto& [body, p] : g_parked) body_release(body);
+    g_parked.clear();
+    g_driven.clear();
+    g_motion_restores.clear();
+    g_keyframe_now.clear();
+    g_raised_caps.clear();
+    AcquireSRWLockExclusive(&g_chunk_impulse_lock);
+    g_chunk_impulses_queued.clear();
+    ReleaseSRWLockExclusive(&g_chunk_impulse_lock);
+    g_vehicle_free.clear();
+    g_vehicle_cooling.clear();
+    for (uint32_t s = g_vehicle_first + kVehicleSlots; s-- > g_vehicle_first;) g_vehicle_free.push_back(s);
+    g_next_vehicle_scan = 0;
+}
+
+// ---- stand-ins: the pieces as Havok sees them ----
+
+// Pieces in PhysX are invisible to Havok, and so to everything in the game that asks Havok what is where: the
+// character controller, melee and bullet traces, projectiles, explosions' line checks, the third-person camera.
+// Where it matters a piece gets a stand-in in Havok: a keyframed body with the piece's own collision shape (the
+// hkpConvexVerticesShape its general_mover had, kept with a reference), moved with the piece. (The first stand-ins
+// were boxes fitted to a piece in its own frame, which for a slanted beam or panel took in empty space around it:
+// invisible walls and steps in the air.) Stand-ins carry the zone object, like terrain (zone_object below):
+//  - near the player: heavy pieces are solid (Experiment.PhysXSolidDebris). The character controller collides with
+//    Havok only, and in the game a body lighter than Character_collision_push_away_mass is pushed out of the
+//    player's way while anything else is stood on; so the player stands on heavy rubble, and the player's capsule
+//    in the host pushes the light pieces (it does not touch heavy ones: kShapeHeavy / kShapePlayer). Light pieces
+//    are ghosts: characters walk through them, melee and bullet traces hit them (the zone object's
+//    process_melee_hit and process_bullet_hit, below, pass the blow on to the piece);
+//  - ahead of every projectile (rockets, grenades, charges), which then strikes the pile instead of flying through
+//    it, and along the player's line of fire (bullets).
+// They live in two layers of their own (kLayerSolid, kLayerGhost): the debris layer's row of the layer table without
+// the game's own loose bodies (debris, building chunks, ragdolls, props: chunks lying in a pile shot out of it when
+// stand-ins appeared inside them as the player came near) and without vehicles (which push the pieces in the host,
+// vehicle proxies above); the ghosts' row without characters too.
+// OpenRFG64: packed to 4 like rfg.exe on x86 only; OpenRFG64 lays it out naturally (pointers on 8), which these
+// members give by themselves (checked against its PDB: 0x118 bytes, obj_ptr 0x78, flags 0xB0, cm_index 0xE4, shape 0xF8).
+#if !defined(_WIN64)
+#pragma pack(push, 4)
+#endif
+struct PhysicsCreateInfo {  // physics_create_info (PDB), the argument of havok_body_create
+    uint32_t collision_type;          // +0x00: the collision filter info
+    float pos[3];                     // +0x04
+    float orient[9];                  // +0x10: rvec, uvec, fvec
+    float size[3];                    // +0x34: box: full extents
+    float top[3], bottom[3];          // +0x40, +0x4C: capsules
+    float radius;                     // +0x58
+    float angular_damping, linear_damping, max_angular_vel, max_linear_vel;  // +0x5C
+    float mass, friction, restitution;                                      // +0x6C
+    void* obj_ptr;                    // +0x78: the game object (property 0); with it, materials go to 3 and 4
+    float precalc_tensor[9];          // +0x7C
+    float precalc_center_of_mass[3];  // +0xA0
+    int32_t flags;                    // +0xAC: 1 precalc tensor, 2 box at local_pos / local_orient
+    float local_pos[3];               // +0xB0
+    float local_orient[9];            // +0xBC
+    uint32_t cm_index;                // +0xE0
+    int32_t quality;                  // +0xE4: hkpCollidableQualityType
+    int32_t solver_deactivation;      // +0xE8
+    int32_t motion_type;              // +0xEC: hkpMotion::MotionType
+    void* shape;                      // +0xF0
+    void* enter_callback;             // +0xF4
+    void* leave_callback;             // +0xF8
+    int32_t shape_type;               // +0xFC: havok_shape_type
+    uint8_t physical_material, effect_material, auto_remove_level, padding;  // +0x100
+};
+#if !defined(_WIN64)
+#pragma pack(pop)
+static_assert(sizeof(PhysicsCreateInfo) == 0x104, "physics_create_info");
+static_assert(offsetof(PhysicsCreateInfo, obj_ptr) == 0x78 && offsetof(PhysicsCreateInfo, flags) == 0xAC &&
+                  offsetof(PhysicsCreateInfo, cm_index) == 0xE0 && offsetof(PhysicsCreateInfo, shape_type) == 0xFC,
+              "physics_create_info layout");
+#else
+static_assert(sizeof(PhysicsCreateInfo) == 0x118, "physics_create_info (OpenRFG64)");
+static_assert(offsetof(PhysicsCreateInfo, obj_ptr) == 0x78 && offsetof(PhysicsCreateInfo, flags) == 0xB0 &&
+                  offsetof(PhysicsCreateInfo, cm_index) == 0xE4 && offsetof(PhysicsCreateInfo, shape) == 0xF8 &&
+                  offsetof(PhysicsCreateInfo, shape_type) == 0x110,
+              "physics_create_info layout (OpenRFG64)");
+#endif
+constexpr int32_t kMotionKeyframed = 4;          // hkpMotion::MOTION_KEYFRAMED
+constexpr int32_t kQualityKeyframed = 1;         // HK_COLLIDABLE_QUALITY_KEYFRAMED
+constexpr int32_t kSolverDeactivationLow = 2;    // hkpRigidBodyCinfo::SOLVER_DEACTIVATION_LOW
+constexpr int32_t kHavokShapeBox = 3;            // HAVOK_SHAPE_TYPE_BOX
+constexpr int32_t kHavokShapeDestroyable = 5;    // HAVOK_SHAPE_TYPE_DESTROYABLE: ci.shape as is, the caller's own
+constexpr int32_t kCreateBoxAtLocal = 2;         // physics_create_info::flags
+constexpr float kStandInShrink = 0.1f;           // m off each extent of a box: Havok's convex radius sits around it
+constexpr float kSolidReach = 2.5f;              // m from the player's middle to a heavy piece's bounds
+constexpr float kGhostReach = 2.0f;              // to a light piece's bounds (the hammer's reach and then some)
+constexpr float kProjectileAhead = 0.15f;        // s of a projectile's flight covered ahead of it
+constexpr float kProjectileMargin = 0.5f;        // m around its path
+constexpr float kAimRange = 80.0f, kAimMargin = 0.2f;  // the player's line of fire, from the camera
+constexpr size_t kAimMax = 16;                   // its pieces nearest the camera (a bullet stops at the first)
+constexpr size_t kMaxStandIns = 384, kCreatePerFrame = 64;
+constexpr uint32_t kLayerSolid = 100, kLayerGhost = 101;  // unused by the game, whose layers end at 63
+// world: subtype_objects[OT_SUB_ITEM_PROJECTILE] (base_array<ushort>: elt +4, num +0xC), the live projectiles.
+const uint32_t &kWorldProjectiles = layout::world_projectiles, &kWorldProjectileCount = layout::world_projectile_count;
+std::vector<uint32_t> g_stand_in_slots;          // pieces with a stand-in (may repeat; stand_in is the truth)
+uint32_t g_stand_in_pass = 0, g_stand_ins_live = 0;
+uint32_t g_stand_ins_created = 0, g_stand_in_failures = 0, g_stand_ins_peak = 0, g_stand_ins_boxes = 0;
+uint32_t g_wanted_near = 0, g_wanted_projectile = 0, g_wanted_aim = 0;  // stand-ins wanted, by reason (for the log)
+
+void rows_from_quat(const ipc::Quat& q, float rot[9]) {  // as move_instance: rvec, uvec, fvec
+    const float x = q.x, y = q.y, z = q.z, w = q.w;
+    rot[0] = 1 - 2 * (y * y + z * z), rot[1] = 2 * (x * y + z * w), rot[2] = 2 * (x * z - y * w);
+    rot[3] = 2 * (x * y - z * w), rot[4] = 1 - 2 * (x * x + z * z), rot[5] = 2 * (y * z + x * w);
+    rot[6] = 2 * (x * z + y * w), rot[7] = 2 * (y * z - x * w), rot[8] = 1 - 2 * (x * x + y * y);
+}
+
+void free_stand_in(uint32_t handle) {
+    // As item::disable_physics: remove from the world now, then release.
+    rfg::fn<void(__cdecl*)(uint32_t, bool, bool, bool)>(r::havok_body_free)(handle, false, true, false);
+    --g_stand_ins_live;
+}
+
+// The stand-ins carry a zone object (OT_ZONE). Everything in the game expects an object behind a body (vehicle
+// wheel casts read its type without a check), and terrain carries its zone's object, so stand-ins read as level
+// geometry to the character controller, wheels, raycasts and explosions. The object of the zone the player is in;
+// a zone streaming out frees the stand-ins first if any carries its object (d_destream_zone).
+constexpr int8_t kObjTypeZone = 19;  // OT_ZONE
+uint8_t* g_zone_obj = nullptr;            // the last one handed out
+uint32_t g_zone_changes = 0;
+std::vector<uint8_t*> g_stand_in_zones;  // zone objects carried by stand-ins since they were last all freed
+// Where each of those was when a stand-in first carried it: nothing may move it (see create_stand_in).
+struct CarriedZone {
+    const uint8_t* zone;
+    float pos[3];
+};
+std::vector<CarriedZone> g_carried_zones;
+uint32_t g_zone_moved_logs = 0;
+bool g_stand_in_drives_zone = false;  // Test.StandInDrivesZone
+
+uint8_t* zone_object() {
+    uint8_t* player = rfg::fn<uint8_t*(__cdecl*)()>(r::player_get_local_player)();
+    if (!player) return nullptr;
+    uint8_t* zone = rfg::fn<uint8_t*(__thiscall*)(void*, const float*)>(r::world__get_zone_by_pos)(
+        world(), reinterpret_cast<const float*>(player + layout::object_pos));
+    if (!zone || int8_t(zone[kObjType]) != kObjTypeZone) return nullptr;
+    if (zone != g_zone_obj) {
+        if (!g_zone_obj)
+            LOG("debris offload: stand-ins carry the object of the zone the player is in (%p, handle %08X)",
+                static_cast<void*>(zone), *reinterpret_cast<const uint32_t*>(zone + kObjHandle));
+        g_zone_obj = zone;
+        ++g_zone_changes;
+    }
+    return zone;
+}
+
+void create_stand_in(uint32_t slot, const float pos[3], const float rot[9]) {
+    Piece& p = g_pieces[slot];
+    uint8_t* zone = zone_object();
+    if (!zone) {
+        ++g_stand_in_failures;
+        return;
+    }
+    PhysicsCreateInfo ci{};
+    ci.obj_ptr = zone;
+    ci.physical_material = p.physical_material;
+    ci.effect_material = p.effect_material;
+    ci.collision_type = p.heavy && g_solid ? kLayerSolid : kLayerGhost;  // system group 0: the layer table decides
+    memcpy(ci.pos, pos, sizeof(ci.pos));
+    memcpy(ci.orient, rot, sizeof(ci.orient));
+    ci.max_angular_vel = 200.0f, ci.max_linear_vel = 200.0f;
+    ci.mass = p.mass > 0 ? p.mass : 100.0f, ci.friction = 0.6f, ci.restitution = 0.1f;
+    ci.quality = kQualityKeyframed;
+    ci.solver_deactivation = kSolverDeactivationLow;
+    ci.motion_type = kMotionKeyframed;
+    if (p.shape) {
+        ci.shape = const_cast<uint8_t*>(p.shape);
+        ci.shape_type = kHavokShapeDestroyable;
+    } else {
+        for (int k = 0; k < 3; ++k) ci.size[k] = std::max(p.box_size[k] - kStandInShrink, 0.05f);
+        ci.flags = kCreateBoxAtLocal;
+        memcpy(ci.local_pos, p.box_c, sizeof(ci.local_pos));
+        ci.local_orient[0] = ci.local_orient[4] = ci.local_orient[8] = 1.0f;
+        ci.shape_type = kHavokShapeBox;
+        ++g_stand_ins_boxes;
+    }
+    const uint32_t handle = rfg::fn<uint32_t(__cdecl*)(PhysicsCreateInfo*)>(r::havok_body_create)(&ci);
+    if (handle == kNoStandIn) {
+        ++g_stand_in_failures;
+        return;
+    }
+    // Property 7, as a walker's limbs have it: the body does not drive its object. Each step the game sets the object
+    // of every active body to the body's pose (havok_update_pos_and_orient), and stand-ins carry the zone object: the
+    // zone's minimap tile (obj_zone::get_bbox, its position plus its extents) went wherever a stand-in was (players:
+    // the minimap shaking, black voids and seams in it, the sky changing across them).
+    if (!g_stand_in_drives_zone)
+        if (void* body = static_cast<void* const*>(rfg::addr(r::Hk_rigid_bodies))[handle])
+            rfg::fn<void(__cdecl*)(void*, uint32_t, void*)>(r::havok_set_property)(body, 7, reinterpret_cast<void*>(1));
+    p.stand_in = handle;
+    memcpy(p.si_pos, pos, sizeof(p.si_pos));
+    g_stand_in_slots.push_back(slot);
+    if (std::find(g_stand_in_zones.begin(), g_stand_in_zones.end(), zone) == g_stand_in_zones.end()) {
+        g_stand_in_zones.push_back(zone);
+        CarriedZone c{zone, {}};
+        memcpy(c.pos, zone + layout::object_pos, sizeof(c.pos));
+        g_carried_zones.push_back(c);
+    }
+    ++g_stand_ins_created;
+    g_stand_ins_peak = std::max(g_stand_ins_peak, ++g_stand_ins_live);
+}
+
+// The stand-ins' layers in the game's layer table (havok_game_filter: bit a * 128 + b, kept symmetric), made from
+// the debris layer's row (as Experiment.DebrisCollide left it). Done again whenever the table lacks them (unused
+// layers collide with everything: bit kLayerSolid x kLayerSolid set means not done).
+bool g_layers_logged = false;
+void ensure_stand_in_layers() {
+    const uint8_t* filter = rfg::global<uint8_t*>(r::Havok_filter);
+    uint32_t* table = filter ? *reinterpret_cast<uint32_t* const*>(filter + layout::game_filter_layer_table) : nullptr;
+    if (!table || !layer_bit(kLayerSolid, kLayerSolid)) return;
+    auto set_pair = [table](uint32_t a, uint32_t b, bool on) {
+        for (const uint32_t bit : {a * 128 + b, b * 128 + a}) {
+            if (on) table[bit >> 5] |= 1u << (bit & 31);
+            else table[bit >> 5] &= ~(1u << (bit & 31));
+        }
+    };
+    // Never: the game's loose bodies (movers 3: building chunks, items 4, ragdolls 5, keyframed 36, physical objects
+    // 38, debris 39-44, stress 46), vehicles (9, 12 walkers, 14 walker hulls, 15 flyers, 57 wheel rays; 10 and 13,
+    // which no collision type names and the vehicles' rows have), rays after destroyable geometry (45: the code behind
+    // them expects a building), the stand-ins themselves.
+    static const uint32_t kNever[] = {3, 4, 5, 9, 10, 12, 13, 14, 15, 36, 38, 39, 40, 41, 42, 43, 44, 45, 46, 57,
+                                      kLayerSolid, kLayerGhost};
+    // Ghosts also not: characters (6 player, 7 NPCs, 50 on ladders, 52, 63) and walking-surface rays (29).
+    static const uint32_t kGhostNever[] = {6, 7, 29, 50, 52, 63};
+    char solid[400], ghost[400];
+    int ns = 0, ng = 0;
+    for (uint32_t b = 0; b < 128; ++b) {
+        bool on = b < 64 && layer_bit(kLayerDebris, b);
+        for (uint32_t n : kNever) on = on && b != n;
+        bool ghost_on = on;
+        for (uint32_t n : kGhostNever) ghost_on = ghost_on && b != n;
+        set_pair(kLayerSolid, b, on);
+        set_pair(kLayerGhost, b, ghost_on);
+        if (on && ns < 380) ns += snprintf(solid + ns, sizeof(solid) - ns, " %u", b);
+        if (ghost_on && ng < 380) ng += snprintf(ghost + ng, sizeof(ghost) - ng, " %u", b);
+    }
+    if (!g_layers_logged) {
+        g_layers_logged = true;
+        LOG("debris offload: stand-in layers: solid %u collides with%s; ghost %u with%s", kLayerSolid, solid,
+            kLayerGhost, ghost);
+    }
+}
+
+float distance_to_segment(const ipc::Vec3& p, const float a[3], const float d[3], float len2, float* along) {
+    const float px = p.x - a[0], py = p.y - a[1], pz = p.z - a[2];
+    float t = len2 > 0 ? (px * d[0] + py * d[1] + pz * d[2]) / len2 : 0.0f;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const float ex = px - d[0] * t, ey = py - d[1] * t, ez = pz - d[2] * t;
+    if (along) *along = t * std::sqrt(len2);
+    return std::sqrt(ex * ex + ey * ey + ez * ez);
+}
+
+struct Segment {
+    float a[3], d[3];  // from a to a + d
+    float len2, margin;
+    float lo[3], hi[3];  // its bounds with the margin and the largest piece radius
+};
+
+// Sim thread, end of frame (Havok is not stepping): the pieces that want a stand-in now, by priority: heavy pieces
+// near the player, then pieces ahead of projectiles, light pieces near the player, the line of fire. At most
+// kCreatePerFrame are made in a frame; the others wait for the next.
+void update_stand_ins() {
+    for (uint32_t h : g_stand_ins_to_free) free_stand_in(h);
+    g_stand_ins_to_free.clear();
+    ++g_stand_in_pass;
+    const ipc::SnapshotHeader* s = pxbridge::snapshot(nullptr);
+    uint8_t* player = rfg::fn<uint8_t*(__cdecl*)()>(r::player_get_local_player)();
+    static std::vector<uint32_t> wanted;
+    wanted.clear();
+    if (s && player) {
+        ensure_stand_in_layers();
+        const float* pp = reinterpret_cast<const float*>(player + layout::object_pos);
+        const float px = pp[0], py = pp[1] + 0.9f, pz = pp[2];
+        const ipc::BodyPose* poses = pxbridge::poses(s);
+        const uint32_t slots = std::min<uint32_t>(s->slots, g_slots);
+        // The paths: each projectile's next kProjectileAhead s, and the line of fire from the camera.
+        static std::vector<Segment> paths;
+        paths.clear();
+        const float largest = g_largest_radius;
+        auto add_path = [&](const float a[3], const float d[3], float margin) {
+            Segment g{};
+            for (int k = 0; k < 3; ++k) {
+                g.a[k] = a[k], g.d[k] = d[k];
+                g.lo[k] = std::min(a[k], a[k] + d[k]) - margin - largest;
+                g.hi[k] = std::max(a[k], a[k] + d[k]) + margin + largest;
+            }
+            g.len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            g.margin = margin;
+            paths.push_back(g);
+        };
+        uint8_t* w = world();
+        uint8_t* const* all = *reinterpret_cast<uint8_t* const**>(w + kWorldAllObjects);
+        const uint16_t* projectiles = *reinterpret_cast<const uint16_t* const*>(w + kWorldProjectiles);
+        const int np = *reinterpret_cast<const int*>(w + kWorldProjectileCount);
+        uint8_t* const* bodies = static_cast<uint8_t* const*>(rfg::addr(r::Hk_rigid_bodies));
+        for (int i = 0; all && projectiles && i < np && i < 64; ++i) {
+            const uint8_t* obj = all[projectiles[i]];
+            if (!obj || (obj[kObjFlags] & kObjDestroyed)) continue;
+            const uint32_t handle = *reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle);
+            const uint8_t* body = handle == 0xFFFFFFFFu ? nullptr : bodies[handle];
+            const float* pos = reinterpret_cast<const float*>(obj + layout::object_pos);
+            float d[3] = {0, 0, 0};
+            if (body) {
+                const float* v = reinterpret_cast<const float*>(body + kBodyLinVel);
+                for (int k = 0; k < 3; ++k) d[k] = std::isfinite(v[k]) ? v[k] * kProjectileAhead : 0.0f;
+            }
+            add_path(pos, d, kProjectileMargin);
+        }
+        const size_t projectile_paths = paths.size();
+        {
+            const uint8_t* cam = static_cast<const uint8_t*>(rfg::addr(r::Rfg_camera));
+            const float* cam_pos = reinterpret_cast<const float*>(cam + layout::camera_real_pos);   // real_pos
+            const float* fvec = reinterpret_cast<const float*>(cam + layout::camera_real_orient + 0x18);  // real_orient.fvec
+            const float d[3] = {fvec[0] * kAimRange, fvec[1] * kAimRange, fvec[2] * kAimRange};
+            add_path(cam_pos, d, kAimMargin);
+        }
+        // Keys: the reason (0 heavy near the player, 1 ahead of a projectile, 2 light near the player, 3 the line of
+        // fire) * 1000 m + the distance.
+        auto want = [&](uint32_t i, float key) {
+            Piece& p = g_pieces[i];
+            if (p.wanted != g_stand_in_pass) {
+                p.wanted = g_stand_in_pass;
+                p.want_key = key;
+                wanted.push_back(i);
+            } else {
+                p.want_key = std::min(p.want_key, key);
+            }
+        };
+        static std::vector<std::pair<float, uint32_t>> aim_hits;  // (distance along the line of fire, slot)
+        aim_hits.clear();
+        const uint32_t scan = std::min<uint32_t>(slots, uint32_t(g_spatial.size()));
+        constexpr float kMostReach = std::max(kSolidReach, kGhostReach);
+        for (uint32_t i = 0; i < scan; ++i) {
+            const Spatial& sp = g_spatial[i];
+            if (sp.r < 0) continue;
+            const float dx = sp.x - px, dy = sp.y - py, dz = sp.z - pz;
+            const float d2 = dx * dx + dy * dy + dz * dz;
+            const float most = kMostReach + sp.r;
+            if (d2 < most * most) {
+                const bool solid = g_pieces[i].heavy && g_solid;
+                const float reach = (solid ? kSolidReach : kGhostReach) + sp.r;
+                if (d2 < reach * reach) {
+                    want(i, (solid ? 0.0f : 2000.0f) + std::sqrt(d2));
+                    ++g_wanted_near;
+                }
+            }
+            for (size_t k = 0; k < paths.size(); ++k) {
+                const Segment& g = paths[k];
+                if (sp.x < g.lo[0] || sp.x > g.hi[0] || sp.y < g.lo[1] || sp.y > g.hi[1] || sp.z < g.lo[2] ||
+                    sp.z > g.hi[2])
+                    continue;
+                float along = 0;
+                if (distance_to_segment(ipc::Vec3{sp.x, sp.y, sp.z}, g.a, g.d, g.len2, &along) > g.margin + sp.r)
+                    continue;
+                if (k < projectile_paths) {
+                    want(i, 1000.0f + along);
+                    ++g_wanted_projectile;
+                } else {
+                    aim_hits.emplace_back(along, i);
+                }
+            }
+        }
+        if (aim_hits.size() > kAimMax) {
+            std::nth_element(aim_hits.begin(), aim_hits.begin() + kAimMax, aim_hits.end());
+            aim_hits.resize(kAimMax);
+        }
+        for (const auto& h : aim_hits) {
+            want(h.second, 3000.0f + h.first);
+            ++g_wanted_aim;
+        }
+        if (wanted.size() > kMaxStandIns) {
+            std::nth_element(wanted.begin(), wanted.begin() + kMaxStandIns, wanted.end(),
+                             [](uint32_t a, uint32_t b) { return g_pieces[a].want_key < g_pieces[b].want_key; });
+            for (size_t k = kMaxStandIns; k < wanted.size(); ++k) g_pieces[wanted[k]].wanted = 0;  // not this time
+            wanted.resize(kMaxStandIns);
+        }
+        std::sort(wanted.begin(), wanted.end(),
+                  [](uint32_t a, uint32_t b) { return g_pieces[a].want_key < g_pieces[b].want_key; });
+        const auto set_pose = rfg::fn<void(__cdecl*)(uint32_t, const float*, const float*)>(
+            r::havok_body_set_pos_orient_by_handle);
+        size_t created = 0;
+        for (uint32_t i : wanted) {
+            Piece& p = g_pieces[i];
+            const ipc::BodyPose& b = poses[i];
+            const float pos[3] = {b.pos.x, b.pos.y, b.pos.z};
+            const float q[4] = {b.rot.x, b.rot.y, b.rot.z, b.rot.w};
+            if (p.stand_in != kNoStandIn) {
+                const float mx = pos[0] - p.si_pos[0], my = pos[1] - p.si_pos[1], mz = pos[2] - p.si_pos[2];
+                const float same = std::fabs(q[0] * p.si_q[0] + q[1] * p.si_q[1] + q[2] * p.si_q[2] + q[3] * p.si_q[3]);
+                if (mx * mx + my * my + mz * mz < 1e-6f && same > 0.9999999f) continue;  // where it was put
+                float rot[9];
+                rows_from_quat(b.rot, rot);
+                set_pose(p.stand_in, pos, rot);
+            } else {
+                if (created >= kCreatePerFrame) {
+                    p.wanted = 0;  // the next frame
+                    continue;
+                }
+                float rot[9];
+                rows_from_quat(b.rot, rot);
+                create_stand_in(i, pos, rot);
+                ++created;
+                if (p.stand_in == kNoStandIn) continue;
+            }
+            memcpy(p.si_pos, pos, sizeof(pos));
+            memcpy(p.si_q, q, sizeof(q));
+        }
+    }
+    size_t keep = 0;
+    for (uint32_t i : g_stand_in_slots) {
+        Piece& p = g_pieces[i];
+        if (p.stand_in == kNoStandIn) continue;
+        if (p.inst && p.wanted == g_stand_in_pass) {
+            g_stand_in_slots[keep++] = i;
+            continue;
+        }
+        free_stand_in(p.stand_in);
+        p.stand_in = kNoStandIn;
+    }
+    g_stand_in_slots.resize(keep);
+    for (const CarriedZone& c : g_carried_zones) {
+        const float* now = reinterpret_cast<const float*>(c.zone + layout::object_pos);
+        const float dx = now[0] - c.pos[0], dy = now[1] - c.pos[1], dz = now[2] - c.pos[2];
+        if (dx * dx + dy * dy + dz * dz > 1e-4f && g_zone_moved_logs < 5) {
+            ++g_zone_moved_logs;
+            LOG("debris offload: WARNING the zone object stand-ins carry (%p) moved %.2f m, from (%.1f, %.1f, %.1f) to "
+                "(%.1f, %.1f, %.1f)", static_cast<const void*>(c.zone), double(std::sqrt(dx * dx + dy * dy + dz * dz)),
+                double(c.pos[0]), double(c.pos[1]), double(c.pos[2]), double(now[0]), double(now[1]), double(now[2]));
+        }
+    }
+    if (g_stand_in_slots.empty() && g_stand_ins_to_free.empty()) {
+        g_stand_in_zones.clear();
+        g_carried_zones.clear();
+    }
+    g_stats.stand_ins = g_stand_ins_live;
+}
+
+// ---- blows on the pieces ----
+
+// A melee blow or a bullet on a stand-in lands on the zone object it carries, whose process_melee_hit and
+// process_bullet_hit (obj_zone's vtable, slots 27 and 26) do nothing. Both are wrapped: a hit within a stand-in's
+// piece pushes the piece in the host the way the game pushes a general mover (object_mover::process_melee_hit: the
+// blow's impulse at its point; object_mover::process_bullet_hit: -hit normal * damage * Bullet_movable_scalar at the
+// hit), and wakes it if it was frozen. Before, the hammer and bullets did nothing to the pieces.
+constexpr uint32_t kZoneSlotBullet = 26, kZoneSlotMelee = 27;
+constexpr uint32_t kNoSlot = 0xFFFFFFFFu;
+constexpr float kHitSlack = 0.08f;  // m around a piece's bounds: Havok's convex radius around its shape
+using ZoneMelee = bool(__fastcall*)(void* RFG_EDX_TYPE, void*, float, const float*, const float*, const float*, uint32_t, void*);
+using ZoneBullet = void(__fastcall*)(void* RFG_EDX_TYPE, void*, float, const uint8_t*);
+ZoneMelee o_zone_melee = nullptr;
+ZoneBullet o_zone_bullet = nullptr;
+uint32_t g_melee_hits = 0, g_bullet_hits = 0, g_hits_logged = 0;
+
+// The piece with a stand-in whose bounds, in its own frame where its stand-in is, hold `point` (with `slack` around
+// them); the one whose middle is nearest if several do.
+uint32_t stand_in_piece_at(const float* point, float slack = kHitSlack) {
+    uint32_t best = kNoSlot;
+    float best_d2 = 1e30f;
+    for (uint32_t i : g_stand_in_slots) {
+        const Piece& p = g_pieces[i];
+        if (p.stand_in == kNoStandIn || !p.inst) continue;
+        float rot[9];
+        rows_from_quat({p.si_q[0], p.si_q[1], p.si_q[2], p.si_q[3]}, rot);
+        const float v[3] = {point[0] - p.si_pos[0], point[1] - p.si_pos[1], point[2] - p.si_pos[2]};
+        float d2 = 0;
+        bool inside = true;
+        for (int k = 0; k < 3 && inside; ++k) {
+            const float local = v[0] * rot[k * 3] + v[1] * rot[k * 3 + 1] + v[2] * rot[k * 3 + 2];
+            const float off = local - p.box_c[k];
+            inside = std::fabs(off) <= 0.5f * p.box_size[k] + slack;
+            d2 += off * off;
+        }
+        if (inside && d2 < best_d2) best_d2 = d2, best = i;
+    }
+    return best;
+}
+
+// The most a blow speeds a piece up, as Havok caps a body's speed: a mod's melee moves push with 40,000 N*s, which
+// sent a 2 kg piece off at 20 km/s.
+constexpr float kBlowMaxSpeed = 40.0f;  // m/s
+
+void push_piece(uint32_t slot, const float j[3], const float at[3], const char* what) {
+    if (!(std::isfinite(j[0]) && std::isfinite(j[1]) && std::isfinite(j[2]))) return;
+    const float mass = std::max(g_pieces[slot].mass, 1.0f);
+    const float speed = std::sqrt(j[0] * j[0] + j[1] * j[1] + j[2] * j[2]) / mass;
+    const float scale = speed > kBlowMaxSpeed ? kBlowMaxSpeed / speed : 1.0f;
+    ipc::Impulse c{};
+    c.h = {uint16_t(ipc::Cmd::Impulse), 0, sizeof(c)};
+    c.slot = slot;
+    c.mode = ipc::kExplosionImpulse;
+    c.impulse = {j[0] * scale, j[1] * scale, j[2] * scale};
+    c.point = {at[0], at[1], at[2]};
+    if (!pxbridge::send_record(&c, sizeof(c))) return;
+    if (g_hits_logged < 12) {
+        ++g_hits_logged;
+        const float mag = std::sqrt(j[0] * j[0] + j[1] * j[1] + j[2] * j[2]);
+        LOG("debris offload: %s on piece %u (%.0f kg): impulse %.0f N*s, %.2f m/s", what, slot,
+            double(g_pieces[slot].mass), double(mag), double(mag / std::max(g_pieces[slot].mass, 1.0f)));
+    }
+}
+
+thread_local bool g_in_wide_blow = false;  // within a blow passed on whole (below): its stand-in hits are part of it
+
+bool __fastcall d_zone_melee(void* self RFG_EDX_PARAM, void* attacker, float damage, const float* impulse,
+                             const float* pos, const float* c, uint32_t u, void* weapon) {
+    const bool result = o_zone_melee(self RFG_EDX_PASS, attacker, damage, impulse, pos, c, u, weapon);
+    if (g_on && impulse && pos && !g_in_wide_blow) {
+        const uint32_t slot = stand_in_piece_at(pos);
+        if (slot != kNoSlot) {
+            push_piece(slot, impulse, pos, "melee blow");
+            ++g_melee_hits;
+        }
+    }
+    return result;
+}
+
+void __fastcall d_zone_bullet(void* self RFG_EDX_PARAM, void* shooter, float damage, const uint8_t* info) {
+    o_zone_bullet(self RFG_EDX_PASS, shooter, damage, info);
+    if (!g_on || !info) return;
+    const float* hit_pos = reinterpret_cast<const float*>(info + layout::weapon_fire_hit_pos);     // weapon_fire_info::hit_pos
+    const float* hit_normal = reinterpret_cast<const float*>(info + layout::weapon_fire_hit_normal);  // hit_normal
+    const uint32_t slot = stand_in_piece_at(hit_pos);
+    if (slot == kNoSlot) return;
+    const float k = damage * rfg::global<float>(r::Bullet_movable_scalar);
+    const float j[3] = {-hit_normal[0] * k, -hit_normal[1] * k, -hit_normal[2] * k};
+    push_piece(slot, j, hit_pos, "bullet");
+    ++g_bullet_hits;
+}
+
+// A melee blow sweeps a sphere, the move's cast_radius, along the path of its attack points, one stretch a frame
+// (process_continuous_attack_point -> human_combat_process_hits), and pushes each object it hits once:
+// impact_impulse * (the blow's direction + the attacker's forward vector * away_impulse_scale)
+// (human_combat_unified_melee_hit). The game's moves sweep 0.4 m and reach the pieces through their stand-ins. A mod
+// that enlarges them (Sledge's Sledgehammer Shockwave: up to 35 m, and 6 x 6,000 N*s) reaches far past the stand-ins,
+// so a wide blow goes to the host whole (ipc::MeleeSweep): every piece the sphere sweeps gets the push once (the host
+// knows the blow by its id), at most kBlowMaxSpeed, and the stand-ins' own hits are left out. A blow is its attacker's
+// calls with one move, under kBlowGapMs apart; of its stretches only the first and those reaching kBlowNewReach of the
+// sphere past the last one sent go, so a swing is one or two sweeps, not one a frame. Queued, as the explosions are,
+// for the sim thread to send.
+constexpr float kWideBlowRadius = 1.0f;  // m: a sphere wider than any of the game's own moves
+constexpr uint32_t kBlowGapMs = 250;
+constexpr float kBlowNewReach = 0.25f;
+const uint32_t& kHumanMeleeMove = layout::human_melee_move;  // human::combat.cur_melee_combat_move (human_combat at +0x928, +0x54)
+const uint32_t& kObjForward = layout::object_forward;       // object::orient.fvec
+// human_melee_combat_move_data
+const uint32_t &kMoveCastRadius = layout::melee_cast_radius, &kMoveImpactImpulse = layout::melee_impact_impulse,
+               &kMoveAwayScale = layout::melee_away_scale;
+struct Blow {
+    const void* attacker;
+    const void* move;
+    uint32_t id;
+    uint32_t last_ms;
+    float sent_end[3];  // where the last sweep sent ended
+    float a[3], b[3];   // its first stretch
+    float radius;
+    float impulse[3];
+};
+CRITICAL_SECTION g_blow_lock;
+std::vector<Blow> g_blows;  // the attackers' current blows (a few)
+std::vector<ipc::MeleeSweep> g_sweeps_pending;
+uint32_t g_next_blow_id = 1, g_wide_blows = 0, g_sweeps_sent = 0;
+
+// A wide blow lingers kBlowLingerMs past its last stretch. The pieces of what it shattered come out of the
+// destruction a step or more later (rfg_dyn_do_collide_post, inside the next Havok steps), after the game's sphere
+// cast is done, so they fell where they broke off and only the next blow threw them; a piece that appears inside the
+// blow's sphere meanwhile gets the blow's push in Havok, as the objects it hit did.
+constexpr uint32_t kBlowLingerMs = 1000;
+uint32_t g_late_pushes = 0;
+
+void push_new_piece_by_blow(const uint8_t* body, uint32_t handle, uint32_t now_ms) {
+    const hs::Transform t = hs::body_transform(body);
+    float j[3];
+    bool inside = false;
+    EnterCriticalSection(&g_blow_lock);
+    for (const Blow& w : g_blows) {
+        if (now_ms - w.last_ms > kBlowLingerMs) continue;
+        const float ab[3] = {w.b[0] - w.a[0], w.b[1] - w.a[1], w.b[2] - w.a[2]};
+        const float ap[3] = {t.pos[0] - w.a[0], t.pos[1] - w.a[1], t.pos[2] - w.a[2]};
+        const float len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+        float s = len2 > 0.0f ? (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / len2 : 0.0f;
+        s = s < 0.0f ? 0.0f : s > 1.0f ? 1.0f : s;
+        const float d[3] = {ap[0] - ab[0] * s, ap[1] - ab[1] * s, ap[2] - ab[2] * s};
+        if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > w.radius * w.radius) continue;
+        memcpy(j, w.impulse, sizeof(j));
+        inside = true;
+        break;
+    }
+    LeaveCriticalSection(&g_blow_lock);
+    if (!inside) return;
+    const float speed = std::sqrt(j[0] * j[0] + j[1] * j[1] + j[2] * j[2]) * *reinterpret_cast<const float*>(body + kBodyInvMass);
+    if (speed > kBlowMaxSpeed)
+        for (float& v : j) v *= kBlowMaxSpeed / speed;
+    rfg::fn<void(__cdecl*)(uint32_t, const float*)>(r::havok_body_apply_linear_impulse_by_handle)(handle, j);
+    ++g_late_pushes;
+}
+
+void(__cdecl* o_combat_hits)(void*, void*, bool) = nullptr;
+void __cdecl d_combat_hits(void* human, void* input, bool secondary) {
+    const auto* h = static_cast<const uint8_t*>(human);
+    const uint8_t* move = h ? *reinterpret_cast<const uint8_t* const*>(h + kHumanMeleeMove) : nullptr;
+    const float radius = move ? *reinterpret_cast<const float*>(move + kMoveCastRadius) : 0.0f;
+    if (!g_on || !input || !(radius >= kWideBlowRadius) || radius > 500.0f) {
+        o_combat_hits(human, input, secondary);
+        return;
+    }
+    // raycast_input: start at +0, end at +0xC (the attack point a frame ago and now).
+    float a[3], b[3];
+    memcpy(a, input, sizeof(a));
+    memcpy(b, static_cast<const uint8_t*>(input) + 0xC, sizeof(b));
+    g_in_wide_blow = true;
+    o_combat_hits(human, input, secondary);
+    g_in_wide_blow = false;
+
+    float d[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+    const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    for (float& v : d) v = len > 1e-4f ? v / len : 0.0f;
+    const float* fwd = reinterpret_cast<const float*>(h + kObjForward);
+    const float away = *reinterpret_cast<const float*>(move + kMoveAwayScale);
+    const float impact = *reinterpret_cast<const float*>(move + kMoveImpactImpulse);
+    ipc::MeleeSweep s{};
+    s.h = {uint16_t(ipc::Cmd::MeleeSweep), 0, sizeof(s)};
+    s.start = {a[0], a[1], a[2]};
+    s.end = {b[0], b[1], b[2]};
+    s.radius = radius;
+    s.max_speed = kBlowMaxSpeed;
+    s.impulse = {(d[0] + fwd[0] * away) * impact, (d[1] + fwd[1] * away) * impact, (d[2] + fwd[2] * away) * impact};
+    if (!(std::isfinite(s.impulse.x) && std::isfinite(s.impulse.y) && std::isfinite(s.impulse.z))) return;
+
+    const uint32_t now_ms = rfg::global<uint32_t>(r::Frametime_total_milliseconds);
+    EnterCriticalSection(&g_blow_lock);
+    auto it = std::find_if(g_blows.begin(), g_blows.end(), [&](const Blow& w) { return w.attacker == human; });
+    bool send = true;
+    if (it == g_blows.end() || it->move != move || now_ms - it->last_ms > kBlowGapMs) {
+        if (it == g_blows.end()) {
+            if (g_blows.size() >= 64) g_blows.erase(g_blows.begin());
+            it = g_blows.insert(g_blows.end(), Blow{});
+        }
+        *it = Blow{human, move, g_next_blow_id++, now_ms, {b[0], b[1], b[2]}, {a[0], a[1], a[2]}, {b[0], b[1], b[2]},
+                   radius, {s.impulse.x, s.impulse.y, s.impulse.z}};
+        ++g_wide_blows;
+        harness::shot_series();  // Harness.ShotsAfterBlow
+    } else {
+        const float dx = b[0] - it->sent_end[0], dy = b[1] - it->sent_end[1], dz = b[2] - it->sent_end[2];
+        send = dx * dx + dy * dy + dz * dz > (kBlowNewReach * radius) * (kBlowNewReach * radius);
+        it->last_ms = now_ms;
+        if (send) memcpy(it->sent_end, b, sizeof(b));
+    }
+    s.blow = it->id;
+    if (send && g_sweeps_pending.size() < 256) g_sweeps_pending.push_back(s);
+    LeaveCriticalSection(&g_blow_lock);
+}
+
+void send_melee_sweeps() {
+    static std::vector<ipc::MeleeSweep> batch;
+    EnterCriticalSection(&g_blow_lock);
+    batch.swap(g_sweeps_pending);
+    LeaveCriticalSection(&g_blow_lock);
+    for (const ipc::MeleeSweep& s : batch)
+        if (pxbridge::send_record(&s, sizeof(s))) ++g_sweeps_sent;
+    batch.clear();
+}
+
+bool patch_zone_hits() {
+    void** vt = static_cast<void**>(rfg::addr(r::obj_zone_vftable));
+    // OpenRFG64: an incrementally linked build's vtable points at jump thunks (rfg::code_target).
+    if (rfg::code_target(vt[kZoneSlotMelee]) != rfg::addr(r::obj_zone__process_melee_hit) ||
+        rfg::code_target(vt[kZoneSlotBullet]) != rfg::addr(r::object__process_bullet_hit))
+        return false;
+    DWORD old;
+    if (!VirtualProtect(&vt[kZoneSlotBullet], 2 * sizeof(void*), PAGE_READWRITE, &old)) return false;
+    o_zone_bullet = reinterpret_cast<ZoneBullet>(vt[kZoneSlotBullet]);
+    o_zone_melee = reinterpret_cast<ZoneMelee>(vt[kZoneSlotMelee]);
+    vt[kZoneSlotBullet] = reinterpret_cast<void*>(&d_zone_bullet);
+    vt[kZoneSlotMelee] = reinterpret_cast<void*>(&d_zone_melee);
+    VirtualProtect(&vt[kZoneSlotBullet], 2 * sizeof(void*), old, &old);
+    return true;
+}
+
+// Test.StandInProbe (unattended runs): every 2 s, a piece with a stand-in is looked for by the game's own query (a
+// ray with the default filter, as melee and bullets use, straight down through the middle of its bounds) and given a
+// blow through the zone object's process_melee_hit (3 m/s sideways); 0.6 s later its pose in the host says whether
+// it moved. The log tallies both.
+bool g_probe = false;
+int g_probe_stage = 0;
+uint32_t g_probe_slot = kNoSlot;
+double g_probe_at = 0;
+float g_probe_pos[3] = {};
+uint32_t g_probe_rays = 0, g_probe_ray_hits = 0, g_probe_blows = 0, g_probe_moved = 0;
+
+void piece_middle(const Piece& p, float out[3]) {  // its bounds' middle, in the world, where its stand-in is
+    float rot[9];
+    rows_from_quat({p.si_q[0], p.si_q[1], p.si_q[2], p.si_q[3]}, rot);
+    for (int k = 0; k < 3; ++k)
+        out[k] = p.si_pos[k] + p.box_c[0] * rot[k] + p.box_c[1] * rot[3 + k] + p.box_c[2] * rot[6 + k];
+}
+
+// The nearest Havok body a ray from `a` to `b` hits (the default filter, or Havok's static level only): its handle
+// (kNoSlot if it has none or nothing is hit), the hits and the nearest's fraction for the log.
+struct RayResult {
+    uint32_t handle = kNoSlot;
+    int hits = 0;
+    float fraction = -1.0f;
+    uint32_t object = 0xFFFFFFFFu;
+};
+RayResult probe_ray(const float a[3], const float b[3], bool static_level = false) {
+    // OpenRFG64: room for the running build's raycast_input / raycast_output (their constructors fill them: 64
+    // and 16 bytes on x64, 48 and 12 in rfg.exe); start and end are their first members in both.
+    alignas(16) uint8_t in[0x80] = {};
+    alignas(16) uint8_t out[0x40] = {};
+    RayResult res;
+    if (layout::raycast_input_size > sizeof(in) || layout::raycast_output_size > sizeof(out)) return res;
+    rfg::fn<void(__fastcall*)(void* RFG_EDX_TYPE)>(r::raycast_input__raycast_input)(in RFG_EDX_ARG);
+    memcpy(in, a, 12);
+    memcpy(in + 0xC, b, 12);
+    rfg::fn<void(__fastcall*)(void* RFG_EDX_TYPE)>(r::raycast_output__raycast_output)(out RFG_EDX_ARG);
+    const uint32_t cast = static_level ? r::havok_raycast_against_static_level_only : r::havok_raycast;
+    if (rfg::fn<bool(__cdecl*)(void*, void*)>(cast)(in, out)) {
+        const uint8_t* hits = *reinterpret_cast<const uint8_t* const*>(out);
+        res.hits = *reinterpret_cast<const int*>(out + layout::raycast_output_count);
+        float best = 2.0f;
+        for (int i = 0; hits && i < res.hits; ++i) {
+            const uint8_t* h = hits + size_t(i) * layout::raycast_hit_size;
+            const float fraction = *reinterpret_cast<const float*>(h + layout::raycast_hit_fraction);
+            if (fraction >= best) continue;
+            best = res.fraction = fraction;
+            res.handle = *reinterpret_cast<const uint32_t*>(h + layout::raycast_hit_havok_handle);
+            res.object = *reinterpret_cast<const uint32_t*>(h + layout::raycast_hit_object);
+        }
+    }
+    rfg::fn<void(__fastcall*)(void* RFG_EDX_TYPE)>(r::raycast_output___raycast_output)(out RFG_EDX_ARG);
+    return res;
+}
+
+void probe_frame() {
+    const double now = session::since_start_ms();
+    const ipc::SnapshotHeader* s = pxbridge::snapshot(nullptr);
+    if (!s) return;
+    if (g_probe_stage == 1) {
+        if (now < g_probe_at + 600) return;
+        const Piece& p = g_pieces[g_probe_slot];
+        if (p.inst) {
+            const ipc::BodyPose& b = pxbridge::poses(s)[g_probe_slot];
+            const float dx = b.pos.x - g_probe_pos[0], dy = b.pos.y - g_probe_pos[1], dz = b.pos.z - g_probe_pos[2];
+            const float moved = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (moved > 0.05f) ++g_probe_moved;
+            LOG("stand-in probe: piece %u moved %.2f m after the blow", g_probe_slot, double(moved));
+        }
+        g_probe_stage = 0;
+        g_probe_at = now + 1400;
+        return;
+    }
+    if (now < g_probe_at || !g_zone_obj) return;
+    for (uint32_t i : g_stand_in_slots) {
+        Piece& p = g_pieces[i];
+        if (p.stand_in == kNoStandIn || !p.inst || p.radius < 0.2f) continue;
+        float mid[3];
+        piece_middle(p, mid);
+        const float top[3] = {mid[0], mid[1] + 3.0f, mid[2]}, bottom[3] = {mid[0], mid[1] - 3.0f, mid[2]};
+        const RayResult ray = probe_ray(top, bottom), level = probe_ray(top, bottom, true);
+        ++g_probe_rays;
+        // A stand-in hit names the zone object the stand-ins carry and no body handle (the game sets those for its
+        // own bodies only); terrain also carries the zone object, so the hit must also lie at the piece.
+        const uint32_t zone_handle = *reinterpret_cast<const uint32_t*>(g_zone_obj + kObjHandle);
+        const float hit_y = top[1] - 6.0f * ray.fraction;
+        const bool on_stand_in = ray.hits > 0 && ray.object == zone_handle && ray.handle == kNoSlot &&
+                                 hit_y > mid[1] - p.radius - 0.1f && hit_y < mid[1] + p.radius + 0.1f;
+        if (on_stand_in) ++g_probe_ray_hits;
+        uint8_t* player = rfg::fn<uint8_t*(__cdecl*)()>(r::player_get_local_player)();
+        const float* pp = player ? reinterpret_cast<const float*>(player + layout::object_pos) : mid;
+        LOG("stand-in probe: ray (%.1f, %.1f, %.1f) down 6 m, %.1f m from the player: default filter %d hits, nearest "
+            "at %.2f (handle %08X, object %08X); static level %d hits, nearest at %.2f; its stand-in %08X", double(top[0]),
+            double(top[1]), double(top[2]),
+            double(std::sqrt((mid[0] - pp[0]) * (mid[0] - pp[0]) + (mid[1] - pp[1]) * (mid[1] - pp[1]) +
+                             (mid[2] - pp[2]) * (mid[2] - pp[2]))),
+            ray.hits, double(ray.fraction), ray.handle, ray.object, level.hits, double(level.fraction), p.stand_in);
+        // A blow as the hammer's: through the zone object's vtable (our wrapper, then the game's).
+        const float j[3] = {3.0f * p.mass, 0.5f * p.mass, 0.0f};
+        void** vt = *reinterpret_cast<void***>(g_zone_obj);
+        const ZoneMelee melee = reinterpret_cast<ZoneMelee>(vt[kZoneSlotMelee]);
+        const uint32_t before = g_melee_hits;
+        melee(g_zone_obj RFG_EDX_ARG, nullptr, 10.0f, j, mid, mid, 0, nullptr);
+        const bool passed_on = g_melee_hits != before;
+        g_probe_blows += passed_on ? 1 : 0;
+        LOG("stand-in probe: piece %u (%.0f kg, %s, %s shape): the default ray from above hits %s; the blow %s",
+            i, double(p.mass), p.heavy && g_solid ? "solid" : "ghost", p.shape ? "its own" : "a box",
+            on_stand_in ? "a stand-in at the piece" : ray.hits == 0 ? "nothing" : "something else",
+            passed_on ? "reached it" : "did not reach it");
+        const ipc::BodyPose& b = pxbridge::poses(s)[i];
+        g_probe_pos[0] = b.pos.x, g_probe_pos[1] = b.pos.y, g_probe_pos[2] = b.pos.z;
+        g_probe_slot = i;
+        g_probe_stage = 1;
+        g_probe_at = now;
+        return;
+    }
+}
+
+// A guard the game lacks, needed by the stand-ins. MyCharacterListener::processConstraintsCallback, where the player
+// leans on a slow body (+0x3D2), reads the subtype of the body's game object (cmp byte ptr [esi+0x7F], 4) without the
+// null check it makes a few lines up; a stand-in has no game object (crashed both test replays). Those 12 bytes
+// (cmp; movss xmm0, [esp+0x5C]; jne) now jump to a stub that checks first: no object counts as "not subtype 4".
+const rfg::CodeSite kLeanSite{r::MyCharacterListener__processConstraintsCallback, 0x3D2},
+    kLeanSubtype4{r::MyCharacterListener__processConstraintsCallback, 0x3DE},
+    kLeanOther{r::MyCharacterListener__processConstraintsCallback, 0x3EA};
+
+bool patch_lean_check() {
+    uint8_t* site = static_cast<uint8_t*>(rfg::addr(kLeanSite.rva()));
+    static const uint8_t kOriginal[12] = {0x80, 0x7E, 0x7F, 0x04, 0xF3, 0x0F, 0x10, 0x44, 0x24, 0x5C, 0x75, 0x0C};
+    if (memcmp(site, kOriginal, sizeof(kOriginal)) != 0) return false;
+    auto* stub = static_cast<uint8_t*>(VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+    if (!stub) return false;
+    uint8_t* p = stub;
+    auto put = [&](std::initializer_list<uint8_t> bytes) {
+        for (uint8_t b : bytes) *p++ = b;
+    };
+    auto jump_to = [&](const void* target) {
+        *p++ = 0xE9;
+        const int32_t rel = int32_t(reinterpret_cast<intptr_t>(target) - reinterpret_cast<intptr_t>(p + 4));
+        memcpy(p, &rel, 4);
+        p += 4;
+    };
+    put({0x85, 0xF6});                          // test esi, esi
+    put({0x74, 0x11});                          // jz other
+    put({0x80, 0x7E, 0x7F, 0x04});              // cmp byte ptr [esi+0x7F], 4
+    put({0x75, 0x0B});                          // jne other
+    put({0xF3, 0x0F, 0x10, 0x44, 0x24, 0x5C});  // movss xmm0, [esp+0x5C]
+    jump_to(rfg::addr(kLeanSubtype4.rva()));
+    put({0xF3, 0x0F, 0x10, 0x44, 0x24, 0x5C});  // other: movss xmm0, [esp+0x5C]
+    jump_to(rfg::addr(kLeanOther.rva()));
+    FlushInstructionCache(GetCurrentProcess(), stub, size_t(p - stub));
+    DWORD old;
+    if (!VirtualProtect(site, sizeof(kOriginal), PAGE_EXECUTE_READWRITE, &old)) return false;
+    site[0] = 0xE9;
+    const int32_t rel = int32_t(reinterpret_cast<intptr_t>(stub) - reinterpret_cast<intptr_t>(site + 5));
+    memcpy(site + 1, &rel, 4);
+    memset(site + 5, 0x90, sizeof(kOriginal) - 5);
+    VirtualProtect(site, sizeof(kOriginal), old, &old);
+    FlushInstructionCache(GetCurrentProcess(), site, sizeof(kOriginal));
+    return true;
+}
+
+void free_all_stand_ins() {
+    for (uint32_t h : g_stand_ins_to_free) free_stand_in(h);
+    g_stand_ins_to_free.clear();
+    for (uint32_t i : g_stand_in_slots) {
+        Piece& p = g_pieces[i];
+        if (p.stand_in == kNoStandIn) continue;
+        free_stand_in(p.stand_in);
+        p.stand_in = kNoStandIn;
+    }
+    g_stand_in_slots.clear();
+    g_stand_in_zones.clear();
+    g_carried_zones.clear();
+}
+
+void log_explosion_infos();  // below, with the explosion hook
+void send_explosions();
+
+// ---- diagnostics (Telemetry.Enabled): what stays in Havok, and what vehicles are made of ----
+
+struct ShapeCensus : hs::Sink {
+    uint32_t convexes = 0, triangles = 0, height_fields = 0, unsupported_leaves = 0;
+    uint8_t first_unsupported = 0xFF;
+    void triangle(const float*, const float*, const float*) override { ++triangles; }
+    void convex(const float (*)[3], int, float, uint32_t) override { ++convexes; }
+    void height_field(const uint8_t*, const hs::Transform&) override { ++height_fields; }
+    void unsupported(uint8_t type) override {
+        if (!unsupported_leaves++) first_unsupported = type;
+    }
+};
+
+bool census_walk(const uint8_t* shape, ShapeCensus& c) {
+    __try {
+        return hs::walk(shape, hs::Transform::identity(), c);
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return false;
+    }
+}
+
+// Every general mover the world lists, by why adopt() leaves it in Havok.
+void census_general_movers() {
+    uint8_t* w = world();
+    uint8_t* const* all = *reinterpret_cast<uint8_t* const**>(w + kWorldAllObjects);
+    const uint16_t* movers = *reinterpret_cast<const uint16_t* const*>(w + kWorldGeneralMovers);
+    const int n = *reinterpret_cast<const int*>(w + kWorldGeneralMoverCount);
+    if (!all || !movers || n <= 0) return;
+    uint8_t* const* bodies = static_cast<uint8_t* const*>(rfg::addr(r::Hk_rigid_bodies));
+    const auto is_fading = rfg::fn<bool(__cdecl*)(uint8_t*)>(r::object_mover_is_fading_for_delete);
+    enum { kDestroyed, kNotBalanced, kFading, kNoInstance, kAttached, kNoBody, kKeyframed, kFixed, kBadShape, kTriangles,
+           kUnsupported, kAdoptable, kReasons };
+    static const char* const kNames[kReasons] = {"destroyed", "not load-balanced", "fading", "no render instance",
+                                                 "attached or constrained", "no Havok body", "keyframed", "fixed",
+                                                 "shape not readable", "triangle shapes", "unsupported shapes",
+                                                 "adoptable"};
+    uint32_t count[kReasons] = {};
+    uint32_t unsupported_leaf[hs::kTypeCount + 1] = {}, unsupported_top[hs::kTypeCount + 1] = {};
+    uint32_t constrained_with_shape = 0;
+    for (int i = 0; i < n; ++i) {
+        uint8_t* obj = all[movers[i]];
+        if (!obj) continue;
+        if (obj[kObjFlags] & kObjDestroyed) { ++count[kDestroyed]; continue; }
+        const uint32_t mflags = *reinterpret_cast<const uint32_t*>(obj + kMoverFlags);
+        if (!(mflags & kMoverLoadBalanced)) { ++count[kNotBalanced]; continue; }
+        if ((mflags & kMoverFading) || is_fading(obj)) { ++count[kFading]; continue; }
+        if (!*reinterpret_cast<uint8_t**>(obj + kGmRenderInstance)) { ++count[kNoInstance]; continue; }
+        const uint32_t handle = *reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle);
+        const uint8_t* body = handle == 0xFFFFFFFFu ? nullptr : bodies[handle];
+        void* const* attach = reinterpret_cast<void* const*>(obj + kObjAttach);  // three pointers
+        if (attach[0] || attach[1] || attach[2]) {
+            ++count[kAttached];
+            if (body) ++constrained_with_shape;
+            continue;
+        }
+        if (!body) { ++count[kNoBody]; continue; }
+        const uint8_t motion = body[kBodyMotionType];
+        if (motion == 4) { ++count[kKeyframed]; continue; }
+        if (motion == 0 || motion == 5) { ++count[kFixed]; continue; }
+        ShapeCensus c;
+        const uint8_t* shape = hs::body_shape(body);
+        if (!shape || !census_walk(shape, c)) { ++count[kBadShape]; continue; }
+        if (c.unsupported_leaves) {
+            ++count[kUnsupported];
+            ++unsupported_leaf[std::min<uint8_t>(c.first_unsupported, hs::kTypeCount)];
+            ++unsupported_top[std::min<uint8_t>(hs::type_of(shape), hs::kTypeCount)];
+            continue;
+        }
+        if (c.triangles || c.height_fields) { ++count[kTriangles]; continue; }
+        ++count[kAdoptable];
+    }
+    char text[768];
+    int len = 0;
+    for (int k = 0; k < kReasons && len < int(sizeof(text)) - 48; ++k)
+        if (count[k]) len += snprintf(text + len, sizeof(text) - len, "%s%s %u", len ? ", " : "", kNames[k], count[k]);
+    LOG("debris census: %d general movers in Havok: %s", n, len ? text : "none");
+    for (int t = 0; t <= hs::kTypeCount; ++t)
+        if (unsupported_leaf[t]) LOG("debris census:   unsupported leaf %s: %u", hs::type_name(uint8_t(t)), unsupported_leaf[t]);
+    for (int t = 0; t <= hs::kTypeCount; ++t)
+        if (unsupported_top[t]) LOG("debris census:   unsupported, top shape %s: %u", hs::type_name(uint8_t(t)), unsupported_top[t]);
+    len = 0;
+    for (int t = 0; t <= hs::kTypeCount && len < int(sizeof(text)) - 48; ++t)
+        if (g_adopted_top_types[t])
+            len += snprintf(text + len, sizeof(text) - len, "%s%s %u", len ? ", " : "", hs::type_name(uint8_t(t)),
+                            g_adopted_top_types[t]);
+    if (len) LOG("debris census: top shapes of the pieces taken over so far: %s", text);
+}
+
+// The Havok bodies of vehicles (object type 3; walkers are vehicles) in the simulation islands.
+void census_vehicles() {
+    uint8_t* hw = rfg::global<uint8_t*>(r::Havok_world);
+    uint8_t* player = rfg::fn<uint8_t*(__cdecl*)()>(r::player_get_local_player)();
+    if (!hw || !player) return;
+    const float* pp = reinterpret_cast<const float*>(player + layout::object_pos);
+    const auto object_of = rfg::fn<uint8_t*(__cdecl*)(const uint8_t*)>(r::object_from_world_obj);
+    struct Seen {
+        uint8_t* obj;
+        uint32_t bodies;
+        float dist;
+    };
+    std::vector<Seen> vehicles;
+    static uint32_t censuses = 0;
+    uint32_t logged = censuses++ ? 40 : 0;  // the bodies one by one in the first census only
+    for (uint32_t list = 0; list < 2; ++list) {  // m_activeSimulationIslands, m_inactiveSimulationIslands
+        const uint8_t* const* islands = *reinterpret_cast<uint8_t* const* const*>(hw + (list ? layout::hk_world_inactive_islands : layout::hk_world_active_islands));
+        const int ni = *reinterpret_cast<const int*>(hw + (list ? layout::hk_world_inactive_island_count : layout::hk_world_active_island_count));
+        for (int i = 0; islands && i < ni; ++i) {
+            const uint8_t* island = islands[i];
+            if (!island) continue;
+            const uint8_t* const* entities = *reinterpret_cast<const uint8_t* const* const*>(island + layout::hk_island_entities);
+            const int ne = *reinterpret_cast<const int*>(island + layout::hk_island_entity_count);
+            for (int e = 0; entities && e < ne; ++e) {
+                const uint8_t* body = entities[e];
+                uint8_t* obj = body ? object_of(body) : nullptr;
+                if (!obj || int8_t(obj[kObjType]) != kObjTypeVehicle) continue;
+                const hs::Transform t = hs::body_transform(body);
+                const float dx = t.pos[0] - pp[0], dy = t.pos[1] - pp[1], dz = t.pos[2] - pp[2];
+                const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+                auto it = std::find_if(vehicles.begin(), vehicles.end(), [obj](const Seen& s) { return s.obj == obj; });
+                if (it == vehicles.end()) vehicles.push_back({obj, 1, dist});
+                else ++it->bodies, it->dist = std::min(it->dist, dist);
+                if (dist > 150.0f || logged >= 40) continue;
+                ++logged;
+                ShapeCensus c;
+                const uint8_t* shape = hs::body_shape(body);
+                const bool read = shape && census_walk(shape, c);
+                const uint32_t filter = *reinterpret_cast<const uint32_t*>(body + kBodyFilterInfo);
+                const float inv_mass = *reinterpret_cast<const float*>(body + kBodyInvMass);
+                LOG("vehicle census: vehicle %08X (%s island) body %p: %.1f m away, motion %u, mass %.0f kg, layer %u "
+                    "group %u, shape %s: %u convex, %u triangles, %u unsupported (first %s)%s",
+                    *reinterpret_cast<const uint32_t*>(obj + kObjHandle), list ? "inactive" : "active",
+                    static_cast<const void*>(body), double(dist), unsigned(body[kBodyMotionType]),
+                    inv_mass > 0 ? 1.0 / double(inv_mass) : 0.0, filter & 0x7F, filter >> 16,
+                    shape ? hs::type_name(hs::type_of(shape)) : "none", c.convexes, c.triangles, c.unsupported_leaves,
+                    c.unsupported_leaves ? hs::type_name(c.first_unsupported) : "-", read ? "" : " (not fully readable)");
+            }
+        }
+    }
+    uint32_t nearby = 0;
+    for (const Seen& s : vehicles) nearby += s.dist < 150.0f ? 1 : 0;
+    LOG("vehicle census: %zu vehicles with Havok bodies, %u within 150 m of the player", vehicles.size(), nearby);
+}
+
+// Everything in Havok's simulation islands (what moves), by object type, subtype, motion type and layer.
+void census_islands() {
+    uint8_t* hw = rfg::global<uint8_t*>(r::Havok_world);
+    if (!hw) return;
+    const auto object_of = rfg::fn<uint8_t*(__cdecl*)(const uint8_t*)>(r::object_from_world_obj);
+    std::vector<std::pair<uint32_t, uint32_t>> counts;  // key (type, subtype, motion, layer), bodies
+    uint32_t total = 0;
+    for (uint32_t list = 0; list < 2; ++list) {
+        const uint8_t* const* islands = *reinterpret_cast<uint8_t* const* const*>(hw + (list ? layout::hk_world_inactive_islands : layout::hk_world_active_islands));
+        const int ni = *reinterpret_cast<const int*>(hw + (list ? layout::hk_world_inactive_island_count : layout::hk_world_active_island_count));
+        for (int i = 0; islands && i < ni; ++i) {
+            const uint8_t* island = islands[i];
+            if (!island) continue;
+            const uint8_t* const* entities = *reinterpret_cast<const uint8_t* const* const*>(island + layout::hk_island_entities);
+            const int ne = *reinterpret_cast<const int*>(island + layout::hk_island_entity_count);
+            for (int e = 0; entities && e < ne; ++e) {
+                const uint8_t* body = entities[e];
+                if (!body) continue;
+                const uint8_t* obj = object_of(body);
+                const uint32_t key = (obj ? uint32_t(uint8_t(obj[kObjType])) << 24 | uint32_t(uint8_t(obj[kObjType + 1])) << 16
+                                          : 0xFFFF0000u) |
+                                     uint32_t(body[kBodyMotionType]) << 8 |
+                                     (*reinterpret_cast<const uint32_t*>(body + kBodyFilterInfo) & 0x7F);
+                auto it = std::find_if(counts.begin(), counts.end(), [key](const auto& c) { return c.first == key; });
+                if (it == counts.end()) counts.emplace_back(key, 1);
+                else ++it->second;
+                ++total;
+            }
+        }
+    }
+    std::sort(counts.begin(), counts.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+    char text[640];
+    int len = 0;
+    for (size_t i = 0; i < counts.size() && i < 16 && len < int(sizeof(text)) - 48; ++i) {
+        const uint32_t k = counts[i].first;
+        len += snprintf(text + len, sizeof(text) - len, "%s type %d/%d motion %u layer %u: %u", i ? ";" : "",
+                        int(int8_t(k >> 24)), int(int8_t(k >> 16)), (k >> 8) & 0xFF, k & 0x7F, counts[i].second);
+    }
+    LOG("island census: %u bodies move in Havok:%s", total, len ? text : " none");
+}
+
+// Test.InspectFrames (replays): at those frames, what the camera looks at. The game's default ray along the view
+// (what it hits: an object, or a stand-in or terrain, both carrying a zone object), the pieces in PhysX within 25 m of
+// that point (frozen, awake, with a stand-in), the Havok bodies there by kind, and the same ray against the static
+// world mirrored in the host (answered a few frames later): something there that Havok no longer has holds pieces up.
+std::vector<int32_t> g_inspect_frames;
+int32_t g_last_inspected = -1;
+uint32_t g_inspect_request = 0;
+float g_inspect_havok_m = -1.0f;
+
+// What a ray along the view hit, for the log: the object (type, subtype, where) and whether its Havok body is fixed.
+void describe_hit(int32_t frame, const char* filter, const RayResult& ray, float dist, const float* hit) {
+    int type = -1, sub = -1, motion = -1;
+    float opos[3] = {};
+    if (ray.hits && ray.object != 0xFFFFFFFFu) {
+        const auto from_handle = rfg::fn<uint8_t*(__fastcall*)(void* RFG_EDX_TYPE, uint32_t)>(r::world__object_from_handle);
+        if (const uint8_t* obj = from_handle(world() RFG_EDX_ARG, ray.object)) {
+            type = int8_t(obj[kObjType]), sub = int8_t(obj[kObjType + 1]);
+            memcpy(opos, obj + layout::object_pos, sizeof(opos));
+            const uint32_t handle = *reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle);
+            const uint8_t* body = handle == 0xFFFFFFFFu ? nullptr
+                                                        : static_cast<uint8_t* const*>(rfg::addr(r::Hk_rigid_bodies))[handle];
+            if (body) motion = body[kBodyMotionType];
+        }
+    }
+    LOG("inspect frame %d: the %s ray hits %s at %.1f m, (%.1f, %.1f, %.1f): object %08X type %d/%d at (%.1f, %.1f, "
+        "%.1f), its body's motion %d (5 fixed)", frame, filter, ray.hits ? "something" : "nothing", double(dist),
+        double(hit[0]), double(hit[1]), double(hit[2]), ray.object, type, sub, double(opos[0]), double(opos[1]),
+        double(opos[2]), motion);
+}
+
+void inspect_view(int32_t frame) {
+    const uint8_t* cam = static_cast<const uint8_t*>(rfg::addr(r::Rfg_camera));
+    const float* cp = reinterpret_cast<const float*>(cam + layout::camera_real_pos);         // real_pos
+    const float* fv = reinterpret_cast<const float*>(cam + layout::camera_real_orient + 0x18);  // real_orient.fvec
+    constexpr float kRange = 300.0f, kPastPlayer = 4.0f;  // the third-person camera looks over the player's shoulder
+    const float start[3] = {cp[0] + fv[0] * kPastPlayer, cp[1] + fv[1] * kPastPlayer, cp[2] + fv[2] * kPastPlayer};
+    const float end[3] = {cp[0] + fv[0] * kRange, cp[1] + fv[1] * kRange, cp[2] + fv[2] * kRange};
+    LOG("inspect frame %d: camera (%.1f, %.1f, %.1f) looking (%.2f, %.2f, %.2f)", frame, double(cp[0]), double(cp[1]),
+        double(cp[2]), double(fv[0]), double(fv[1]), double(fv[2]));
+    const RayResult ray = probe_ray(start, end);
+    const float dist = kPastPlayer + (ray.hits ? ray.fraction : 1.0f) * (kRange - kPastPlayer);
+    const float hit[3] = {cp[0] + fv[0] * dist, cp[1] + fv[1] * dist, cp[2] + fv[2] * dist};
+    describe_hit(frame, "default", ray, dist, hit);
+    {
+        RayResult building;
+        // OpenRFG64: buffers for the running build's sizes (see probe_ray).
+        alignas(16) uint8_t in[0x80] = {};
+        alignas(16) uint8_t out[0x40] = {};
+        rfg::fn<void(__fastcall*)(void* RFG_EDX_TYPE)>(r::raycast_input__raycast_input)(in RFG_EDX_ARG);
+        memcpy(in, start, 12);
+        memcpy(in + 0xC, end, 12);
+        rfg::fn<void(__fastcall*)(void* RFG_EDX_TYPE)>(r::raycast_output__raycast_output)(out RFG_EDX_ARG);
+        if (rfg::fn<bool(__cdecl*)(void*, void*)>(r::havok_raycast_against_destroyable_geometry)(in, out)) {
+            const uint8_t* hits = *reinterpret_cast<const uint8_t* const*>(out);
+            building.hits = *reinterpret_cast<const int*>(out + layout::raycast_output_count);
+            float best = 2.0f;
+            for (int i = 0; hits && i < building.hits; ++i) {
+                const uint8_t* h = hits + size_t(i) * layout::raycast_hit_size;
+                const float f = *reinterpret_cast<const float*>(h + layout::raycast_hit_fraction);
+                if (f < best) best = building.fraction = f, building.object = *reinterpret_cast<const uint32_t*>(h + layout::raycast_hit_object);
+            }
+        }
+        rfg::fn<void(__fastcall*)(void* RFG_EDX_TYPE)>(r::raycast_output___raycast_output)(out RFG_EDX_ARG);
+        const float bdist = kPastPlayer + (building.hits ? building.fraction : 1.0f) * (kRange - kPastPlayer);
+        const float bhit[3] = {cp[0] + fv[0] * bdist, cp[1] + fv[1] * bdist, cp[2] + fv[2] * bdist};
+        describe_hit(frame, "destroyable-geometry", building, bdist, bhit);
+    }
+    // A fan of rays, 9 x 9 over 20 degrees around the view: every object they hit first, once.
+    {
+        const float* rv = reinterpret_cast<const float*>(cam + layout::camera_real_orient);         // real_orient.rvec
+        const float* uv = reinterpret_cast<const float*>(cam + layout::camera_real_orient + 0xC);   // real_orient.uvec
+        std::vector<std::pair<uint32_t, float>> seen;  // object, distance
+        for (int iy = -4; iy <= 4; ++iy)
+            for (int ix = -4; ix <= 4; ++ix) {
+                const float ax = float(ix) * 0.0436f, ay = float(iy) * 0.0436f;  // 2.5 degrees apart
+                float d[3];
+                for (int k = 0; k < 3; ++k) d[k] = fv[k] + rv[k] * ax + uv[k] * ay;
+                const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                for (float& c : d) c /= len;
+                const float a[3] = {cp[0] + d[0] * kPastPlayer, cp[1] + d[1] * kPastPlayer, cp[2] + d[2] * kPastPlayer};
+                const float b[3] = {cp[0] + d[0] * kRange, cp[1] + d[1] * kRange, cp[2] + d[2] * kRange};
+                const RayResult fan = probe_ray(a, b);
+                if (!fan.hits || fan.object == 0xFFFFFFFFu) continue;
+                const float fd = kPastPlayer + fan.fraction * (kRange - kPastPlayer);
+                auto it = std::find_if(seen.begin(), seen.end(), [&](const auto& s) { return s.first == fan.object; });
+                if (it == seen.end()) seen.emplace_back(fan.object, fd);
+                else it->second = std::min(it->second, fd);
+            }
+        const auto from_handle = rfg::fn<uint8_t*(__fastcall*)(void* RFG_EDX_TYPE, uint32_t)>(r::world__object_from_handle);
+        for (size_t i = 0; i < seen.size() && i < 12; ++i) {
+            const uint8_t* obj = from_handle(world() RFG_EDX_ARG, seen[i].first);
+            if (!obj) continue;
+            const uint32_t handle = *reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle);
+            const uint8_t* body = handle == 0xFFFFFFFFu ? nullptr
+                                                        : static_cast<uint8_t* const*>(rfg::addr(r::Hk_rigid_bodies))[handle];
+            const float* op = reinterpret_cast<const float*>(obj + layout::object_pos);
+            LOG("inspect frame %d:   the fan hits object %08X type %d/%d at (%.1f, %.1f, %.1f), first at %.1f m; its body: "
+                "motion %d, %u pieces in its shape", frame, seen[i].first, int(int8_t(obj[kObjType])),
+                int(int8_t(obj[kObjType + 1])), double(op[0]), double(op[1]), double(op[2]), double(seen[i].second),
+                body ? int(body[kBodyMotionType]) : -1, body && shape_signature(body) ? shape_signature(body) - 1 : 0u);
+        }
+        if (seen.empty()) LOG("inspect frame %d:   the fan hits no object", frame);
+    }
+    // The pieces around that point.
+    const ipc::SnapshotHeader* s = pxbridge::snapshot(nullptr);
+    if (s) {
+        const ipc::BodyPose* poses = pxbridge::poses(s);
+        const uint32_t slots = std::min<uint32_t>(s->slots, g_slots);
+        uint32_t n = 0, frozen = 0, awake = 0, stand_ins = 0, above = 0;
+        float lo = 1e30f, hi = -1e30f;
+        for (uint32_t i = 0; i < slots; ++i) {
+            if (!g_pieces[i].inst || !(poses[i].flags & ipc::kPoseAlive)) continue;
+            const ipc::Vec3& p = poses[i].pos;
+            const float dx = p.x - hit[0], dy = p.y - hit[1], dz = p.z - hit[2];
+            if (dx * dx + dy * dy + dz * dz > 25.0f * 25.0f) continue;
+            ++n;
+            frozen += (poses[i].flags & ipc::kPoseFrozen) ? 1 : 0;
+            awake += (poses[i].flags & ipc::kPoseAwake) ? 1 : 0;
+            stand_ins += g_pieces[i].stand_in != kNoStandIn ? 1 : 0;
+            above += p.y > hit[1] - 2.0f ? 1 : 0;
+            lo = std::min(lo, p.y), hi = std::max(hi, p.y);
+        }
+        LOG("inspect frame %d: %u pieces within 25 m of that point (%u frozen, %u awake, %u with a stand-in; %u no lower "
+            "than 2 m below it; heights %.1f to %.1f)", frame, n, frozen, awake, stand_ins, above, double(n ? lo : 0),
+            double(n ? hi : 0));
+        // The pieces in view: within 3 m of the view ray, 4 to 150 m out (whatever the ray hit).
+        const ipc::Vec3 eye{cp[0], cp[1], cp[2]};
+        const float d150[3] = {fv[0] * 150.0f, fv[1] * 150.0f, fv[2] * 150.0f};
+        uint32_t vn = 0, vfrozen = 0, vawake = 0, vheavy = 0, vbodiless = 0;
+        float vnear = 1e30f, vfar = 0, vlo = 1e30f, vhi = -1e30f, vspeed = 0, vmass = 0;
+        for (uint32_t i = 0; i < slots; ++i) {
+            if (!g_pieces[i].inst) continue;
+            const bool alive = (poses[i].flags & ipc::kPoseAlive) != 0;
+            // A piece the host has no body for stays drawn where it was taken over (its instance's position).
+            const float* ip = reinterpret_cast<const float*>(g_pieces[i].inst + kInstPos);
+            const ipc::Vec3 at = alive ? poses[i].pos : ipc::Vec3{ip[0], ip[1], ip[2]};
+            const ipc::Vec3 rel{at.x - eye.x, at.y - eye.y, at.z - eye.z};
+            float along = 0;
+            const float zero[3] = {0, 0, 0};
+            if (distance_to_segment(rel, zero, d150, 150.0f * 150.0f, &along) > 3.0f || along < 4.0f || along >= 150.0f)
+                continue;
+            if (!alive) {
+                vbodiless += g_pieces[i].fresh ? 0 : 1;
+                continue;
+            }
+            ++vn;
+            vfrozen += (poses[i].flags & ipc::kPoseFrozen) ? 1 : 0;
+            vawake += (poses[i].flags & ipc::kPoseAwake) ? 1 : 0;
+            vheavy += g_pieces[i].heavy;
+            vnear = std::min(vnear, along), vfar = std::max(vfar, along);
+            vlo = std::min(vlo, poses[i].pos.y), vhi = std::max(vhi, poses[i].pos.y);
+            const float mx = poses[i].pos.x - poses[i].prev_pos.x, my = poses[i].pos.y - poses[i].prev_pos.y,
+                        mz = poses[i].pos.z - poses[i].prev_pos.z;
+            vspeed = std::max(vspeed, std::sqrt(mx * mx + my * my + mz * mz) * 60.0f);
+            vmass += g_pieces[i].mass;
+        }
+        LOG("inspect frame %d: %u pieces in view (within 3 m of the view ray; %.1f to %.1f m out, heights %.1f to %.1f): "
+            "%u frozen, %u awake, %u asleep; %u heavy, %.1f kg mean; fastest %.2f m/s; %u more without a body in the "
+            "host", frame, vn, double(vn ? vnear : 0), double(vfar), double(vn ? vlo : 0), double(vn ? vhi : 0), vfrozen,
+            vawake, vn - vfrozen - vawake, vheavy, double(vn ? vmass / float(vn) : 0), double(vspeed), vbodiless);
+    }
+    // The Havok bodies around it: the fixed island (the static world: buildings) and the moving ones.
+    uint8_t* hw = rfg::global<uint8_t*>(r::Havok_world);
+    if (hw) {
+        const auto object_of = rfg::fn<uint8_t*(__cdecl*)(const uint8_t*)>(r::object_from_world_obj);
+        std::vector<std::pair<uint32_t, uint32_t>> counts;  // (type, subtype, motion) -> bodies
+        auto visit = [&](const uint8_t* island, bool fixed) {
+            if (!island) return;
+            const uint8_t* const* entities = *reinterpret_cast<const uint8_t* const* const*>(island + layout::hk_island_entities);
+            const int ne = *reinterpret_cast<const int*>(island + layout::hk_island_entity_count);
+            for (int e = 0; entities && e < ne; ++e) {
+                const uint8_t* body = entities[e];
+                if (!body) continue;
+                const hs::Transform t = hs::body_transform(body);
+                const float dx = t.pos[0] - hit[0], dy = t.pos[1] - hit[1], dz = t.pos[2] - hit[2];
+                if (dx * dx + dy * dy + dz * dz > 40.0f * 40.0f) continue;
+                const uint8_t* obj = object_of(body);
+                const uint32_t key = (obj ? uint32_t(uint8_t(obj[kObjType])) << 16 | uint32_t(uint8_t(obj[kObjType + 1])) << 8
+                                          : 0xFFFF00u) | body[kBodyMotionType];
+                auto it = std::find_if(counts.begin(), counts.end(), [key](const auto& c) { return c.first == key; });
+                if (it == counts.end()) counts.emplace_back(key, 1);
+                else ++it->second;
+                const uint32_t sig = shape_signature(body);
+                if (sig && obj && int8_t(obj[kObjType]) == kObjTypeMover)
+                    LOG("inspect frame %d:   %s building chunk %08X at (%.1f, %.1f, %.1f), %.1f m from the point: %u pieces "
+                        "in its shape", frame, fixed ? "standing" : "loose", *reinterpret_cast<const uint32_t*>(obj + kObjHandle),
+                        double(t.pos[0]), double(t.pos[1]), double(t.pos[2]), double(std::sqrt(dx * dx + dy * dy + dz * dz)),
+                        sig - 1);
+            }
+        };
+        visit(*reinterpret_cast<uint8_t* const*>(hw + layout::hk_world_fixed_island), true);  // m_fixedIsland
+        for (uint32_t list = 0; list < 2; ++list) {
+            const uint8_t* const* islands = *reinterpret_cast<uint8_t* const* const*>(hw + (list ? layout::hk_world_inactive_islands : layout::hk_world_active_islands));
+            const int ni = *reinterpret_cast<const int*>(hw + (list ? layout::hk_world_inactive_island_count : layout::hk_world_active_island_count));
+            for (int i = 0; islands && i < ni; ++i) visit(islands[i], false);
+        }
+        char text[512];
+        int len = 0;
+        for (size_t i = 0; i < counts.size() && len < int(sizeof(text)) - 40; ++i)
+            len += snprintf(text + len, sizeof(text) - len, "%s type %d/%d motion %u: %u", i ? ";" : "",
+                            int(int8_t(counts[i].first >> 16)), int(int8_t(counts[i].first >> 8)), counts[i].first & 0xFF,
+                            counts[i].second);
+        LOG("inspect frame %d: Havok bodies within 40 m of the point:%s", frame, len ? text : " none");
+    }
+    // The same ray against the static world in the host.
+    ipc::Ray mirror_ray{};
+    mirror_ray.origin = {cp[0], cp[1], cp[2]};
+    mirror_ray.direction = {fv[0], fv[1], fv[2]};
+    mirror_ray.max_distance = kRange;
+    g_inspect_request = 0x15C70000u | uint32_t(frame & 0xFFFF);
+    g_inspect_havok_m = ray.hits ? dist : -1.0f;
+    if (!pxbridge::raycast_batch(g_inspect_request, &mirror_ray, 1)) g_inspect_request = 0;
+}
+
+void inspect_frame() {
+    if (g_inspect_request && pxbridge::query_done() == g_inspect_request) {
+        LOG("inspect: the ray against the static world in the host hits at %.1f m (Havok's default ray: %.1f m)",
+            double(pxbridge::query_results()[0]), double(g_inspect_havok_m));
+        g_inspect_request = 0;
+    }
+    const int32_t frame = harness::replay_frame();
+    if (frame < 0 || frame == g_last_inspected) return;
+    if (std::find(g_inspect_frames.begin(), g_inspect_frames.end(), frame) == g_inspect_frames.end()) return;
+    g_last_inspected = frame;
+    inspect_view(frame);
+}
+
+// Which layers the key layers collide with, from the game's layer table (havok_game_filter: bit a * 128 + b).
+void log_layer_table() {
+    const uint8_t* filter = rfg::global<uint8_t*>(r::Havok_filter);
+    const uint32_t* table = filter ? *reinterpret_cast<const uint32_t* const*>(filter + layout::game_filter_layer_table) : nullptr;
+    if (!table) return;
+    static const struct {
+        int layer;
+        const char* name;
+    } kLayers[] = {{2, "world"}, {3, "mover"}, {4, "item"}, {5, "ragdoll"}, {6, "player"}, {7, "npc"},
+                   {9, "vehicle"}, {12, "walker"}, {14, "walker hull"}, {15, "flyer"}, {16, "projectile"},
+                   {19, "object collector"}, {22, "no collision"}, {25, "ray default"}, {36, "keyframed"},
+                   {38, "physical object"}, {39, "rfg destroyable"}, {40, "rfg normal"}, {41, "rfg normal fast"},
+                   {42, "rfg lite"},
+                   {43, "rfg ultra lite"}, {44, "rfg world only"}, {45, "ray rfg destroyable"}, {46, "rfg stress"},
+                   {48, "camera"}, {49, "human hit detect"}, {57, "ray vehicle wheel"}, {58, "effect rigid body"},
+                   {61, "invisible barrier"}};
+    for (const auto& l : kLayers) {
+        char text[512];
+        int len = 0;
+        for (int b = 0; b < 128 && len < int(sizeof(text)) - 8; ++b) {
+            const uint32_t bit = uint32_t(l.layer) * 128 + uint32_t(b);
+            if (table[bit >> 5] & (1u << (bit & 31))) len += snprintf(text + len, sizeof(text) - len, " %d", b);
+        }
+        LOG("layer table: %2d %-20s collides with:%s", l.layer, l.name, len ? text : " nothing");
+    }
+}
+
+// The game touches render instances only in the sim/render handshake, while the render thread waits: its objects'
+// update_render functions run there as game render tasks (Task_list_update_render, run by game_render_setup_frame
+// from gamestate_gp_handshake). Moving the pieces from the end of the sim frame instead raced the render thread's
+// visibility pass, which then looped forever (rl_frustum_base::is_occluded) after a few matches; so they move in a
+// render task too. The task list is walked on the sim thread only.
+struct GameRenderTask {
+    bool* enabled;  // null: always
+    void(__cdecl* callback)(void* user, int arg);
+    void* user;
+    GameRenderTask* next;
+    GameRenderTask* prev;
+};
+static_assert(sizeof(GameRenderTask) == (sizeof(void*) == 8 ? 0x28 : 0x14), "game_render_task");  // OpenRFG64: x64 from its PDB
+GameRenderTask g_render_task{};
+bool g_task_registered = false;
+
+// A long session in the open world fills even a large pool of render instances (Experiment.RenderInstances), and
+// then shattering creates no pieces. Like the game's load governor with the debris it keeps, the pieces farthest
+// from the player go first: below kPoolReserve free instances, up to kRecyclePerFrame of the farthest are given up
+// each frame until kPoolReserve + kPoolHysteresis are free. In the render task, since it releases render instances.
+// Only loose pieces: a piece in a pile draws through its pile's instance, so giving it up frees none (piles hold most
+// far pieces, which went before the loose ones that hold the instances).
+// The host's slots fill up too. Then new pieces stay in Havok, 4,600 of them at 18 ms a frame in a session that levelled the
+// avenue, so below kSlotReserve free slots the farthest go the same way, those in piles too: any piece frees a slot.
+constexpr int32_t kPoolReserve = 2000, kPoolHysteresis = 1000;
+constexpr size_t kSlotReserve = 2000, kSlotHysteresis = 1000;
+constexpr uint32_t kRecyclePerFrame = 200;
+bool g_recycling = false;
+uint64_t g_recycled_total = 0;
+
+// OpenRFG64: the body slots grow during the session instead of being fixed at its start (PhysXMaxBodies is
+// where they start). Before the free ones run out, a block more is committed (the host's shared memory and the
+// records here; the host's tables follow the slots it is handed), while the GPU has room: every program's graphics
+// memory in use (NVML, read by the host) stays under its total less PhysXVramReserveMB. A levelled map of 260,000
+// pieces took about 20 GB, so the GPU's memory is the real limit. Past that, or past PhysXSlotsMax, the farthest
+// pieces go as before, those younger than PhysXRecycleMinAgeS last: the debris of a blast far away went at once
+// otherwise (it was the farthest), and looked as if it never came.
+constexpr uint32_t kGrowFreeBelow = 8192;  // free slots that call for more
+uint32_t g_vram_reserve_cfg_mb = 0;       // PhysXVramReserveMB (0: an eighth of the GPU's memory, at least 2 GB)
+double g_recycle_min_age_ms = 60000.0;    // PhysXRecycleMinAgeS
+bool g_grow_blocked_logged = false;
+uint64_t g_recycled_young = 0;  // young pieces given up: there were not enough old ones
+
+uint32_t vram_reserve_mb(uint32_t total_mb) {
+    return g_vram_reserve_cfg_mb ? g_vram_reserve_cfg_mb : std::max<uint32_t>(2048u, total_mb / 8);
+}
+
+bool vram_room() {
+    if (!pxbridge::host_gpu()) return true;  // PhysX on the CPU: the GPU's memory is not its to fill
+    const uint32_t total = pxbridge::vram_total_mb(), used = pxbridge::vram_used_mb();
+    return total && used + vram_reserve_mb(total) < total;
+}
+
+bool slots_can_grow() { return g_slots < g_slots_max && pxbridge::ready() && vram_room(); }
+
+// Simulation thread, end of frame, before adopt.
+void grow_slots() {
+    if (g_free.size() >= kGrowFreeBelow || g_slots >= g_slots_max || !pxbridge::ready()) return;
+    if (!vram_room()) {
+        if (!g_grow_blocked_logged)
+            LOG("debris offload: the slots stay at %u: the GPU's memory is %u of %u MB in use (%u MB kept free, "
+                "Experiment.PhysXVramReserveMB); the farthest pieces go instead", g_slots, pxbridge::vram_used_mb(),
+                pxbridge::vram_total_mb(), vram_reserve_mb(pxbridge::vram_total_mb()));
+        g_grow_blocked_logged = true;
+        return;
+    }
+    g_grow_blocked_logged = false;
+    const uint32_t step = std::max<uint32_t>(16384u, ((g_slots - g_debris_first) / 8 + 1023u) & ~1023u);
+    const uint32_t want = std::min<uint32_t>(g_slots + step, g_slots_max);
+    if (!pxbridge::commit_slots(want) || !g_pieces.grow(want, Piece{})) {
+        LOG("debris offload: the slots cannot grow past %u: the system refused the memory (error %lu)", g_slots,
+            GetLastError());
+        g_slots_max = g_slots;
+        return;
+    }
+    // Handed out after the slots free now (pop_back), the lowest first.
+    std::vector<uint32_t> added;
+    added.reserve(want - g_slots);
+    for (uint32_t s = want; s-- > g_slots;) added.push_back(s);
+    g_free.insert(g_free.begin(), added.begin(), added.end());
+    LOG("debris offload: %u body slots now (+%u); the GPU's memory %u of %u MB in use, PhysX's heap %u MB", want,
+        want - g_slots, pxbridge::vram_used_mb(), pxbridge::vram_total_mb(), pxbridge::gpu_heap_mb());
+    g_slots = want;
+}
+
+int32_t render_pool_free() {
+    return rfg::global<int32_t>(r::rl_destroyable_model_instance__ms_object_pool + layout::render_instance_pool_count);
+}
+
+void recycle_far_pieces() {
+    const int32_t free = render_pool_free();
+    const size_t slots_free = g_free.size();
+    const bool grows = slots_can_grow();  // OpenRFG64: slots that can grow are not short
+    if (!g_recycling) {
+        if (free >= kPoolReserve && (slots_free >= kSlotReserve || grows)) return;
+        g_recycling = true;
+        LOG("debris offload: %d render instances and %zu slots left: giving up the pieces farthest from the player", free, slots_free);
+    } else if (free >= kPoolReserve + kPoolHysteresis && (slots_free >= kSlotReserve + kSlotHysteresis || grows)) {
+        g_recycling = false;
+        LOG("debris offload: %d render instances and %zu slots free again (%llu pieces given up so distant, %llu of "
+            "them younger than %.0f s: no older ones were left)", free, slots_free, g_recycled_total, g_recycled_young,
+            g_recycle_min_age_ms / 1000.0);
+        return;
+    }
+    const bool for_slots = slots_free < kSlotReserve + kSlotHysteresis && !grows;
+    const double now_ms = session::since_start_ms();
+    uint8_t* player = rfg::fn<uint8_t*(__cdecl*)()>(r::player_get_local_player)();
+    const ipc::SnapshotHeader* s = pxbridge::snapshot(nullptr);
+    if (!player || !s) return;
+    const float* pp = reinterpret_cast<const float*>(player + layout::object_pos);
+    const ipc::BodyPose* poses = pxbridge::poses(s);
+    const uint32_t slots = std::min<uint32_t>(s->slots, g_slots);
+    // OpenRFG64: the young pieces go last: farthest first among the old ones, then among the young (only when
+    // there are not enough old ones: with no render instance free, no new piece comes at all).
+    static std::vector<std::pair<double, uint32_t>> distant;
+    distant.clear();
+    size_t old_ones = 0;
+    for (uint32_t i = 0; i < slots; ++i) {
+        if (!g_pieces[i].inst || (g_pieces[i].pile != kNoPile && !for_slots) || i == g_player_slot) continue;
+        const ipc::Vec3& p = poses[i].pos;
+        const double dx = p.x - pp[0], dy = p.y - pp[1], dz = p.z - pp[2];
+        const bool young = now_ms - g_pieces[i].born_ms < g_recycle_min_age_ms;
+        old_ones += !young;
+        distant.emplace_back((young ? 1e15 : 0.0) - (dx * dx + dy * dy + dz * dz), i);  // old and farthest first
+    }
+    const size_t n = std::min<size_t>(distant.size(), kRecyclePerFrame);
+    if (!n) return;
+    std::nth_element(distant.begin(), distant.begin() + (n - 1), distant.end());
+    for (size_t k = 0; k < n; ++k) give_up(distant[k].second, true);
+    g_recycled_total += n;
+    if (n > old_ones) g_recycled_young += n - old_ones;
+}
+
+// A restored object (world::restore_object: destroyed and streamed in again, as an activity's building when the
+// activity starts over) takes the pieces that broke off it along: in the game they would have faded out long before.
+// They go at the next handshake, where render instances may be released. The handles come from KeepDebris: the
+// restored objects and the loose chunks that came off them (experiments/keep_debris.cpp).
+// One pass over the pieces for all of them (a save's load restores thousands of objects).
+std::unordered_set<uint32_t> g_restored;  // sim thread: handles of restored objects and their loose chunks
+std::unordered_set<uint32_t> g_last_restored;  // diagnostics: the handles of the last restoration
+uint64_t g_restored_pieces = 0;
+uint32_t g_restore_logs = 0;
+
+void forget_restored() {
+    if (g_restored.empty()) return;
+    g_last_restored = g_restored;
+    uint32_t n = 0;
+    for (uint32_t s = 0; s < g_slots; ++s)
+        if (g_pieces[s].inst && g_restored.count(g_pieces[s].original)) {
+            give_up(s, true);
+            ++n;
+        }
+    g_restored_pieces += n;
+    if (n && g_restore_logs++ < 20)
+        LOG("debris offload: %zu objects were restored (with their loose chunks); the %u pieces that broke off them "
+            "went with them", g_restored.size(), n);
+    g_restored.clear();
+}
+
+// ---- piles: frozen pieces drawn as compiled instances (Experiment.PhysXDebrisPiles) ----
+// The render thread's time follows the number of pieces in view, not what they draw: every piece is an
+// rl_destroyable_model_instance of one sub-instance, so each visible one is tested against every pass, walks its
+// building's whole material map (m_mat_map, 18 materials on average) twice and goes through add_to_batch on its own
+// (about 12,000 a frame in the heaviest part of the wcdlc7 replay, 31,000 pieces). A standing building is the other
+// way round: one instance whose sub-instances are compiled into one mesh (rl_start_recompile_mesh_instance), a draw
+// per material and pass. A pile turns the still pieces of one building lying in one cell (16 m) into that.
+// The game's machinery: a building's sub-instances are one array in its shared base
+// (rl_destroyable_model_instance_shared_base, m_base_sub_instances +0x14), each instance owning a contiguous range of it
+// (m_sub_instances +0x11C, m_num_sub_instances +0x120). unclaim_sub_instances gives sub-instances back to the base and
+// claim_sub_instances takes them, by their index in the building (m_sub_instance_original_index_map +0x0C, by place in
+// the array); the repair path (rfg_mover::create_subpieces) claims them and update_instances places them in the
+// instance, then calculate_local_aabb sizes it (as build_new_rl_instance_from_shape does); split makes a new instance
+// of some of an instance's sub-instances (the same indices), in the same scene partition. Each of these deletes the
+// instance's mesh and asks for a new compile: it draws batched until the new one arrives.
+// Measured with a one-shot merge at frame 40000 of wcdlc7 (2 runs each, frames 44000-45775): 12.0-13.1 -> 6.7-6.8 ms a
+// frame, before_kick 7.9-8.7 -> 2.8-3.0 ms, 40% fewer draws, the same address space. Drawn batched instead, piles
+// saved nothing: a pile is culled as one box, and each of its pieces is a draw of its own in every pass that sees any
+// part of it (twice the draws).
+const uint32_t &kInstMatMap = layout::inst_mat_map, &kInstSubArray = layout::inst_sub_instances,
+               &kInstNumSubs = layout::inst_num_sub_instances, &kInstRenderableSubs = layout::inst_num_renderable_sub_instances,
+               &kInstShared = layout::inst_shared_data;
+const uint32_t &kBaseOrigIndex = layout::shared_original_index_map, &kBaseSubArray = layout::shared_base_sub_instances;
+// rl_sub_instance: rl_compressed_transform (pos, pitch, bank, heading), m_instance_index, m_submesh_id, flags
+// (bit 0 visible, bit 1 active, bit 31 disable_deferred).
+constexpr uint32_t kSubSize = 0x20, kSubPitch = 0x0C, kSubSubmesh = 0x1A, kSubFlags = 0x1C;
+constexpr uint32_t kSubDisableDeferred = 0x80000000u;
+float g_pile_cell = 16.0f;  // m: Experiment.PhysXDebrisPileCellM
+constexpr double kPileFrozenMs = 2000;       // a piece still this long (frozen or asleep) joins a pile
+constexpr double kPileSettleMs = 1500;       // a pile takes new pieces this long after its last change at the soonest
+constexpr uint32_t kPileMinNew = 4;          // frozen pieces in a cell that start a pile there
+// Each join and each split moves the building's whole sub-instance array in the game (about 50-100 us for the
+// largest buildings): 512 of them in one frame took up to 39 ms.
+constexpr double kPileScanMs = 100;          // how often frozen pieces are looked over for piles
+constexpr uint32_t kUnpilesPerFrame = 256;   // pieces leaving piles in one frame, at most
+constexpr uint32_t kPileRetriesPerFrame = 8; // piles asking for their compile again in one frame, at most
+// The render task adds to the frame: a scan's joins took up to 7.3 ms in one frame, 128 of them. Past these times the
+// joins stop (the next frame goes on with the scan's cells, without looking the pieces over again) and piles that lost
+// pieces are sized again in a later frame (until then their bounds are only too large). With more than
+// kPileBacklog pieces ready, the joins take kPileJoinBudgetBehindMs a frame: a piece drawn on its own costs about
+// 1 us every frame and its join 50 us once. Counted in frames instead (128 joins every 15), the piles fell behind in
+// slow frames, which the pieces left on their own made slower still (Test.StressPieces: 17,000 of 69,000 pieces piled,
+// 52 ms a frame).
+constexpr double kPileJoinBudgetMs = 1.0, kPileJoinBudgetBehindMs = 3.0;
+constexpr size_t kPileBacklog = 2000;
+constexpr double kPileResizeBudgetMs = 0.5;
+// A cell with fewer still pieces than kPileMinNew and no pile of its own: they join their building's pile in a
+// neighbouring cell. Such pieces were nearly all the pieces left on their own at a levelled map's end (930-1,040 of
+// about 31,000). Only once the first of them has been still for Experiment.PhysXDebrisPileNextDoorS (10 s; 0: never):
+// joining at once kept cells next to a pile from ever getting their own, and piles spread over several cells. A cell
+// with no pile next door is looked at again after kNoPileNearRetryMs.
+double g_next_door_ms = 10000;
+constexpr double kNoPileNearRetryMs = 3000;
+// Experiment.PhysXDebrisPileMaxPieces (0: none): a full pile keeps its pieces but leaves its cell's place
+// (g_pile_at), and the cell's next still pieces start another. With 16 m cells, piles near the action reached 2,100
+// pieces: every change recompiled all of them, and they drew piece by piece meanwhile (310 pieces a frame against
+// 120 at 8 m).
+uint32_t g_pile_max = 512;
+uint64_t g_piles_full = 0;
+// A woken piece leaves its pile only once it has moved from where it was drawn: blasts and the player wake many pieces
+// that go nowhere (the first runs split 81,000 pieces off their piles in a 245 s match and joined 107,000).
+constexpr float kUnpileMove = 0.02f;         // m
+constexpr float kUnpileTurnCos = 0.99996f;   // cos of half a 1 degree turn: |q1.q2| below this has turned more
+
+struct SubInstanceUpdate {  // rl_sub_instance_update
+    float m[12];            // rl_sub_instance_info::m_transform, matrix43: rvec, uvec, fvec, pos (in the instance)
+    uint32_t submesh_id;
+    uint32_t flags;         // bit 0 m_is_active, bit 1 m_disable_deferred
+    int32_t base_index;     // the sub-instance's index in its building
+};
+static_assert(sizeof(SubInstanceUpdate) == 0x3C, "rl_sub_instance_update");
+
+// The game's transforms: rows are the rotated x, y and z axes, a point goes to p * r + t.
+struct M43 {
+    float r[9];
+    float t[3];
+};
+
+M43 mul(const M43& a, const M43& b) {  // a, then b
+    M43 c;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            c.r[i * 3 + j] = a.r[i * 3] * b.r[j] + a.r[i * 3 + 1] * b.r[3 + j] + a.r[i * 3 + 2] * b.r[6 + j];
+    for (int j = 0; j < 3; ++j) c.t[j] = a.t[0] * b.r[j] + a.t[1] * b.r[3 + j] + a.t[2] * b.r[6 + j] + b.t[j];
+    return c;
+}
+
+M43 inverse(const M43& a) {  // of a rotation and a translation
+    M43 c;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) c.r[i * 3 + j] = a.r[j * 3 + i];
+    for (int j = 0; j < 3; ++j) c.t[j] = -(a.t[0] * c.r[j] + a.t[1] * c.r[3 + j] + a.t[2] * c.r[6 + j]);
+    return c;
+}
+
+M43 instance_matrix(const uint8_t* inst) {
+    M43 m;
+    memcpy(m.r, inst + kInstRot, sizeof(m.r));
+    memcpy(m.t, inst + kInstPos, sizeof(m.t));
+    return m;
+}
+
+M43 sub_instance_matrix(const uint8_t* sub) {  // in its instance
+    M43 m;
+    const float* angles = reinterpret_cast<const float*>(sub + kSubPitch);
+    rfg::fn<void(__thiscall*)(float*, float, float, float)>(r::matrix__set_angles)(m.r, angles[0], angles[1],
+                                                                                    angles[2]);
+    memcpy(m.t, sub, sizeof(m.t));
+    return m;
+}
+
+// A building's pieces in one cell of `size` m.
+uint64_t merge_cell_key(const void* base, const ipc::Vec3& p, float size) {
+    const auto c = [&](float v) { return uint64_t(uint32_t(int32_t(std::floor(v / size))) & 0x3FFu); };
+#if defined(_WIN64)
+    // OpenRFG64: a 64-bit address does not fit above the 30 cell bits; a mixed hash of it does (splitmix64).
+    uint64_t h = uint64_t(reinterpret_cast<uintptr_t>(base)) + 0x9E3779B97F4A7C15ull;
+    h = (h ^ (h >> 30)) * 0xBF58476D1CE4E5B9ull;
+    h = (h ^ (h >> 27)) * 0x94D049BB133111EBull;
+    h ^= h >> 31;
+    return h << 30 | c(p.x) << 20 | c(p.y) << 10 | c(p.z);
+#else
+    return uint64_t(reinterpret_cast<uintptr_t>(base)) << 30 | c(p.x) << 20 | c(p.y) << 10 | c(p.z);
+#endif
+}
+
+struct RlSplitInfo {  // rl_split_info
+    int32_t num_to_split;
+    int16_t* to_split;   // sub-instance indices in the building
+    int32_t num_to_disable;
+    int16_t* to_disable;
+    int32_t num_to_enable;
+    int16_t* to_enable;
+};
+static_assert(sizeof(RlSplitInfo) == (sizeof(void*) == 8 ? 0x30 : 0x18), "rl_split_info");  // OpenRFG64: x64 from its PDB
+
+struct Pile {
+    uint8_t* inst = nullptr;  // its render instance (null: a free entry); not one of the pieces' instances any more
+    uint64_t key = 0;         // its building and cell
+    uint32_t members = 0;
+    double changed_ms = 0;    // pieces last joined or left
+    double retried_ms = 0;    // its compile last asked for again
+    double meshless_ms = 0;   // since when it has been without its mesh, drawn piece by piece (0: it has it)
+    bool resize = false;      // pieces left: its bounds are to be redone
+    // Its cell's last join stopped at the time budget: the rest of the cell joins in the next frames, without waiting
+    // for the settle time (each part of a join would have put it off again: a backlog of 500 pieces took ~40 s).
+    bool unfinished = false;
+};
+std::vector<Pile> g_piles;
+std::vector<uint32_t> g_free_piles;
+std::unordered_map<uint64_t, uint32_t> g_pile_at;  // building and cell -> pile
+bool g_piles_on = false;
+bool g_level_ending = false;  // the level's end gives every piece up: a pile goes at once with its last one
+uint64_t g_piled_total = 0, g_unpiled_total = 0, g_piles_made = 0, g_unpile_failures = 0;
+uint32_t g_piles_live = 0, g_piled_now = 0, g_piles_peak = 0, g_piled_peak = 0;
+
+// How long piles go without their mesh after a change (each change deletes it; the compile brings a new one), and
+// how many pieces they hold meanwhile: over the level, and over the 10 s between the buffer heap's log lines.
+constexpr double kMeshlessBuckets[5] = {100, 250, 500, 1000, 2000};
+struct MeshlessStats {
+    uint64_t times = 0, pieces = 0, frames = 0, piece_frames = 0;
+    double total_ms = 0, piece_ms = 0, longest_ms = 0;
+    uint32_t buckets[6] = {}, peak = 0;
+};
+MeshlessStats g_meshless, g_meshless_window;
+uint32_t g_meshless_now = 0;  // pieces in piles without their mesh, this frame
+uint32_t g_waiting_for_pile = 0;  // at the last scan: still pieces ready for their cell's pile while it settles
+void note_meshless(MeshlessStats& s, double ms, uint32_t members) {
+    ++s.times;
+    s.total_ms += ms;
+    s.piece_ms += ms * members;
+    s.pieces += members;
+    s.longest_ms = std::max(s.longest_ms, ms);
+    int b = 0;
+    while (b < 5 && ms >= kMeshlessBuckets[b]) ++b;
+    ++s.buckets[b];
+}
+void note_meshless_frame(MeshlessStats& s, uint32_t pieces) {
+    ++s.frames;
+    s.piece_frames += pieces;
+    s.peak = std::max(s.peak, pieces);
+}
+void format_meshless(const MeshlessStats& s, char* out, size_t size) {
+    snprintf(out, size, "%llu times, %.0f ms mean (%.0f weighted by the pieces), the longest %.0f ms (<100 ms %u, "
+             "<250 %u, <500 %u, <1 s %u, <2 s %u, more %u); pieces drawn piece by piece in them: %.0f a frame, at "
+             "most %u", static_cast<unsigned long long>(s.times), s.times ? s.total_ms / s.times : 0.0,
+             s.pieces ? s.piece_ms / s.pieces : 0.0, s.longest_ms, s.buckets[0], s.buckets[1], s.buckets[2],
+             s.buckets[3], s.buckets[4], s.buckets[5], s.frames ? double(s.piece_frames) / s.frames : 0.0, s.peak);
+}
+
+using ClaimFn = void(__thiscall*)(uint8_t*, int16_t*, int32_t);
+ClaimFn claim_fn() { return rfg::fn<ClaimFn>(r::rl_destroyable_model_instance__claim_sub_instances); }
+ClaimFn unclaim_fn() { return rfg::fn<ClaimFn>(r::rl_destroyable_model_instance__unclaim_sub_instances); }
+void update_sub_instances(uint8_t* inst, SubInstanceUpdate* u, int32_t n) {
+    rfg::fn<void(__thiscall*)(uint8_t*, SubInstanceUpdate*, int32_t)>(r::rl_destroyable_model_instance__update_instances)(
+        inst, u, n);
+}
+void size_instance(uint8_t* inst) {
+    rfg::fn<void(__thiscall*)(uint8_t*)>(r::rl_compound_mesh_instance__calculate_local_aabb)(inst);
+    refresh_instance(inst);
+}
+// A compile under way must not see its instance's sub-instances change: the mesh compiler (compile_cache_data, on its
+// own thread) counts the vertices and indices of the renderable sub-instances, sizes its buffers from that, then fills
+// them, and it stops at abort checks in between (the handshake pauses it there). Resumed after a change, it fills
+// buffers sized for the old sub-instances with the new ones, past their end: a heap corruption that crashed in
+// rl_mesh_recompile_finalize (2026-10-27, piles). Only a request whose valid flag (rl_mesh_recompile_parameters +8)
+// was cleared aborts at the next check. A new request clears the old one's, but rl_start_recompile_mesh_instance does
+// nothing at all when its pool of requests is empty, which the piles' traffic can make it (claim, unclaim, split and
+// update ask for a new compile after every change, through it). So before every change the piles make,
+// the pending compile of the instance changed is cancelled here, its request named by m_recompile_parameters_p
+// (+0x154) as long as the request still names the instance (+0).
+// The game's own changes have the same hole (2026-10-28, Test.StressPieces in Wrecking Crew, 2 of 3 runs): when a
+// building breaks, rfg_mover::create_subpieces swaps a dlod's merged sub-instance for its pieces (claim,
+// set_sub_instance_is_active: more vertices, the pieces' inner faces), in the handshake while the compiler waits at a
+// stop, and asks for a compile; the shatter bursts had emptied the pool, the building's compile went on with its old
+// counts, and its vertices ran into the index buffer allocated right after them (the TLSF header of the next block:
+// d_compile_cache's tlsf_free crashed on it). d_start_recompile cancels in that case too.
+// The valid flag is only read at a stop where the compiler was paused, so clearing it is enough only for changes made
+// in the handshake (the game's and the piles' are); a change made elsewhere would need the compiler paused first.
+const uint32_t &kInstRecompileParams = layout::inst_recompile_params, &kParamsValid = layout::recompile_params_valid;
+void cancel_compile(uint8_t* inst) {
+    uint8_t* params = *reinterpret_cast<uint8_t* const*>(inst + kInstRecompileParams);
+    if (params && *reinterpret_cast<uint8_t* const*>(params) == inst)
+        InterlockedExchange(reinterpret_cast<volatile LONG*>(params + kParamsValid), 0);
+}
+
+// compile_cache_data(rl_mesh_recompile_parameters*), on the compiler's thread: it takes the mesh's vertices and
+// indices from rl_init_params::m_pBufferAllocator (Init_params +0x14C: the 76 MB TLSF heap 'RFG_VramMempoolProvider'),
+// makes immutable D3D11 buffers of them (keen::graphics::initializeRenderGeometry, which copies them) and keeps them
+// as long as the mesh lives, read by nothing (rl_mesh_recompile_data +0x44 indices, +0x48 vertices: only the
+// destructors and rl_mesh_recompile_finalize free them, and tlsf_free takes null). When the heap has no room the
+// compile fails without a word and the instance stays without a mesh. With piles the copies filled it: 46 MB for 480
+// piles, and the 19 largest piles (5,300 pieces, up to 500 a pile) failed again and again and drew piece by piece
+// (2026-10-27). So with piles the copies go as soon as the mesh is made. Counted: meshes made, compiles cancelled
+// (their request's valid flag cleared), compiles that failed.
+bool g_free_mesh_copies = false;
+volatile LONG g_compiles_made = 0, g_compiles_cancelled = 0, g_compiles_failed = 0;
+uint8_t* buffer_allocator() {
+    return *reinterpret_cast<uint8_t* const*>(static_cast<const uint8_t*>(rfg::addr(r::Init_params)) + layout::init_params_buffer_allocator);
+}
+void*(__fastcall* o_compile_cache)(uint8_t* RFG_EDX_TYPE, uint8_t*) = nullptr;
+void* __fastcall d_compile_cache(uint8_t* inst RFG_EDX_PARAM, uint8_t* params) {
+    uint8_t* data = static_cast<uint8_t*>(o_compile_cache(inst RFG_EDX_PASS, params));
+    if (data) {
+        InterlockedIncrement(&g_compiles_made);
+        if (g_free_mesh_copies) {
+            uint8_t* a = buffer_allocator();
+            using FreeFn = void(__thiscall*)(void*, void*);  // keen::MemoryAllocator::free, the third virtual
+            const FreeFn free_fn = reinterpret_cast<const FreeFn*>(*reinterpret_cast<void* const*>(a))[2];
+            for (const uint32_t at : {layout::recompile_index_copy, layout::recompile_vertex_copy}) {  // x86 0x44, 0x48
+                void*& copy = *reinterpret_cast<void**>(data + at);
+                free_fn(a, copy);
+                copy = nullptr;
+            }
+        }
+    } else if (!*reinterpret_cast<const volatile LONG*>(params + kParamsValid)) {
+        InterlockedIncrement(&g_compiles_cancelled);
+    } else {
+        InterlockedIncrement(&g_compiles_failed);
+    }
+    return data;
+}
+
+// The buffer heap, for the log: its RTTI type name (a keen BaseMemoryAllocator: TLSF or zone), its name (+0x3C) and,
+// for the TLSF one, its block (+0xC8) and its blocks walked (tlsf_walk_heap over TlsfAllocator::m_pPool, +0xC4) under
+// the allocator's own mutex (+4), as its allocate and free take it; it keeps no count of its own.
+struct HeapWalk {
+    uint64_t used = 0, free = 0;
+    uint32_t blocks = 0, largest_free = 0;
+};
+void __cdecl heap_walker(void*, size_t size, int used, void* user) {
+    HeapWalk& w = *static_cast<HeapWalk*>(user);
+    ++w.blocks;
+    if (used) {
+        w.used += size;
+    } else {
+        w.free += size;
+        w.largest_free = std::max(w.largest_free, uint32_t(size));
+    }
+}
+bool walk_pool(void* pool, HeapWalk& w) {
+    __try {
+        rfg::fn<void(__cdecl*)(void*, void(__cdecl*)(void*, size_t, int, void*), void*)>(r::tlsf_walk_heap)(
+            pool, &heap_walker, &w);
+        return true;
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return false;
+    }
+}
+bool heap_names(const uint8_t* a, char (&kind)[48], char (&name)[64], uint32_t& size) {
+    // OpenRFG64: x86 RTTI and allocator layouts; on OpenRFG64 its own memtest census reports the heaps.
+    if (rfg::is_openrfg64()) return false;
+    __try {
+        const uint8_t* const* vtable = *reinterpret_cast<const uint8_t* const* const*>(a);
+        const uint8_t* col = vtable[-1];  // the RTTI complete object locator: its type descriptor at +0x0C
+        const char* type = reinterpret_cast<const char*>(*reinterpret_cast<const uint8_t* const*>(col + 0x0C) + 8);
+        strncpy_s(kind, type, _TRUNCATE);
+        strncpy_s(name, reinterpret_cast<const char*>(a + 0x3C), _TRUNCATE);
+        size = strstr(type, "Tlsf") ? *reinterpret_cast<const uint32_t*>(a + 0xCC) : 0;
+        return true;
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return false;
+    }
+}
+
+void log_buffer_heap(const char* when) {
+    uint8_t* a = buffer_allocator();
+    char kind[48] = "?", name[64] = "?";
+    uint32_t size = 0;
+    if (!a || !heap_names(a, kind, name, size)) {
+        LOG("debris offload: buffer heap (%s): unreadable", when);
+        return;
+    }
+    HeapWalk w;
+    bool walked = false;
+    if (size) {
+        void* mutex = a + 4;
+        rfg::fn<bool(__thiscall*)(void*, uint32_t)>(r::keen__Mutex__lock)(mutex, 0);
+        walked = walk_pool(*reinterpret_cast<void**>(a + 0xC4), w);
+        rfg::fn<void(__thiscall*)(void*)>(r::keen__Mutex__unlock)(mutex);
+    }
+    char use[128] = "not walked";
+    if (walked)
+        snprintf(use, sizeof(use), "%.1f MB used, %.1f MB free (the largest free block %.2f MB), %u blocks",
+                 w.used / 1048576.0, w.free / 1048576.0, w.largest_free / 1048576.0, w.blocks);
+    uint32_t meshless = 0;
+    for (const Pile& pile : g_piles)
+        meshless += pile.inst && !*reinterpret_cast<void* const*>(pile.inst + kInstRecompileData);
+    char window[320];
+    format_meshless(g_meshless_window, window, sizeof(window));
+    g_meshless_window = MeshlessStats{};
+    LOG("debris offload: buffer heap (%s): %s '%s' of %.1f MB: %s; compiles: %ld meshes made, %ld cancelled, %ld "
+        "failed; meshes' own copies %s; %u of %u piles without a mesh now (%u pieces); since the last line, piles "
+        "without their mesh: %s; %u still pieces waiting for their cell's pile to settle", when, kind, name,
+        size / 1048576.0, use, g_compiles_made, g_compiles_cancelled, g_compiles_failed,
+        g_free_mesh_copies ? "freed once uploaded" : "kept", meshless, g_piles_live, g_meshless_now, window,
+        g_waiting_for_pile);
+}
+
+bool compile_wanted(const uint8_t* inst);
+// After a pile's sub-instances changed: claim, unclaim, split and update delete the instance's mesh and ask for a new
+// compile themselves; a pile with neither a mesh nor a pending request (the game's pool of requests was empty) gets
+// one here (nothing happens while the pool is empty: piles_frame asks again later). Called from the render task, in
+// the handshake, as the game calls it (the bool: false).
+uint32_t g_pile_compiles = 0, g_pile_compile_retries = 0;
+void compile_pile(uint8_t* inst) {
+    if (!compile_wanted(inst)) return;
+    ++g_pile_compiles;
+    (o_start_recompile ? o_start_recompile
+                       : rfg::fn<void(__cdecl*)(const void*, bool)>(r::rl_start_recompile_mesh_instance))(inst, false);
+}
+
+// Whether the instance has a mesh or a compile that will make one.
+bool compile_wanted(const uint8_t* inst) {
+    if (*reinterpret_cast<void* const*>(inst + kInstRecompileData)) return false;
+    const uint8_t* params = *reinterpret_cast<uint8_t* const*>(inst + kInstRecompileParams);
+    return !params || *reinterpret_cast<const uint8_t* const*>(params) != inst ||
+           !*reinterpret_cast<const volatile LONG*>(params + kParamsValid);
+}
+void set_piece_instance(const uint8_t* inst, bool piece) {  // a piece's instance gets no compiled mesh, a pile's does
+    if (!g_drop_meshes) return;
+    AcquireSRWLockExclusive(&g_piece_set_lock);
+    if (piece)
+        g_piece_set.insert(inst);
+    else
+        g_piece_set.erase(inst);
+    ReleaseSRWLockExclusive(&g_piece_set_lock);
+}
+
+// A piece of its own (one sub-instance, in its own instance): what it needs to leave a pile again later.
+void remember_own(Piece& p) {
+    const uint8_t* sub = *reinterpret_cast<uint8_t* const*>(p.inst + kInstSubArray);
+    const uint8_t* base = *reinterpret_cast<uint8_t* const*>(p.inst + kInstShared);
+    const uint8_t* all = *reinterpret_cast<uint8_t* const*>(base + kBaseSubArray);
+    const uint16_t* orig = *reinterpret_cast<const uint16_t* const*>(base + kBaseOrigIndex);
+    const M43 m = sub_instance_matrix(sub);
+    memcpy(p.own_sub, m.r, sizeof(m.r));
+    memcpy(p.own_sub + 9, m.t, sizeof(m.t));
+    p.sub_index = orig[(sub - all) / kSubSize];
+    p.submesh = *reinterpret_cast<const uint16_t*>(sub + kSubSubmesh);
+    p.disable_deferred = (*reinterpret_cast<const uint32_t*>(sub + kSubFlags) & kSubDisableDeferred) != 0;
+}
+
+SubInstanceUpdate sub_update(const Piece& p, const M43& m) {
+    SubInstanceUpdate u{};
+    memcpy(u.m, m.r, sizeof(m.r));
+    memcpy(u.m + 9, m.t, sizeof(m.t));
+    u.submesh_id = p.submesh;
+    u.flags = 1u | (p.disable_deferred ? 2u : 0u);
+    u.base_index = p.sub_index;
+    return u;
+}
+
+M43 own_matrix(const Piece& p) {
+    M43 m;
+    memcpy(m.r, p.own_sub, sizeof(m.r));
+    memcpy(m.t, p.own_sub + 9, sizeof(m.t));
+    return m;
+}
+
+void remember_piled_pose(Piece& p, const ipc::BodyPose& b) {
+    p.piled_pos[0] = b.pos.x, p.piled_pos[1] = b.pos.y, p.piled_pos[2] = b.pos.z;
+    p.piled_q[0] = b.rot.x, p.piled_q[1] = b.rot.y, p.piled_q[2] = b.rot.z, p.piled_q[3] = b.rot.w;
+}
+
+bool moved_from_pile(const Piece& p, const ipc::BodyPose& b) {
+    const float dx = b.pos.x - p.piled_pos[0], dy = b.pos.y - p.piled_pos[1], dz = b.pos.z - p.piled_pos[2];
+    if (dx * dx + dy * dy + dz * dz > kUnpileMove * kUnpileMove) return true;
+    const float dot = b.rot.x * p.piled_q[0] + b.rot.y * p.piled_q[1] + b.rot.z * p.piled_q[2] + b.rot.w * p.piled_q[3];
+    return std::fabs(dot) < kUnpileTurnCos;
+}
+
+void free_pile(uint32_t id) {
+    Pile& pile = g_piles[id];
+    const auto at = g_pile_at.find(pile.key);
+    if (at != g_pile_at.end() && at->second == id) g_pile_at.erase(at);
+    pile = Pile{};
+    g_free_piles.push_back(id);
+    --g_piles_live;
+}
+
+void pile_lost_one(uint32_t id, double now_ms) {
+    Pile& pile = g_piles[id];
+    --g_piled_now;
+    if (--pile.members == 0) {
+        release_instance(pile.inst);  // the sub-instances it still has go back to their building with it
+        free_pile(id);
+        return;
+    }
+    if (g_level_ending) return;
+    pile.changed_ms = now_ms;
+    pile.resize = true;
+    compile_pile(pile.inst);
+}
+
+// Frozen pieces of the pile's building and cell join it: each one's sub-instance leaves its own instance (released),
+// and the pile claims and places them all at once. The pile's frame is that of the piece it was made of. Each unclaim
+// moves the building's whole sub-instance array (128 pieces into one pile took 6-7 ms), so past deadline_ms (session
+// time; 0: none) the rest wait for the next scan: returns how many joined, at least one.
+size_t join_pile(uint32_t id, const uint32_t* slots, size_t n, const ipc::BodyPose* poses, double now_ms,
+                 double deadline_ms) {
+    Pile& pile = g_piles[id];
+    const M43 to_pile = inverse(instance_matrix(pile.inst));
+    static std::vector<int16_t> ids;
+    static std::vector<SubInstanceUpdate> updates;
+    ids.clear();
+    updates.clear();
+    const ClaimFn unclaim = unclaim_fn();
+    for (size_t k = 0; k < n; ++k) {
+        if (k && deadline_ms > 0 && session::since_start_ms() > deadline_ms) {
+            n = k;
+            break;
+        }
+        Piece& p = g_pieces[slots[k]];
+        uint8_t* own = p.inst;
+        remember_own(p);
+        remember_piled_pose(p, poses[slots[k]]);
+        updates.push_back(sub_update(p, mul(own_matrix(p), mul(instance_matrix(own), to_pile))));
+        int16_t sub = int16_t(p.sub_index);
+        ids.push_back(sub);
+        cancel_compile(own);
+        unclaim(own, &sub, 1);  // its instance is empty now
+        set_piece_instance(own, false);
+        release_instance(own);
+        p.inst = pile.inst;
+        p.pile = id;
+        p.candidate = 0;
+        g_pile_candidates.erase(slots[k]);
+    }
+    cancel_compile(pile.inst);
+    claim_fn()(pile.inst, ids.data(), int32_t(ids.size()));
+    update_sub_instances(pile.inst, updates.data(), int32_t(updates.size()));
+    size_instance(pile.inst);
+    compile_pile(pile.inst);
+    pile.members += uint32_t(n);
+    pile.changed_ms = now_ms;
+    g_piled_now += uint32_t(n);
+    g_piled_total += n;
+    return n;
+}
+
+// A pile of the frozen pieces in slots: the first one's instance becomes the pile's (its own sub-instance stays where
+// it is), the others join it (as join_pile, until deadline_ms), and its compiled mesh is made in the background.
+// Returns how many pieces it took.
+size_t make_pile(uint64_t key, const uint32_t* slots, size_t n, const ipc::BodyPose* poses, double now_ms,
+                 double deadline_ms) {
+    uint32_t id;
+    if (!g_free_piles.empty()) {
+        id = g_free_piles.back();
+        g_free_piles.pop_back();
+    } else {
+        id = uint32_t(g_piles.size());
+        g_piles.emplace_back();
+    }
+    Piece& first = g_pieces[slots[0]];
+    remember_own(first);
+    remember_piled_pose(first, poses[slots[0]]);
+    Pile& pile = g_piles[id];
+    pile.inst = first.inst;
+    pile.key = key;
+    pile.members = 1;
+    first.pile = id;
+    first.candidate = 0;
+    g_pile_candidates.erase(slots[0]);
+    set_piece_instance(pile.inst, false);
+    g_pile_at[key] = id;
+    ++g_piles_live;
+    ++g_piles_made;
+    ++g_piled_now;
+    ++g_piled_total;
+    return 1 + join_pile(id, slots + 1, n - 1, poses, now_ms, deadline_ms);
+}
+
+// PhysX woke a piece in a pile: the game splits its sub-instance off into an instance of its own again (in the pile's
+// frame), which gets the piece's own transform back and goes where PhysX has it.
+bool unpile(uint32_t slot, const ipc::BodyPose& b, double now_ms) {
+    Piece& p = g_pieces[slot];
+    const uint32_t id = p.pile;
+    int16_t sub = int16_t(p.sub_index);
+    RlSplitInfo info{1, &sub, 0, nullptr, 0, nullptr};
+    cancel_compile(g_piles[id].inst);
+    uint8_t* inst =
+        rfg::fn<uint8_t*(__thiscall*)(uint8_t*, RlSplitInfo*)>(r::rl_destroyable_model_instance__split)(g_piles[id].inst,
+                                                                                                         &info);
+    if (!inst) {
+        ++g_unpile_failures;
+        return false;
+    }
+    cancel_compile(inst);  // the one the new instance asked for: a piece is drawn batched, without a mesh
+    set_piece_instance(inst, true);  // before the update, which asks for another (skipped for pieces)
+    SubInstanceUpdate u = sub_update(p, own_matrix(p));
+    update_sub_instances(inst, &u, 1);
+    rfg::fn<void(__thiscall*)(uint8_t*)>(r::rl_compound_mesh_instance__calculate_local_aabb)(inst);
+    if (g_batch) *reinterpret_cast<uint16_t*>(inst + kInstFlags) |= kInstBatchable;
+    p.inst = inst;
+    p.pile = kNoPile;
+    p.settle = 1;
+    const float pos[3] = {b.pos.x, b.pos.y, b.pos.z}, q[4] = {b.rot.x, b.rot.y, b.rot.z, b.rot.w};
+    move_instance(inst, pos, q);
+    pile_lost_one(id, now_ms);
+    ++g_unpiled_total;
+    return true;
+}
+
+// give_up() of a piece in a pile: its sub-instance goes back to its building (drawn no more), the pile stays for the
+// others. The caller clears the slot.
+void leave_pile(uint32_t slot) {
+    Piece& p = g_pieces[slot];
+    const uint32_t id = p.pile;
+    p.pile = kNoPile;
+    Pile& pile = g_piles[id];
+    if (pile.members > 1 && !g_level_ending) {
+        int16_t sub = int16_t(p.sub_index);
+        cancel_compile(pile.inst);
+        unclaim_fn()(pile.inst, &sub, 1);
+    }
+    pile_lost_one(id, session::since_start_ms());
+}
+
+// The pile of a cell's building in one of the 26 cells around it that takes pieces now (the one with the most pieces),
+// or kNoPile; busy: there is one, but it changed too recently.
+std::unordered_map<uint64_t, double> g_no_pile_near;  // cell -> not looked at again before this time
+uint64_t g_joined_next_door = 0;
+uint32_t settled_pile_near(uint64_t key, double now_ms, bool& busy) {
+    const uint64_t base = key >> 30;
+    const int32_t c[3] = {int32_t(key >> 20 & 0x3FF), int32_t(key >> 10 & 0x3FF), int32_t(key & 0x3FF)};
+    uint32_t best = kNoPile, most = 0;
+    busy = false;
+    for (int dx = -1; dx <= 1; ++dx)
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dz = -1; dz <= 1; ++dz) {
+                if (!dx && !dy && !dz) continue;
+                const uint64_t cell = base << 30 | uint64_t((c[0] + dx) & 0x3FF) << 20 |
+                                      uint64_t((c[1] + dy) & 0x3FF) << 10 | uint64_t((c[2] + dz) & 0x3FF);
+                const auto at = g_pile_at.find(cell);
+                if (at == g_pile_at.end()) continue;
+                const Pile& pile = g_piles[at->second];
+                if (g_pile_max && pile.members >= g_pile_max) continue;
+                if (now_ms - pile.changed_ms < kPileSettleMs) {
+                    busy = true;
+                } else if (pile.members > most) {
+                    most = pile.members;
+                    best = at->second;
+                }
+            }
+    return best;
+}
+
+// Render task, after the pieces moved (move_pieces lets the woken ones out of their piles): frozen pieces join piles,
+// piles that lost pieces are sized again.
+void piles_frame() {
+    if (!g_piles_on) return;
+    const ipc::SnapshotHeader* s = pxbridge::snapshot(nullptr);
+    if (!s) return;
+    const ipc::BodyPose* poses = pxbridge::poses(s);
+    const uint8_t* states = pxbridge::states(s);
+    const uint32_t slots = std::min<uint32_t>(s->slots, g_slots);
+    const double now_ms = session::since_start_ms();
+    // Every kPileScanMs the still pieces of their own are sorted into their building's cells (`ready`); the joins go on
+    // frame after frame within their time budget until the cells are done, and only then is the next scan due.
+    static std::unordered_map<uint64_t, std::vector<uint32_t>> ready;
+    static double next_scan_ms = 0;
+    static bool resume = false;  // the last frame ran out of time: this one goes on with the scan's cells
+    static size_t backlog = 0;   // pieces ready at the last scan
+    const bool scan = !resume && now_ms >= next_scan_ms;
+    if (scan) {
+        next_scan_ms = now_ms + kPileScanMs;
+        if (ready.size() > 4096) ready.clear();  // the cells of past scans
+        for (auto& [key, v] : ready) v.clear();
+        backlog = 0;
+        // The frozen pieces of their own (move_piece lists them when they freeze; the ones that moved again, joined a
+        // pile or went leave the list here).
+        for (auto it = g_pile_candidates.begin(); it != g_pile_candidates.end();) {
+            const uint32_t i = *it;
+            Piece* p = i < slots ? &g_pieces[i] : nullptr;
+            const bool still = (states[i] & ipc::kPoseAlive) && !(states[i] & ipc::kPoseAwake);
+            if (!p || !p->inst || !p->candidate || p->pile != kNoPile || !still) {
+                if (p) p->candidate = 0;
+                it = g_pile_candidates.erase(it);
+                continue;
+            }
+            ++it;
+            if (p->fresh || i == g_player_slot || !p->frozen_since_ms || now_ms - p->frozen_since_ms < kPileFrozenMs ||
+                *reinterpret_cast<const int32_t*>(p->inst + kInstNumSubs) != 1)
+                continue;
+            ready[merge_cell_key(*reinterpret_cast<void* const*>(p->inst + kInstShared), poses[i].pos, g_pile_cell)]
+                .push_back(i);
+            ++backlog;
+        }
+        uint32_t waiting = 0;  // pieces ready for their cell's pile while it settles
+        for (const auto& [key, v] : ready) {
+            if (v.empty()) continue;
+            const auto at = g_pile_at.find(key);
+            if (at != g_pile_at.end() && !g_piles[at->second].unfinished &&
+                now_ms - g_piles[at->second].changed_ms < kPileSettleMs)
+                waiting += uint32_t(v.size());
+        }
+        g_waiting_for_pile = waiting;
+        if (g_no_pile_near.size() > 16384) g_no_pile_near.clear();
+    }
+    if (scan || resume) {
+        const bool resumed = resume;
+        resume = false;
+        const double deadline_ms =
+            session::since_start_ms() + (backlog > kPileBacklog ? kPileJoinBudgetBehindMs : kPileJoinBudgetMs);
+        // A pile's place in a cell, a full pile's next one and the next-door joins as before; a cell done (its pieces
+        // joined, or nothing to do for them until the next scan) is emptied, so a frame that goes on skips it.
+        for (auto& [key, v] : ready) {
+            if (v.empty()) continue;
+            if (session::since_start_ms() > deadline_ms) {
+                resume = true;
+                break;
+            }
+            if (resumed)  // since the scan, pieces may have woken, gone or joined
+                v.erase(std::remove_if(v.begin(), v.end(),
+                                       [&](uint32_t i) {
+                                           const Piece& p = g_pieces[i];
+                                           return i >= slots || !p.inst || !p.candidate || p.pile != kNoPile ||
+                                                  !(states[i] & ipc::kPoseAlive) || (states[i] & ipc::kPoseAwake);
+                                       }),
+                        v.end());
+            if (v.empty()) continue;
+            const auto at = g_pile_at.find(key);
+            const auto room = [](uint32_t members) { return g_pile_max ? size_t(g_pile_max - members) : SIZE_MAX; };
+            size_t asked = v.size(), joined = 0;
+            if (at != g_pile_at.end()) {
+                const uint32_t id = at->second;
+                if (g_pile_max && g_piles[id].members >= g_pile_max) {
+                    g_pile_at.erase(at);  // full: it keeps its pieces; the cell's next ones start another pile
+                    ++g_piles_full;
+                    continue;
+                }
+                if (!g_piles[id].unfinished && now_ms - g_piles[id].changed_ms < kPileSettleMs) {
+                    v.clear();
+                    continue;
+                }
+                asked = std::min(asked, room(g_piles[id].members));
+                joined = join_pile(id, v.data(), asked, poses, now_ms, deadline_ms);
+                g_piles[id].unfinished = joined < v.size();
+            } else if (v.size() >= kPileMinNew) {
+                asked = std::min(asked, room(0));
+                joined = make_pile(key, v.data(), asked, poses, now_ms, deadline_ms);
+                g_piles[g_pile_at[key]].unfinished = joined < v.size();
+            } else {
+                uint32_t next_door = kNoPile;
+                if (g_next_door_ms > 0) {
+                    double still_ms = 0;  // the longest any of them has been still
+                    for (const uint32_t slot : v)
+                        still_ms = std::max(still_ms, now_ms - g_pieces[slot].frozen_since_ms);
+                    if (still_ms >= g_next_door_ms) {
+                        double& until = g_no_pile_near[key];
+                        bool busy = false;
+                        if (now_ms >= until) {
+                            next_door = settled_pile_near(key, now_ms, busy);
+                            if (next_door == kNoPile && !busy) until = now_ms + kNoPileNearRetryMs;
+                        }
+                    }
+                }
+                if (next_door == kNoPile) {
+                    v.clear();
+                    continue;
+                }
+                asked = std::min(asked, room(g_piles[next_door].members));
+                joined = join_pile(next_door, v.data(), asked, poses, now_ms, deadline_ms);
+                g_joined_next_door += joined;
+            }
+            if (joined < asked) {  // out of time on the way: the next frame goes on with the rest
+                v.erase(v.begin(), v.begin() + ptrdiff_t(joined));
+                resume = true;
+                break;
+            }
+            v.clear();
+        }
+    }
+    uint32_t retries = 0, meshless = 0;
+    const int64_t sizes_start = session::qpc();
+    for (uint32_t id = 0; id < g_piles.size(); ++id) {
+        Pile& pile = g_piles[id];
+        if (!pile.inst) continue;
+        if (pile.resize && session::ticks_to_ms(session::qpc() - sizes_start) < kPileResizeBudgetMs) {
+            pile.resize = false;
+            size_instance(pile.inst);
+        }
+        if (!*reinterpret_cast<void* const*>(pile.inst + kInstRecompileData)) {
+            meshless += pile.members;
+            if (!pile.meshless_ms) pile.meshless_ms = now_ms;
+        } else if (pile.meshless_ms) {
+            note_meshless(g_meshless, now_ms - pile.meshless_ms, pile.members);
+            note_meshless(g_meshless_window, now_ms - pile.meshless_ms, pile.members);
+            pile.meshless_ms = 0;
+        }
+        // A pile left without a mesh and without a compile (the game's pool of requests was empty, or its heap had no
+        // room) asks again, once it has been still for a while, and not more often than that (its own time: the
+        // change time holds joins back).
+        if (retries < kPileRetriesPerFrame && now_ms - pile.changed_ms >= kPileSettleMs &&
+            now_ms - pile.retried_ms >= kPileSettleMs && compile_wanted(pile.inst)) {
+            ++retries;
+            ++g_pile_compile_retries;
+            compile_pile(pile.inst);
+            pile.retried_ms = now_ms;
+        }
+    }
+    g_meshless_now = meshless;
+    note_meshless_frame(g_meshless, meshless);
+    note_meshless_frame(g_meshless_window, meshless);
+    g_piles_peak = std::max(g_piles_peak, g_piles_live);
+    g_piled_peak = std::max(g_piled_peak, g_piled_now);
+}
+
+// Telemetry.RenderRouting: the render threads tell the pieces apart with a sorted copy of their instances.
+void publish_for_routing() {
+    static uint32_t frame = 0;
+    if (!render_routing::enabled() || frame++ % 30) return;
+    std::vector<const void*> v;
+    v.reserve(g_slots);
+    for (const Piece& p : g_pieces)
+        if (p.inst) v.push_back(p.inst);
+    std::sort(v.begin(), v.end());
+    render_routing::publish_pieces(std::move(v));
+}
+
+// Test.Viewpoints 2-4: the instances go 10 km down (out of every view and shadow), in the handshake.
+int g_hide_request = 0;
+bool g_hidden = false;
+void hide_now(int what) {
+    std::unordered_set<uint8_t*> done;
+    auto hide = [&](uint8_t* inst) {
+        if (!inst || !done.insert(inst).second) return;
+        reinterpret_cast<float*>(inst + kInstPos)[1] -= 10000.0f;
+        refresh_instance(inst);
+    };
+    for (uint32_t s = 0; s < g_slots; ++s) {
+        const Piece& p = g_pieces[s];
+        if (!p.inst || s == g_player_slot) continue;
+        if (p.pile != kNoPile ? (what == 1 || what == 2) : (what == 1 || what == 3)) hide(p.inst);
+    }
+    LOG("debris offload: test: %zu render instances (%s) put out of sight", done.size(),
+        what == 1 ? "all debris" : what == 2 ? "the piles" : "the pieces of their own");
+    g_hidden = true;
+}
+
+void __cdecl render_task(void*, int) {
+    if (!g_on) return;
+    release_chunk_refs();
+    if (!pxbridge::ready() || rfg::gameseq_get_state() != kGameplay) return;
+    if (g_hide_request) {
+        hide_now(g_hide_request);
+        g_hide_request = 0;
+    }
+    if (g_hidden) return;  // nothing moves the hidden instances back
+    const int64_t t0 = session::qpc();
+    forget_restored();
+    fix_piece_instances();
+    const int64_t t1 = session::qpc();
+    g_unpiles_left = kUnpilesPerFrame;
+    g_split_ms = 0;
+    move_pieces();
+    const int64_t t2 = session::qpc();
+    piles_frame();
+    const int64_t t3 = session::qpc();
+    batch_waiting();
+    recycle_far_pieces();
+    const int64_t t4 = session::qpc();
+    const double moves = session::ticks_to_ms(t2 - t1);
+    note_task_frame({std::max(0.0, moves - g_split_ms), g_split_ms, session::ticks_to_ms(t3 - t2),
+                     session::ticks_to_ms(t1 - t0) + session::ticks_to_ms(t4 - t3)});
+    g_stats.move_ms += float(session::ticks_to_ms(t4 - t0));
+    publish_for_routing();
+    g_time_ms[kTimeTask] += session::ticks_to_ms(session::qpc() - t0);
+}
+
+void on_frame(int game_state) {
+    if (!g_on) return;
+    if (!g_task_registered) {
+        g_render_task.callback = &render_task;
+        rfg::fn<void(__cdecl*)(GameRenderTask*)>(r::game_render_update_render_task_register)(&g_render_task);
+        g_task_registered = true;
+        LOG("debris offload: pieces move in a game render task (sim/render handshake)");
+    }
+    if (!pxbridge::ready() || game_state != kGameplay) return;
+    if (!g_tweaks_logged) {
+        g_tweaks_logged = true;
+        log_explosion_infos();
+        const float push = rfg::global<float>(r::Character_collision_push_away_mass);
+        g_push_mass = g_solid_mass_kg > 0 ? float(g_solid_mass_kg) : push > 0 ? push : 50.0f;
+        LOG("debris offload: the game pushes bodies lighter than %.1f kg out of the player's way (push-away dim %.2f, "
+            "impulse factor %.2f, rvec factor %.2f)", double(push),
+            double(rfg::global<float>(r::Character_collision_push_away_dim)),
+            double(rfg::global<float>(r::Character_collision_push_away_impulse_factor)),
+            double(rfg::global<float>(r::Character_collision_push_away_rvec_factor)));
+        if (g_solid)
+            LOG("debris offload: pieces in PhysX of %.0f kg or more are solid to the player (Havok stand-ins near "
+                "the player); lighter ones are pushed by the player's capsule", double(g_push_mass));
+        if (g_diag) log_layer_table();
+    }
+    if (g_diag) {
+        static int64_t next_census = 0;
+        const int64_t now = session::qpc();
+        if (now >= next_census) {
+            next_census = now + int64_t(10000.0 / session::ticks_to_ms(1));
+            census_general_movers();
+            census_vehicles();
+            census_islands();
+            log_busy_proxies();
+            if (g_piles_on) log_buffer_heap("now");
+        }
+    }
+    const int64_t t0 = session::qpc();
+    int64_t ta = t0;
+    auto lap = [&](int part) {
+        const int64_t tb = session::qpc();
+        g_time_ms[part] += session::ticks_to_ms(tb - ta);
+        ta = tb;
+    };
+    send_explosions();
+    send_melee_sweeps();
+    lap(kTimeExplosions);
+    cool_slots(g_cooling, g_free);
+    cool_slots(g_vehicle_cooling, g_vehicle_free);
+    grow_slots();  // OpenRFG64
+    lap(kTimeSlots);
+    if (world_mirror::ready()) adopt();  // not before the pieces have a world to land on
+    lap(kTimeAdopt);
+    player_proxy();
+    lap(kTimePlayer);
+    move_vehicles();
+    lap(kTimeVehicles);
+    update_stand_ins();
+    lap(kTimeStandIns);
+    if (g_probe) probe_frame();
+    if (!g_inspect_frames.empty()) inspect_frame();
+    g_stats.adopt_ms += float(session::ticks_to_ms(session::qpc() - t0));
+    ++g_time_frames;
+    const double now_ms = session::since_start_ms();
+    if (now_ms >= g_time_next_ms) {
+        if (g_time_next_ms > 0 && g_time_frames) {
+            char parts[512];
+            int at = 0;
+            double total = 0;
+            for (int i = 0; i < kTimeParts; ++i) {
+                total += g_time_ms[i];
+                at += snprintf(parts + at, sizeof(parts) - size_t(at), "%s%s %.0f", i ? ", " : "", kTimeNames[i], g_time_ms[i]);
+                if (at >= int(sizeof(parts))) at = int(sizeof(parts)) - 1;
+            }
+            LOG("debris offload: the last %u frames took here %.0f ms (%s; %llu zone checks, %llu movers looked at); "
+                "%u pieces waiting in Havok", g_time_frames, total, parts,
+                static_cast<unsigned long long>(g_time_zone_calls), static_cast<unsigned long long>(g_time_movers), g_waiting);
+        }
+        for (double& t : g_time_ms) t = 0;
+        g_time_frames = 0;
+        g_time_zone_calls = g_time_movers = 0;
+        g_time_next_ms = now_ms + 5000;
+    }
+}
+
+// The game's pool of compile requests: s_params_pool, a pool_list of 4,096 rl_mesh_recompile_parameters (+8 their
+// number, +0xC the free ones). Every change to an instance's sub-instances (claim, unclaim, update, split,
+// set_sub_instance_is_active) deletes its mesh and asks for a new compile here, and the new request clears the valid
+// flag of the instance's pending one, which then aborts at its next stop. With no request free the game does nothing
+// at all, and the pending compile goes on with the instance as it was when it counted (see cancel_compile). Shatter
+// bursts empty the pool: every new piece asks for a compile, and requests come back only once the compiler is through
+// them. Counted: requests made with the pool empty, and the fewest free.
+constexpr uint32_t kPoolSize = 8, kPoolFree = 0xC;
+uint32_t g_requests_pool_empty = 0;
+int32_t g_pool_free_min = INT32_MAX;
+
+// rl_start_recompile_mesh_instance(rl_destroyable_model_instance*, bool): no compiled meshes for the pieces; with the
+// pool empty, the instance's pending compile is cancelled as a new request would.
+void __cdecl d_start_recompile(const void* inst, bool in_handshake) {
+    if (g_drop_meshes) {
+        AcquireSRWLockShared(&g_piece_set_lock);
+        const bool piece = g_piece_set.count(inst) != 0;
+        ReleaseSRWLockShared(&g_piece_set_lock);
+        if (piece) {
+            ++g_recompiles_skipped;
+            return;
+        }
+    }
+    const int32_t free_requests = rfg::global<int32_t>(r::s_params_pool + kPoolFree);
+    g_pool_free_min = std::min(g_pool_free_min, free_requests);
+    if (free_requests <= 0) {
+        ++g_requests_pool_empty;
+        cancel_compile(static_cast<uint8_t*>(const_cast<void*>(inst)));
+    }
+    o_start_recompile(inst, in_handshake);
+}
+
+// ---- explosions ----
+
+// explosion_create(explosion_info*, object* source, object* target, vector* pos, matrix* orient, vector* dir,
+// weapon_info*, bool): every explosion the game makes (rockets: projectile::detonate; weapons, vehicles, items,
+// scripts) is queued here and blown up in explosion_do_frame. It also kicks the host's pieces, by a velocity change
+// falling off with distance. (The first version hooked explosion_apply_damage, which the PDB calls __cdecl but whose
+// optimized build takes the explosion in edi and two objects in ecx/edx: the hook read garbage and nothing ever
+// reached the host.) Queued here, sent at the end of the frame by the sim thread, which owns the command ring.
+// The kick at the centre: 15 m/s for the thermobaric rocket (impulse 40,000; the game's own kicks on Havok debris
+// top out at 15 m/s, logged below), scaled by the square root of the explosion's impulse (rocket 28,000: 12.5 m/s,
+// grenade 10,000: 7.5, vehicle bomb 75,000: 20.5), 4 to 25 m/s.
+constexpr float kKickAtCentre = 15.0f, kKickImpulse = 40000.0f, kKickMin = 4.0f, kKickMax = 25.0f;
+// explosion_info (PDB): m_name at +0, m_radius +0x2C, m_secondary_radius +0x30, m_impulse_magnitude +0x5C,
+// expanding_explosion_duration +0x64 and _delay +0x68 (ms).
+const uint32_t &kExplRadius = layout::explosion_radius, &kExplSecondaryRadius = layout::explosion_secondary_radius,
+               &kExplImpulse = layout::explosion_impulse, &kExplExpandMs = layout::explosion_expand_ms;
+struct PendingExplosion {
+    float pos[3];
+    float radius;
+    float kick;  // m/s at the centre
+};
+CRITICAL_SECTION g_expl_lock;
+std::vector<PendingExplosion> g_expl_pending;
+uint32_t g_expl_forwarded = 0, g_expl_at_stand_ins = 0;
+std::atomic<bool> g_expl_kicks{true};  // kick_pieces_for_test
+
+void(__cdecl* o_explosion)(void*, void*, void*, float*, void*, float*, void*, bool) = nullptr;
+void __cdecl d_explosion(void* info, void* source, void* target, float* pos, void* orient, float* dir, void* weapon,
+                         bool flag) {
+    o_explosion(info, source, target, pos, orient, dir, weapon, flag);
+    if (!g_on || !pos || !info || !g_expl_kicks.load(std::memory_order_relaxed)) return;
+    const auto* in = static_cast<const uint8_t*>(info);
+    const float r1 = *reinterpret_cast<const float*>(in + kExplRadius);
+    const float r2 = *reinterpret_cast<const float*>(in + kExplSecondaryRadius);
+    float radius = std::max(r1, r2);
+    if (!(radius > 0.5f) || radius > 100.0f) radius = 5.0f;  // NaN-safe
+    const float impulse = *reinterpret_cast<const float*>(in + kExplImpulse);
+    float kick = impulse > 0 ? kKickAtCentre * std::sqrt(impulse / kKickImpulse) : kKickAtCentre;
+    kick = !(kick > kKickMin) ? kKickMin : kick > kKickMax ? kKickMax : kick;
+    EnterCriticalSection(&g_expl_lock);
+    if (g_expl_pending.size() < 256) g_expl_pending.push_back({{pos[0], pos[1], pos[2]}, radius, kick});
+    LeaveCriticalSection(&g_expl_lock);
+}
+
+void send_explosions() {
+    static std::vector<PendingExplosion> batch;
+    EnterCriticalSection(&g_expl_lock);
+    batch.swap(g_expl_pending);
+    LeaveCriticalSection(&g_expl_lock);
+    for (const PendingExplosion& p : batch) {
+        // One that went off at a stand-in (within 60 cm of its piece's bounds): a projectile that struck a pile.
+        if (stand_in_piece_at(p.pos, 0.6f) != kNoSlot) ++g_expl_at_stand_ins;
+        ipc::Explosion e{};
+        e.h = {uint16_t(ipc::Cmd::Explosion), 0, sizeof(e)};
+        e.center = {p.pos[0], p.pos[1], p.pos[2]};
+        e.radius = p.radius;
+        e.impulse = p.kick;
+        e.up = 0.3f;
+        e.mode = ipc::kExplosionVelocityChange;
+        if (pxbridge::send_record(&e, sizeof(e))) ++g_expl_forwarded;
+    }
+    batch.clear();
+}
+
+// The game's explosion definitions (Explosion_infos, Num_explosion_infos), once, to calibrate the kicks.
+void log_explosion_infos() {
+    const int n = rfg::global<int>(r::Num_explosion_infos);
+    const auto* infos = static_cast<const uint8_t*>(rfg::addr(r::Explosion_infos));
+    LOG("debris offload: %d explosion definitions (radius / secondary radius m, impulse, expanding ms):", n);
+    for (int i = 0; i < n && i < 79; ++i) {  // the array holds 79 (18,960 bytes)
+        const uint8_t* e = infos + size_t(i) * 0xF0;
+        char name[33];
+        memcpy(name, e, 32);
+        name[32] = 0;
+        LOG("debris offload:   %-32s %6.1f %6.1f %10.1f %6u", name, double(*reinterpret_cast<const float*>(e + kExplRadius)),
+            double(*reinterpret_cast<const float*>(e + kExplSecondaryRadius)),
+            double(*reinterpret_cast<const float*>(e + kExplImpulse)), *reinterpret_cast<const uint32_t*>(e + kExplExpandMs));
+    }
+}
+
+// The game's own kicks for pieces still in Havok, to calibrate kKickAtCentre: the velocity change
+// object_mover_process_explosion_hit gives a piece (|impulse| / mass).
+double g_kick_sum = 0, g_kick_max = 0;
+uint32_t g_kick_n = 0;
+void(__cdecl* o_impulse)(uint32_t, const float*) = nullptr;
+void __cdecl d_impulse(uint32_t handle, const float* impulse) {
+    // A driven chunk's body is keyframed and takes no push in Havok: the push goes to its body in the host (sent from
+    // move_vehicles; this may run inside Havok's step). g_driven holds object handles: the body's object says.
+    if (impulse && handle != 0xFFFFFFFFu && !g_driven.empty()) {
+        const uint8_t* body = static_cast<uint8_t* const*>(rfg::addr(r::Hk_rigid_bodies))[handle];
+        const uint8_t* obj = body ? rfg::fn<uint8_t*(__cdecl*)(const uint8_t*)>(r::object_from_world_obj)(body) : nullptr;
+        if (obj && g_driven.count(*reinterpret_cast<const uint32_t*>(obj + kObjHandle)) &&
+            std::isfinite(impulse[0]) && std::isfinite(impulse[1]) && std::isfinite(impulse[2])) {
+            AcquireSRWLockExclusive(&g_chunk_impulse_lock);
+            g_chunk_impulses_queued.push_back({handle, {impulse[0], impulse[1], impulse[2]}});
+            ReleaseSRWLockExclusive(&g_chunk_impulse_lock);
+        }
+    }
+    const uint32_t caller = uint32_t(reinterpret_cast<uintptr_t>(_ReturnAddress()) - rfg::base());
+    if (impulse && handle != 0xFFFFFFFFu &&
+        caller - r::object_mover_process_explosion_hit < rfg::size::object_mover_process_explosion_hit) {
+        const uint8_t* body = static_cast<uint8_t* const*>(rfg::addr(r::Hk_rigid_bodies))[handle];
+        if (body) {
+            const double dv = std::sqrt(double(impulse[0]) * impulse[0] + double(impulse[1]) * impulse[1] +
+                                        double(impulse[2]) * impulse[2]) *
+                              double(*reinterpret_cast<const float*>(body + kBodyInvMass));
+            g_kick_sum += dv;
+            g_kick_max = std::max(g_kick_max, dv);
+            if (++g_kick_n % 2000 == 0)
+                LOG("debris offload: the game's explosion kicks so far: %u, %.2f m/s mean, %.2f max", g_kick_n,
+                    g_kick_sum / g_kick_n, g_kick_max);
+        }
+    }
+    o_impulse(handle, impulse);
+}
+
+// rfg_dyn_add_pre_collide_contact(event, object a, object b): a new contact point in Havok becomes a destruction contact
+// (its impact energy the damage, research/docs/08). A driven chunk's body is keyframed: its contacts with the player
+// and the pieces still in Havok would count it as infinitely heavy. They record nothing (the contact itself stays).
+bool(__cdecl* o_add_contact)(void*, uint8_t*, uint8_t*) = nullptr;
+bool __cdecl d_add_contact(void* event, uint8_t* a, uint8_t* b) {
+    if (!g_driven.empty() && ((a && g_driven.count(*reinterpret_cast<const uint32_t*>(a + kObjHandle))) ||
+                              (b && g_driven.count(*reinterpret_cast<const uint32_t*>(b + kObjHandle))))) {
+        g_chunk_contacts_held.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    return o_add_contact(event, a, b);
+}
+
+// ---- zones and chunks streaming out ----
+
+// world::destream_zone(world_zone*): a zone leaves (from world::process_deserialization in world::do_frame, in the
+// handshake; the game serialized and destroyed its objects a few frames earlier, those then lying in it judged by
+// position, world::process_deserialize_collect). Its obj_zone is destroyed here and its containers released; the
+// pieces lying in it go now, as the game's debris did, and their chunk references with them, so the chunks can unload.
+// Stand-ins carrying its zone object go first (they are made again next frame with the player's zone).
+uint32_t g_zones_out = 0;
+uint64_t g_zone_pieces_released = 0;
+
+void release_zone(uint8_t* w, uint8_t* zone) {
+    uint8_t* zone_obj = *reinterpret_cast<uint8_t**>(zone + kZoneObj);
+    if (zone_obj && std::find(g_stand_in_zones.begin(), g_stand_in_zones.end(), zone_obj) != g_stand_in_zones.end())
+        free_all_stand_ins();
+    if (zone_obj == g_zone_obj) g_zone_obj = nullptr;
+    if (*reinterpret_cast<const int32_t*>(zone + kZoneState) != kZoneLoaded) return;  // a load called off
+    const auto zone_at = rfg::fn<uint8_t*(__thiscall*)(void*, const float*)>(r::world__get_world_zone_by_pos);
+    uint32_t n = 0, live = 0;
+    for (uint32_t s = 0; s < g_slots; ++s) {
+        const Piece& p = g_pieces[s];
+        if (!p.inst || s == g_player_slot) continue;
+        ++live;
+        if (zone_at(w, reinterpret_cast<const float*>(p.inst + kInstPos)) == zone) {
+            give_up(s, true);
+            ++n;
+        }
+    }
+    ++g_zones_out;
+    g_zone_pieces_released += n;
+    if (n) {
+        char name[65];
+        memcpy(name, zone + kZoneName, 64);
+        name[64] = 0;
+        LOG("debris offload: zone %s streamed out, %u of the %u pieces lay in it and went with it", name, n, live);
+    }
+}
+
+void(__fastcall* o_destream_zone)(void* RFG_EDX_TYPE, uint8_t*) = nullptr;
+void __fastcall d_destream_zone(void* w RFG_EDX_PARAM, uint8_t* zone) {
+    if (g_on && w && zone) release_zone(static_cast<uint8_t*>(w), zone);
+    o_destream_zone(w RFG_EDX_PASS, zone);
+}
+
+// chunk_base_unload_internal(c_chunk_base*, bool): a chunk unloads (stream2_do_frame, end of the handshake), its
+// mesh and materials released, its memory given back with its container. A piece still drawing from it holds no
+// reference (its general_mover had none): it goes first, nothing to give back.
+uint32_t g_chunks_out_under_pieces = 0;
+uint64_t g_chunk_pieces_released = 0;
+
+void(__cdecl* o_chunk_unload)(uint8_t*, bool) = nullptr;
+void __cdecl d_chunk_unload(uint8_t* chunk, bool delete_mesh) {
+    if (g_on && chunk && !g_chunk_pieces.empty()) {
+        const uint32_t uid = rfg::fn<uint32_t(__cdecl*)(uint8_t*)>(r::chunk_get_base_uid)(chunk);
+        if (g_chunk_pieces.count(uid)) {
+            uint32_t n = 0;
+            for (uint32_t s = 0; s < g_slots; ++s) {
+                Piece& p = g_pieces[s];
+                if (!p.inst || p.chunk_uid != uid) continue;
+                if (p.srid) g_srid_pieces.erase(p.srid);  // our reference goes with the container
+                p.srid = 0;
+                give_up(s, true);
+                ++n;
+            }
+            // Their stand-ins' shapes are the pieces' own, which may live in the chunk's memory: they go now.
+            for (uint32_t h : g_stand_ins_to_free) free_stand_in(h);
+            g_stand_ins_to_free.clear();
+            ++g_chunks_out_under_pieces;
+            g_chunk_pieces_released += n;
+            char name[129];
+            memcpy(name, chunk + layout::chunk_name, 128);  // c_chunk_base::name
+            name[128] = 0;
+            LOG("debris offload: chunk %s unloads under %u pieces: they go first", name, n);
+        }
+    }
+    o_chunk_unload(chunk, delete_mesh);
+}
+
+void log_chunk_ends() {
+    LOG("debris offload: loose chunks that left the host, by how, with their parts: gone from Havok's world %u (%u), given way %u "
+        "(%u), out of Havok's islands %u (%u); parked %u, back %u; chunk-frames flown on until the first pose %u; slowed coming in %u; "
+        "kept from the game's deletes: the world's border %u, their zone %u; keyframed with no driver, at most at once %u; given way for a slot %u; "
+        "cracks %llu, snaps %llu (%llu links, %.1f MJ); parts of buildings crushed under them %llu (%.0f t)",
+        g_chunk_ends[kEndGone], g_chunk_end_parts[kEndGone], g_chunk_ends[kEndRange], g_chunk_end_parts[kEndRange],
+        g_chunk_ends[kEndIslands], g_chunk_end_parts[kEndIslands], g_chunks_parked, g_chunks_unparked, g_chunk_frames_flown,
+        g_chunks_slowed, g_chunks_kept_inside.load(), g_chunks_kept_in_zone.load(), g_chunks_no_driver_peak, g_chunks_given_way,
+        static_cast<unsigned long long>(g_cracks), static_cast<unsigned long long>(g_snaps), static_cast<unsigned long long>(g_crack_links), g_crack_joules / 1e6,
+        static_cast<unsigned long long>(g_stump_parts), g_stump_kg / 1000.0);
+    LOG("debris offload: chunks at rest that still had a velocity from their keyframes, stopped: %u, the fastest turning %.3f rad/s", g_chunks_stopped, double(g_chunks_stopped_spin));
+    g_chunks_stopped = 0;
+    g_chunks_stopped_spin = 0;
+    {
+        std::vector<std::pair<double, uint32_t>> most;
+        for (const auto& [handle, lost] : g_stump_by) most.emplace_back(lost.kg, handle);
+        std::sort(most.rbegin(), most.rend());
+        for (size_t i = 0; i < most.size() && i < 6; ++i) {
+            const StumpLost& lost = g_stump_by[most[i].second];
+            LOG("debris offload: building %08X at (%.0f, %.0f) lost %.1f t under loose chunks", most[i].second, double(lost.x), double(lost.z), lost.kg / 1000.0);
+        }
+    }
+    for (const auto& [by, gone] : g_chunks_gone_by)
+        LOG("debris offload: loose chunks gone from Havok's world destroyed by %08X (0: by nothing lately): %u, with %u parts", by, gone.first, gone.second);
+    g_chunks_gone_by.clear();
+    g_chunks_parked = g_chunks_unparked = 0;
+    g_chunk_frames_flown = 0;
+    g_chunks_slowed = 0;
+    g_chunks_no_driver_peak = g_chunks_given_way = 0;
+    g_cracks = g_snaps = g_crack_links = g_stump_parts = 0;
+    g_crack_joules = g_stump_kg = 0;
+    g_stump_owed.clear();
+    g_stump_by.clear();
+    g_chunk_splits.clear();
+    for (uint32_t k = 0; k < kEndCount; ++k) g_chunk_ends[k] = g_chunk_end_parts[k] = 0;
+}
+
+// Pieces thrown out of their zone while they waited in Havok (d_in_original_zone), this session.
+void log_zone_crossings() {
+    uint64_t deleted = 0;
+    for (const uint64_t n : g_zone_deleted) deleted += n;
+    if (!g_zone_kept && !deleted) return;
+    LOG("debris offload: general movers that left their zone this session: %llu waiting pieces kept, %llu of them gone "
+        "to PhysX at once, %llu left to the game after %u frames; deleted by the game as before: %llu (not debris "
+        "%llu, fading %llu, no render instance %llu, no body %llu, attached %llu, PhysX not ready %llu)", g_zone_kept,
+        g_zone_kept_adopted, g_zone_left_to_game, kZoneKeepFrames, deleted, g_zone_deleted[kZoneNotDebris],
+        g_zone_deleted[kZoneFading], g_zone_deleted[kZoneNoInstance], g_zone_deleted[kZoneNoBody],
+        g_zone_deleted[kZoneAttached], g_zone_deleted[kZoneNotReady]);
+}
+
+void on_exit(bool) {
+    if (!g_on) return;
+    if (g_chunks_in_physx) log_chunk_ends();
+    LOG("debris offload: %llu pieces taken over (%llu fell through the world); %u explosions sent to the host (%u went "
+        "off at a stand-in); the game's explosion kicks: %u, %.2f m/s mean, %.2f max", g_total_adopted, g_fell,
+        g_expl_forwarded, g_expl_at_stand_ins, g_kick_n, g_kick_n ? g_kick_sum / g_kick_n : 0.0, g_kick_max);
+    if (g_world_only_went) LOG("debris offload: %llu world-only pieces went over at once", g_world_only_went);
+    if (g_from_driven_went) LOG("debris offload: %llu pieces of loose chunks in the host went over at once", g_from_driven_went);
+    log_zone_crossings();
+    if (g_adopted_faded)
+        LOG("debris offload: %llu pieces went over faded by distance (not fully visible)", g_adopted_faded);
+    if (g_wide_blows)
+        LOG("debris offload: %u melee blows wider than the game's (a mod's moves) passed on to the pieces, in %u "
+            "sweeps; %u pieces that came out of what they shattered got their push", g_wide_blows, g_sweeps_sent,
+            g_late_pushes);
+    if (g_batch)
+        LOG("debris offload: batchable bit set again %u times (the game's compiled meshes clear it)", g_batch_restored);
+    if (g_drop_meshes)
+        LOG("debris offload: %u compiled meshes of pieces given back, %u recompiles skipped", g_meshes_dropped,
+            g_recompiles_skipped);
+    if (o_start_recompile && g_pool_free_min != INT32_MAX)
+        LOG("debris offload: mesh compile requests: at least %d of the game's %d free at any time; %u asked with none "
+            "free (the game drops those; the instance's pending compile was cancelled here)", g_pool_free_min,
+            rfg::global<int32_t>(r::s_params_pool + kPoolSize), g_requests_pool_empty);
+    if (g_recycled_total)
+        LOG("debris offload: %llu pieces far from the player given up for render instances or host slots", g_recycled_total);
+    if (g_restored_pieces)
+        LOG("debris offload: %llu pieces went with the restored objects they broke off", g_restored_pieces);
+    LOG("debris offload: chunk references taken over from the movers: %llu (%llu pieces came without one), %llu given "
+        "back; at most %u pieces shared one chunk's reference; %u zones streamed out, %llu pieces went with them; %u "
+        "chunks unloaded under pieces (%llu pieces)",
+        g_refs_taken, g_refs_missing, g_refs_released, g_srid_peak, g_zones_out, g_zone_pieces_released,
+        g_chunks_out_under_pieces, g_chunk_pieces_released);
+    LOG("debris offload: Havok stand-ins: %u created (%u boxes, the rest the pieces' own shapes), %u at most at once, %u "
+        "failed; wanted (piece-frames) near the player %u, ahead of projectiles %u, on the line of fire %u; blows "
+        "passed on to pieces: %u melee, %u bullets", g_stand_ins_created, g_stand_ins_boxes, g_stand_ins_peak,
+        g_stand_in_failures, g_wanted_near, g_wanted_projectile, g_wanted_aim, g_melee_hits, g_bullet_hits);
+    if (g_probe)
+        LOG("stand-in probe: %u pieces probed: the default ray hit a stand-in %u times; %u blows passed on, %u pieces "
+            "moved", g_probe_rays, g_probe_ray_hits, g_probe_blows, g_probe_moved);
+}
+
+// object_level_shutdown() (from gamestate_gp_exit, when gameplay ends): the level's objects are freed, movers among
+// them; the render instances taken over go now too, while the renderer still has them. (general_mover_level_shutdown
+// looked like the place but nothing calls it.)
+void(__cdecl* o_level_shutdown)() = nullptr;
+// What the renderer sees of the pieces (research: the render thread's cost per piece). rl_compound_mesh_instance:
+// m_mat_map (+0x118: rl_material_map, num_materials at +0x0C, is_set at +0x10), m_num_renderable_sub_instances
+// (+0x124); rl_destroyable_model_instance::m_shared_data (+0x148): the building's shared base (its pieces share it).
+// get_material_block_counts walks every material of the map and every renderable sub-instance, for each visible
+// piece once per frame and again when it is batched. Pieces in piles are counted apart.
+void log_render_stats() {
+    const ipc::SnapshotHeader* s = pxbridge::snapshot(nullptr);
+    const ipc::BodyPose* poses = s ? pxbridge::poses(s) : nullptr;
+    const uint32_t slots = s ? std::min<uint32_t>(s->slots, g_slots) : 0;
+    uint32_t mats[8] = {}, subs[8] = {}, pieces = 0, frozen = 0, awake = 0, piled = 0;
+    uint64_t mat_sum = 0, sub_sum = 0;
+    std::unordered_map<const void*, uint32_t> per_base;
+    // What merging frozen pieces would leave to draw: pieces of one building in one cell of 4, 8 or 16 m.
+    constexpr float kCells[3] = {4.0f, 8.0f, 16.0f};
+    std::unordered_map<uint64_t, uint32_t> groups[3];
+    auto bucket = [](uint32_t v) { return v <= 1 ? 0 : v <= 2 ? 1 : v <= 4 ? 2 : v <= 8 ? 3 : v <= 16 ? 4 : v <= 32 ? 5 : v <= 64 ? 6 : 7; };
+    for (uint32_t i = g_debris_first; i < g_slots; ++i) {
+        const uint8_t* inst = g_pieces[i].inst;
+        if (!inst) continue;
+        if (g_pieces[i].pile != kNoPile) {
+            ++piled;
+            continue;
+        }
+        ++pieces;
+        const uint8_t* map = *reinterpret_cast<uint8_t* const*>(inst + kInstMatMap);
+        const uint32_t m = map && map[layout::material_map_is_set] ? *reinterpret_cast<const uint32_t*>(map + layout::material_map_count) : 0;
+        const uint32_t r = *reinterpret_cast<const uint32_t*>(inst + kInstRenderableSubs);
+        ++mats[bucket(m)];
+        ++subs[bucket(r)];
+        mat_sum += m;
+        sub_sum += r;
+        const void* base = *reinterpret_cast<void* const*>(inst + kInstShared);
+        ++per_base[base];
+        if (poses && i < slots) {
+            const bool is_frozen = (poses[i].flags & ipc::kPoseFrozen) != 0;
+            frozen += is_frozen;
+            awake += (poses[i].flags & ipc::kPoseAwake) != 0;
+            if (is_frozen)
+                for (int c = 0; c < 3; ++c) ++groups[c][merge_cell_key(base, poses[i].pos, kCells[c])];
+        }
+    }
+    if (g_piles_live) {
+        uint32_t compiled = 0, batched = 0, largest = 0;
+        // rl_mesh_recompile_data: keen::RenderGeometry (indexCount +0x10), vertex_stride +0x2C and index_stride +0x2E
+        // (ushort), num_verts +0x30, num_render_blocks +0x3C (one per material drawn: a draw per pass).
+        uint64_t vbytes = 0, ibytes = 0, blocks = 0;
+        uint32_t most_blocks = 0, meshless_members = 0, meshless_largest = 0, meshless_pending = 0;
+        for (const Pile& pile : g_piles) {
+            if (!pile.inst) continue;
+            const uint8_t* data = *reinterpret_cast<const uint8_t* const*>(pile.inst + kInstRecompileData);
+            compiled += data != nullptr;
+            batched += (*reinterpret_cast<const uint16_t*>(pile.inst + kInstFlags) & kInstBatchable) != 0;
+            largest = std::max(largest, pile.members);
+            if (data) {
+                const uint32_t n = *reinterpret_cast<const uint32_t*>(data + layout::recompile_num_render_blocks);
+                vbytes += uint64_t(*reinterpret_cast<const uint32_t*>(data + layout::recompile_num_verts)) *
+                          *reinterpret_cast<const uint16_t*>(data + layout::recompile_vertex_stride);
+                ibytes += uint64_t(*reinterpret_cast<const uint32_t*>(data + layout::recompile_index_count)) *
+                          *reinterpret_cast<const uint16_t*>(data + layout::recompile_index_stride);
+                blocks += n;
+                most_blocks = std::max(most_blocks, n);
+            } else {
+                meshless_members += pile.members;
+                meshless_largest = std::max(meshless_largest, pile.members);
+                meshless_pending += !compile_wanted(pile.inst);
+            }
+        }
+        LOG("debris offload: %u pieces drawn by %u piles at the end (%u with their compiled mesh, %u drawn batched while "
+            "it is made; the largest pile %u pieces)", piled, g_piles_live, compiled, batched, largest);
+        LOG("debris offload: the piles' meshes: %.1f MB of vertices, %.1f MB of indices, %.1f render blocks a pile (most "
+            "%u); without a mesh: %u piles of %u pieces (largest %u), %u of them with a compile under way",
+            vbytes / 1048576.0, ibytes / 1048576.0, compiled ? double(blocks) / compiled : 0.0, most_blocks,
+            g_piles_live - compiled, meshless_members, meshless_largest, meshless_pending);
+    }
+    log_buffer_heap("level end");
+    if (!pieces) return;
+    uint32_t biggest = 0, in_big = 0;
+    for (const auto& [base, n] : per_base) {
+        biggest = std::max(biggest, n);
+        if (n >= 100) in_big += n;
+    }
+    // Groups of one piece would stay as they are; the rest would each become one instance.
+    char merge[3][96];
+    for (int c = 0; c < 3; ++c) {
+        uint32_t multi = 0, in_multi = 0, largest = 0;
+        for (const auto& [key, n] : groups[c]) {
+            largest = std::max(largest, n);
+            if (n > 1) {
+                ++multi;
+                in_multi += n;
+            }
+        }
+        snprintf(merge[c], sizeof(merge[c]), "%.0f m: %u groups of 2+ holding %u pieces (largest %u)", kCells[c], multi,
+                 in_multi, largest);
+    }
+    LOG("debris offload: render view of %u pieces: materials in a piece's map %.1f mean (1: %u, 2: %u, 3-4: %u, 5-8: %u, "
+        "9-16: %u, 17-32: %u, 33-64: %u, more: %u); renderable sub-instances %.2f mean (1: %u, 2: %u, 3-4: %u, 5-8: %u, "
+        "more: %u); %zu shared bases (buildings), the biggest with %u pieces, %u pieces in bases of 100 or more; "
+        "frozen %u, awake %u", pieces, double(mat_sum) / pieces, mats[0], mats[1], mats[2], mats[3], mats[4], mats[5],
+        mats[6], mats[7], double(sub_sum) / pieces, subs[0], subs[1], subs[2], subs[3], subs[4] + subs[5] + subs[6] + subs[7],
+        per_base.size(), biggest, in_big, frozen, awake);
+    LOG("debris offload: frozen pieces of their own by building and cell: %s; %s; %s", merge[0], merge[1], merge[2]);
+    if (!g_piles_on || !poses) return;
+    // Why the still pieces of their own (frozen or asleep) are not in a pile, as piles_frame sees them.
+    const uint8_t* states = pxbridge::states(s);
+    const double now_ms = session::since_start_ms();
+    std::unordered_map<uint64_t, uint32_t> still_in_cell;
+    for (uint32_t i = 0; i < slots && i < g_slots; ++i) {
+        const Piece& p = g_pieces[i];
+        if (p.inst && p.pile == kNoPile && (states[i] & ipc::kPoseAlive) && !(states[i] & ipc::kPoseAwake))
+            ++still_in_cell[merge_cell_key(*reinterpret_cast<void* const*>(p.inst + kInstShared), poses[i].pos,
+                                           g_pile_cell)];
+    }
+    uint32_t still = 0, asleep = 0, no_candidate = 0, fresh = 0, not_yet = 0, subs_not_one = 0, pile_waits = 0,
+             next_door = 0, too_few = 0, ready = 0;
+    for (uint32_t i = 0; i < slots && i < g_slots; ++i) {
+        const Piece& p = g_pieces[i];
+        if (!p.inst || p.pile != kNoPile || !(states[i] & ipc::kPoseAlive) || (states[i] & ipc::kPoseAwake)) continue;
+        ++still;
+        asleep += !(states[i] & ipc::kPoseFrozen);
+        const uint64_t key = merge_cell_key(*reinterpret_cast<void* const*>(p.inst + kInstShared), poses[i].pos,
+                                            g_pile_cell);
+        bool busy = false;
+        if (!p.candidate) ++no_candidate;
+        else if (p.fresh) ++fresh;
+        else if (!p.frozen_since_ms || now_ms - p.frozen_since_ms < kPileFrozenMs) ++not_yet;
+        else if (*reinterpret_cast<const int32_t*>(p.inst + kInstNumSubs) != 1) ++subs_not_one;
+        else if (g_pile_at.count(key)) ++pile_waits;
+        else if (still_in_cell[key] >= kPileMinNew) ++ready;
+        else if (settled_pile_near(key, now_ms, busy) != kNoPile || busy) ++next_door;
+        else ++too_few;
+    }
+    LOG("debris offload: %u still pieces of their own (%u asleep, the rest frozen): %u not listed as candidates, %u "
+        "fresh, %u still for less than %.0f s, %u of other than one sub-instance, %u with a pile in their cell (joining "
+        "it after its settle time), %u with fewer than %u in their cell and a pile of their building next door, %u "
+        "with fewer and none next door, %u ready", still, asleep, no_candidate, fresh, not_yet, kPileFrozenMs / 1000.0,
+        subs_not_one, pile_waits, next_door, kPileMinNew, too_few, ready);
+}
+
+void __cdecl d_level_shutdown() {
+    if (g_on) {
+        log_render_stats();
+        free_all_stand_ins();  // while Havok's world is still there
+        AcquireSRWLockExclusive(&g_piece_set_lock);
+        g_piece_set.clear();
+        ReleaseSRWLockExclusive(&g_piece_set_lock);
+        EnterCriticalSection(&g_expl_lock);
+        g_expl_pending.clear();
+        LeaveCriticalSection(&g_expl_lock);
+        g_zone_obj = nullptr;
+        uint32_t n = 0;
+        g_level_ending = true;
+        for (uint32_t s = 0; s < g_slots; ++s)
+            if (g_pieces[s].inst) {
+                give_up(s, false);
+                ++n;
+            }
+        g_level_ending = false;
+        g_pile_candidates.clear();
+        g_no_pile_near.clear();
+        std::fill(g_seen_state.begin(), g_seen_state.end(), uint8_t(0));
+        AcquireSRWLockExclusive(&g_fix_lock);
+        g_fix_queue.clear();
+        ReleaseSRWLockExclusive(&g_fix_lock);
+        if (g_piles_made)
+            LOG("debris offload: piles this level: %llu made, %llu pieces joined one (%llu of them from the next cell), "
+                "%llu left one again when woken (%llu splits refused); %llu filled up; at most %u piles drawing %u "
+                "pieces at once; %u compiles asked for, %u of them again (no request had been made)", g_piles_made,
+                g_piled_total, g_joined_next_door, g_unpiled_total, g_unpile_failures, g_piles_full, g_piles_peak,
+                g_piled_peak, g_pile_compiles, g_pile_compile_retries);
+        g_joined_next_door = g_piles_full = 0;
+        if (g_piles_made) {
+            char meshless[320];
+            format_meshless(g_meshless, meshless, sizeof(meshless));
+            LOG("debris offload: piles without their mesh this level (after a change, until the new one): %s", meshless);
+        }
+        g_meshless = g_meshless_window = MeshlessStats{};
+        g_meshless_now = g_waiting_for_pile = 0;
+        if (g_task_frames) {
+            const char* names[kTaskParts] = {"moves", "splits out of piles", "piles (joins, sizes, retries)",
+                                             "the rest"};
+            double slow_total = 0;
+            for (const TaskPart& t : g_task) slow_total += t.in_slow;
+            char parts[kTaskParts][112];
+            for (int k = 0; k < kTaskParts; ++k)
+                snprintf(parts[k], sizeof(parts[k]), "%s %.3f ms a frame (longest %.2f, %.0f%% of the slow frames)",
+                         names[k], g_task[k].total / g_task_frames, g_task[k].longest,
+                         slow_total > 0 ? 100.0 * g_task[k].in_slow / slow_total : 0.0);
+            LOG("debris offload: render task this level: %llu frames, %llu of them over 1 ms; %s; %s; %s; %s; %llu "
+                "moves skipped (the instance already there)", static_cast<unsigned long long>(g_task_frames),
+                static_cast<unsigned long long>(g_task_slow), parts[0], parts[1], parts[2], parts[3],
+                static_cast<unsigned long long>(g_moves_skipped));
+        }
+        g_moves_skipped = 0;
+        for (TaskPart& t : g_task) t = TaskPart{};
+        g_task_frames = g_task_slow = 0;
+        g_pile_compiles = g_pile_compile_retries = 0;
+        g_piles.clear();
+        g_free_piles.clear();
+        g_pile_at.clear();
+        g_piles_live = g_piled_now = g_piles_peak = g_piled_peak = 0;
+        g_piles_made = g_piled_total = g_unpiled_total = g_unpile_failures = 0;
+        // Before world::level_shutdown destreams the zones and releases what the level's objects still hold.
+        const size_t refs = g_refs_to_release.size();
+        release_chunk_refs();
+        g_chunk_pieces.clear();
+        g_srid_pieces.clear();
+        g_restored.clear();
+        if (n) LOG("debris offload: level end, %u render instances released, %zu chunk references given back", n, refs);
+        log_masses("level end");
+        memset(g_mass_hist, 0, sizeof(g_mass_hist));
+        pxbridge::reset();
+        g_player_ready = false;
+        g_shape_ids.clear();
+        g_largest_radius = 0;
+        if (g_adopt_delay_ms)
+            LOG("debris offload: level end; at most %u new pieces were waiting in Havok at once; %u went over at rest "
+                "(frozen), %u moving", g_waiting_peak, g_went_at_rest, g_went_moving);
+        if (g_area_waits)
+            LOG("debris offload: level end; %llu pieces waited in Havok for the static world around them to reach the host",
+                static_cast<unsigned long long>(g_area_waits));
+        g_area_waits = 0;
+        log_zone_crossings();
+        g_first_seen.clear();
+        g_waiting_list.clear();
+        g_adopt_now.clear();
+        g_waiting = g_waiting_peak = g_went_at_rest = g_went_moving = 0;
+        EnterCriticalSection(&g_blow_lock);
+        g_blows.clear();
+        g_sweeps_pending.clear();  // sent before pxbridge::reset() would land in the next level
+        LeaveCriticalSection(&g_blow_lock);
+        if (g_vehicle_proxies_made || g_chunk_proxies_made)
+            LOG("debris offload: level end; bodies pushing the pieces in the host: %u of vehicles, %u of loose building "
+                "chunks (%u at most at once; %u shapes unreadable, %u too large)", g_vehicle_proxies_made,
+                g_chunk_proxies_made, g_vehicle_proxies_peak, g_vehicle_shapes_failed, g_proxy_shapes_too_large);
+        g_vehicle_proxies_made = g_chunk_proxies_made = g_vehicle_proxies_peak = g_vehicle_shapes_failed = 0;
+        g_proxy_shapes_too_large = 0;
+        if (g_chunks_driven)
+            LOG("debris offload: level end; loose chunks simulated in the host: %u (%llu parts sent, %u too large); "
+                "their Havok destruction contacts held back %u, the game's pushes on them passed on %llu, made "
+                "keyframed again after the game changed them %u; impacts from the host %llu: %llu as the game's "
+                "destruction contacts (%llu with a building, %llu strong and fast enough to slice; %.0f kJ mean, %.0f "
+                "max), %llu without one, %llu after the chunk left or without a subpiece; the chunks' velocity before an "
+                "impact read %llu times",
+                g_chunks_driven, g_chunk_parts_sent, g_chunks_too_large, g_chunk_contacts_held.exchange(0),
+                g_chunk_impulses_sent, g_chunk_motion_fixed, g_chunk_events, g_chunk_impacts, g_chunk_impacts_building,
+                g_chunk_impacts_sliceable,
+                g_chunk_impacts ? g_chunk_energy_sum / double(g_chunk_impacts) / 1000.0 : 0.0, g_chunk_energy_max / 1000.0,
+                g_chunk_events_weak, g_chunk_events_orphan,
+                static_cast<unsigned long long>(g_velocity_reads.exchange(0)));
+        if (g_chunks_driven)
+            LOG("debris offload: level end; subpieces of loose chunks broken off by their impacts %llu (%.0f t); parts "
+                "taken off their bodies as the game broke them off %llu; bodies made again as their parts did not add "
+                "up %llu; scans that left a new chunk in Havok until the static world had caught up %u; chunk-frames "
+                "held without a pose %u; chunks given back to Havok without one %u; Havok bodies at most %.2f m from "
+                "their targets, over 1 m in %u chunk-frames, put back there %u times",
+                static_cast<unsigned long long>(g_crushed), g_crushed_kg / 1000.0,
+                static_cast<unsigned long long>(g_parts_removed), static_cast<unsigned long long>(g_sync_mismatch),
+                g_chunks_waited_for_mirror, g_chunks_held, g_chunks_given_back, double(g_follow_peak), g_follow_far,
+                g_put_back);
+        g_chunks_waited_for_mirror = g_chunks_held = g_chunks_given_back = 0;
+        g_follow_peak = 0;
+        g_follow_far = 0;
+        g_put_back = g_put_back_logged = 0;
+        log_chunk_ends();
+        if (g_chunk_trace) fflush(g_chunk_trace);
+        g_crushed = g_parts_removed = g_sync_mismatch = 0;
+        g_crushed_kg = 0;
+        g_chunk_events = g_chunk_events_weak = g_chunk_events_orphan = g_chunk_impacts = 0;
+        g_chunk_impacts_building = g_chunk_impacts_sliceable = 0;
+        g_velocity_overs.store(0, std::memory_order_release);
+        g_chunk_energy_max = g_chunk_energy_sum = 0;
+        g_chunks_driven = g_chunks_too_large = g_chunk_motion_fixed = 0;
+        g_chunk_parts_sent = g_chunk_impulses_sent = 0;
+        reset_vehicles();
+    }
+    o_level_shutdown();
+}
+
+}  // namespace
+
+void trace_chunks_from_now_on() {
+    g_chunk_trace_frames = true;
+    pxbridge::set_test_flags(rfgphysx::kTestChunkTrace);
+    if (g_chunk_trace) return;
+    g_chunk_trace = _wfsopen((session::run_dir() + L"\\chunk_trace.csv").c_str(), L"w", _SH_DENYNO);
+    if (g_chunk_trace) fprintf(g_chunk_trace, "kind,frame,ms,chunk,slot,parts,t,x,y,z,vx,vy,vz\n");
+}
+
+float standing_t(uint32_t object_handle) {
+    const uint8_t* obj = object_of_handle(object_handle);
+    if (!obj || obj[kObjHasDestroyable] != 1) return 0.0f;
+    const uint8_t* shape = *reinterpret_cast<uint8_t* const*>(obj + kObjDestroyableShape);
+    double kg = 0;
+    return shape && shape_mass(shape, kg) ? float(kg / 1000.0) : 0.0f;
+}
+
+uint32_t crush_in_box(uint32_t object_handle, const float lo[3], const float hi[3], uint32_t room) {
+    uint8_t* obj = object_of_handle(object_handle);
+    if (!obj || obj[kObjHasDestroyable] != 1) return 0;
+    const uint8_t* shape = *reinterpret_cast<uint8_t* const*>(obj + kObjDestroyableShape);
+    const uint8_t* parent = shape ? *reinterpret_cast<uint8_t* const*>(shape + kDestroyableParent) : nullptr;
+    if (!parent) return 0;
+    const uint32_t count = *reinterpret_cast<const uint32_t*>(parent + kBaseNumObjects);
+    const float* pos = reinterpret_cast<const float*>(obj + layout::object_pos);
+    const float* rows = reinterpret_cast<const float*>(obj + layout::object_orient);  // rvec, uvec, fvec
+    static const float zero[3] = {0, 0, 0}, up[3] = {0, 1, 0};
+    const auto add_contact = rfg::fn<bool(__cdecl*)(uint8_t*, uint8_t*, uint32_t, const float*, const float*, const float*, const float*, uint32_t, uint32_t, bool)>(
+        r::rfg_dyn_multi_add_pre_collide_contact);
+    uint32_t done = 0;
+    for (uint32_t key = 0; key < count && done < room; ++key) {
+        uint8_t in_shape = 0;
+        const uint8_t state = 0;
+        if (!place_parts(shape, &key, &state, 1, &in_shape)) return done;
+        float centre[3], mass = 0;
+        bool breakable = false;
+        if (in_shape != 1 || !subpiece_base(shape, key, centre, mass, breakable) || !breakable) continue;
+        bool inside = true;
+        for (int k = 0; k < 3; ++k) {
+            const float world_k = pos[k] + centre[0] * rows[k] + centre[1] * rows[3 + k] + centre[2] * rows[6 + k];
+            inside &= world_k >= lo[k] && world_k <= hi[k];
+        }
+        if (!inside) continue;
+        const int from = rfg::global<int>(r::Num_rfg_dyn_collisions);
+        if (from >= kCollisionsKept) return std::max(done, 1u);
+        add_contact(obj, nullptr, kStumpDamage, centre, up, zero, zero, key, 0xFFFFFFFFu, false);
+        flag_crush(object_handle, key, from);
+        ++done;
+    }
+    return done;
+}
+
+void log_materials_of(uint8_t* const* objects, size_t n) {
+    static double kg[256], kg_held[256];
+    static uint32_t count[256];
+    memset(kg, 0, sizeof(kg));
+    memset(kg_held, 0, sizeof(kg_held));
+    memset(count, 0, sizeof(count));
+    double all = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const uint8_t* obj = objects[i];
+        if (obj[kObjHasDestroyable] != 1) continue;
+        const uint8_t* shape = *reinterpret_cast<uint8_t* const*>(obj + kObjDestroyableShape);
+        if (shape) shape_materials(shape, kg, count, kg_held);
+    }
+    for (const double m : kg) all += m;
+    const auto by_index = rfg::fn<const uint8_t*(__cdecl*)(uint8_t)>(r::rfg_get_physical_material_by_index);
+    for (int i = 0; i < 256; ++i) {
+        if (!count[i]) continue;
+        const uint8_t* m = i < rfg::global<int>(r::Num_rfg_physical_materials) ? by_index(uint8_t(i)) : nullptr;
+        LOG("debris offload: of %zu buildings, material %d %.32s: %u subpieces, %.0f t (%.1f%%), of which do not break %.0f t", n, i,
+            m ? reinterpret_cast<const char*>(m) : "?", count[i], kg[i] / 1000.0, all > 0.0 ? 100.0 * kg[i] / all : 0.0, kg_held[i] / 1000.0);
+    }
+}
+
+ChunkStats chunk_stats() {
+    ChunkStats c{};
+    const ipc::SnapshotHeader* s = pxbridge::snapshot(nullptr);
+    const ipc::BodyPose* poses = s ? pxbridge::poses(s) : nullptr;
+    const float hz = 1000.0f / pxbridge::step_period_ms();
+    for (const VehicleProxy& v : g_vehicles) {
+        if (!v.driven) continue;
+        ++c.driven;
+        c.parts += v.parts;
+        c.mass_kg += v.mass;
+        float t = v.mass / 1000.0f;
+        for (float& heaviest : c.largest_t)
+            if (t > heaviest) std::swap(t, heaviest);
+        if (poses && v.slot < s->slots) {
+            const ipc::BodyPose& b = poses[v.slot];
+            const float p1[3] = {b.pos.x, b.pos.y, b.pos.z}, q1[4] = {b.rot.x, b.rot.y, b.rot.z, b.rot.w};
+            const float p0[3] = {b.prev_pos.x, b.prev_pos.y, b.prev_pos.z},
+                        q0[4] = {b.prev_rot.x, b.prev_rot.y, b.prev_rot.z, b.prev_rot.w};
+            float now_at[3], was_at[3];
+            point_of(p1, q1, v.mid, now_at);
+            point_of(p0, q0, v.mid, was_at);
+            const float dx = now_at[0] - was_at[0], dy = now_at[1] - was_at[1], dz = now_at[2] - was_at[2];
+            c.fastest = std::max(c.fastest, std::sqrt(dx * dx + dy * dy + dz * dz) * hz);
+        }
+    }
+    c.cracks = uint32_t(g_cracks);
+    c.snaps = uint32_t(g_snaps);
+    c.stump_t = float(g_stump_kg / 1000.0);
+    c.follow_max = g_follow_max;
+    g_follow_max = 0;
+    c.in_havok = g_chunks_in_havok;
+    c.made = g_chunks_driven;
+    c.too_large = g_chunks_too_large;
+    c.impacts = uint32_t(g_chunk_impacts);
+    c.impacts_weak = uint32_t(g_chunk_events_weak);
+    c.energy_max_kj = float(g_chunk_energy_max / 1000.0);
+    c.crushed = uint32_t(g_crushed);
+    c.crushed_t = float(g_crushed_kg / 1000.0);
+    c.parts_removed = uint32_t(g_parts_removed);
+    c.pieces_at_once = uint32_t(g_from_driven_went);
+    return c;
+}
+
+bool install(const Config& cfg) {
+    if (cfg.exp_physx <= 0 || !cfg.exp_physx_world || !cfg.exp_physx_debris) return true;
+    // OpenRFG64: the player's capsule is slot 0 and the vehicles' proxies the next kVehicleSlots; the pieces
+    // come after them and their slots grow during the session (grow_slots). The host's tables and the snapshots it
+    // writes follow the highest slot in use: with the capsule in the last slot they spanned all the slots at all times.
+    g_slots = pxbridge::committed_slots();
+    g_slots_max = std::max(pxbridge::max_bodies(), g_slots);
+    if (g_slots < kVehicleSlots + 1024) return true;
+    g_player_slot = 0;
+    g_vehicle_first = 1;
+    g_debris_first = 1 + kVehicleSlots;
+    if (!g_pieces.reserve(g_slots_max) || !g_pieces.grow(g_slots, Piece{})) {
+        LOG("debris offload: no memory for %u body slots (error %lu)", g_slots, GetLastError());
+        return true;
+    }
+    g_vram_reserve_cfg_mb = uint32_t(std::max(cfg.exp_physx_vram_reserve_mb, 0));
+    g_recycle_min_age_ms = double(std::max(cfg.exp_physx_recycle_min_age_s, 0)) * 1000.0;
+    LOG("debris offload: %u body slots to start with, up to %u while the GPU has room (%u MB of it kept free; 0: an "
+        "eighth of it, at least 2 GB); %.0f MB of tables and %.0f MB of shared memory now; pieces younger than %.0f s are "
+        "given up last", g_slots, g_slots_max, g_vram_reserve_cfg_mb,
+        double(g_slots) * double(sizeof(Piece) + sizeof(Spatial) + 1) / 1048576.0,
+        double(g_slots) * double(3 * (sizeof(ipc::BodyPose) + 1)) / 1048576.0, g_recycle_min_age_ms / 1000.0);
+    g_free.clear();
+    for (uint32_t s = g_slots; s-- > g_debris_first;) g_free.push_back(s);  // pop_back hands out the lowest first
+    reset_vehicles();
+    InitializeCriticalSection(&g_expl_lock);
+    InitializeCriticalSection(&g_blow_lock);
+    bool ok = hooks::create(r::explosion_create, &d_explosion, &o_explosion, "explosion_create");
+    ok &= hooks::create(r::human_combat_process_hits, &d_combat_hits, &o_combat_hits, "human_combat_process_hits");
+    ok &= hooks::create(r::havok_body_apply_linear_impulse_by_handle, &d_impulse, &o_impulse,
+                        "havok_body_apply_linear_impulse(handle)");
+    ok &= hooks::create(r::general_mover__update_render_opacity, &d_update_render_opacity, &o_update_render_opacity,
+                        "general_mover::update_render_opacity");
+    ok &= hooks::create(r::object_level_shutdown, &d_level_shutdown, &o_level_shutdown, "object_level_shutdown");
+    ok &= hooks::create(r::world__destream_zone, &d_destream_zone, &o_destream_zone, "world::destream_zone");
+    ok &= hooks::create(r::chunk_base_unload_internal, &d_chunk_unload, &o_chunk_unload, "chunk_base_unload_internal");
+    if (!ok) return false;
+    // The zone check before general_mover::update_pos_and_orient's destroy: call (E8) at +0x40, test al, al after it.
+    // OpenRFG64: in OpenRFG64 the call is found in the function's code (rfg::call_return), not at +0x40.
+    const uint8_t* zone_call = static_cast<const uint8_t*>(rfg::addr(r::general_mover__update_pos_and_orient + 0x40));
+    const void* zone_return = rfg::is_openrfg64()
+        ? rfg::call_return(r::general_mover__update_pos_and_orient, rfg::size::general_mover__update_pos_and_orient,
+                           r::world__object_physically_in_original_zone)
+        : (zone_call[0] == 0xE8 && zone_call[5] == 0x84 && zone_call[6] == 0xC0 ? zone_call + 5 : nullptr);
+    if (zone_return &&
+        hooks::create(r::world__object_physically_in_original_zone, &d_in_original_zone, &o_in_original_zone,
+                      "world::object_physically_in_original_zone"))
+        g_zone_check_return = zone_return;
+    else
+        LOG("debris offload: WARNING the zone check in general_mover::update_pos_and_orient is not hooked: pieces thrown "
+            "out of their zone while they wait in Havok are deleted, as in the game");
+    // The same before a loose chunk's: call (E8) at +0x12, test al, al after it.
+    const uint8_t* chunk_zone_call = static_cast<const uint8_t*>(rfg::addr(r::object_mover__check_for_movement_delete + 0x12));
+    if (g_zone_check_return && rfg::is_openrfg64())
+        g_chunk_zone_check_return = rfg::call_return(r::object_mover__check_for_movement_delete, rfg::size::object_mover__check_for_movement_delete,
+                                                     r::world__object_physically_in_original_zone);
+    else if (g_zone_check_return && chunk_zone_call[0] == 0xE8 && chunk_zone_call[5] == 0x84 && chunk_zone_call[6] == 0xC0)
+        g_chunk_zone_check_return = chunk_zone_call + 5;
+    g_on = true;
+    g_batch = cfg.exp_physx_debris_batch != 0;
+    g_drop_meshes = g_batch && cfg.exp_physx_debris_drop_meshes != 0;
+    if (!hooks::create(r::rl_start_recompile_mesh_instance, &d_start_recompile, &o_start_recompile,
+                       "rl_start_recompile_mesh_instance")) {
+        LOG("debris offload: WARNING rl_start_recompile_mesh_instance not hooked: a mesh compile can outlive a change "
+            "to its instance when the game's request pool is empty (heap corruption in big shatter bursts)");
+        g_drop_meshes = false;
+    }
+    if (g_batch && !hooks::create(r::rl_destroyable_model_instance__set_compiled_cache_data, &d_set_compiled,
+                                  &o_set_compiled, "set_compiled_cache_data"))
+        LOG("debris offload: WARNING set_compiled_cache_data not hooked: pieces that get a compiled mesh later are drawn "
+            "one by one");
+    if ((cfg.exp_physx_debris_piles || cfg.telemetry) &&
+        !hooks::create(r::rl_destroyable_model_instance__compile_cache_data, &d_compile_cache, &o_compile_cache,
+                       "compile_cache_data"))
+        LOG("debris offload: WARNING compile_cache_data not hooked: compiled meshes keep their copies in the game's "
+            "buffer heap (large piles may find no room)");
+    else
+        g_free_mesh_copies = cfg.exp_physx_debris_piles != 0;
+    g_solid = cfg.exp_physx_solid_debris != 0;
+    g_solid_mass_kg = cfg.exp_physx_solid_mass_kg;
+    g_adopt_delay_ms = uint32_t(std::max(0, cfg.exp_physx_adopt_delay_ms));
+    if (g_adopt_delay_ms)
+        LOG("debris offload: new pieces stay in Havok for %u ms before they go to PhysX (less with more than %u "
+            "waiting)", g_adopt_delay_ms, kMaxWaiting);
+    g_world_only_at_once = cfg.exp_physx_world_only_at_once;
+    if (g_adopt_delay_ms && g_world_only_at_once) LOG("debris offload: world-only pieces go to PhysX at once");
+    g_chunks_in_physx = cfg.exp_physx_chunks;
+    if (g_chunks_in_physx && !hooks::create(r::delete_object_outside_bpo, &d_delete_outside, &o_delete_outside, "delete_object_outside_bpo"))
+        LOG("debris offload: WARNING delete_object_outside_bpo not hooked: a chunk sinking far enough will be deleted");
+    if (cfg.exp_physx_chunk_trace > 0) {
+        g_chunk_trace = _wfsopen((session::run_dir() + L"\\chunk_trace.csv").c_str(), L"w", _SH_DENYNO);
+        if (g_chunk_trace) fprintf(g_chunk_trace, "kind,frame,ms,chunk,slot,parts,t,x,y,z,vx,vy,vz\n");
+        g_chunk_trace_frames = cfg.exp_physx_chunk_trace == 1;
+    }
+    g_crush_j_per_kg = float(std::max(0, cfg.exp_physx_chunk_crush_j_per_kg));
+    g_crack_share = float(std::max(0, cfg.exp_physx_chunk_crack_percent)) / 100.0f;
+    g_chunk_materials = cfg.exp_physx_chunk_materials;
+    g_stump_share = float(std::max(0, cfg.exp_physx_chunk_stump_percent)) / 100.0f;
+    g_snap_radians = float(std::max(0, cfg.exp_physx_chunk_snap_mrad)) / 1000.0f;
+    g_chunk_break_kn = float(std::max(0, cfg.exp_physx_chunk_break_kn));
+    if (g_chunks_in_physx && !hooks::create(r::rfg_dyn_add_pre_collide_contact, &d_add_contact, &o_add_contact,
+                                            "rfg_dyn_add_pre_collide_contact")) {
+        LOG("debris offload: WARNING rfg_dyn_add_pre_collide_contact not hooked: loose chunks stay in Havok");
+        g_chunks_in_physx = false;
+    }
+    if (g_chunks_in_physx) gameloop::add_after_frametime(&apply_chunk_keyframes);
+    if (g_chunks_in_physx &&
+        !hooks::create(r::havok_body_get_linear_velocity_by_handle, &d_get_velocity, &o_get_velocity,
+                       "havok_body_get_linear_velocity")) {
+        LOG("debris offload: WARNING havok_body_get_linear_velocity not hooked: chunks in PhysX are not sliced");
+        o_get_velocity = nullptr;
+    }
+    if (g_chunks_in_physx)
+        LOG("debris offload: loose building chunks within %.0f m are simulated in PhysX, their Havok bodies keyframed to "
+            "it (Experiment.PhysXChunks); a part carrying over %.0f kN breaks off (PhysXChunkBreakKN), taking %.0f J per kg "
+            "of it from the chunk's motion (PhysXChunkCrushJPerKg); either 0: none break on impact",
+            double(kChunkRange), double(g_chunk_break_kn), double(g_crush_j_per_kg));
+    g_diag = cfg.telemetry;
+    g_probe = cfg.test_stand_in_probe;
+    g_piles_on = cfg.exp_physx_debris_piles != 0;
+    g_pile_cell = float(std::clamp(cfg.exp_physx_debris_pile_cell_m, 2, 64));
+    g_next_door_ms = 1000.0 * std::max(0, cfg.exp_physx_debris_pile_next_door_s);
+    g_pile_max = uint32_t(std::max(0, cfg.exp_physx_debris_pile_max_pieces));
+    if (g_piles_on)
+        LOG("debris offload: piles: pieces still for %.0f s (frozen or asleep) are drawn with the other still pieces of "
+            "their building in their %.0f m cell, as one compiled instance (from %u in a cell, up to %u a pile, 0: "
+            "no limit; fewer join their building's pile next door after %.0f s, 0: never); a piece that moves "
+            "leaves its pile again", kPileFrozenMs / 1000.0, double(g_pile_cell), kPileMinNew, g_pile_max,
+            g_next_door_ms / 1000.0);
+    g_stand_in_drives_zone = cfg.test_stand_in_drives_zone;
+    for (size_t at = 0; at < cfg.test_inspect_frames.size();) {
+        const size_t comma = cfg.test_inspect_frames.find(L',', at);
+        const std::wstring item = cfg.test_inspect_frames.substr(at, comma == std::wstring::npos ? std::wstring::npos : comma - at);
+        if (!item.empty()) g_inspect_frames.push_back(_wtoi(item.c_str()));
+        if (comma == std::wstring::npos) break;
+        at = comma + 1;
+    }
+    if (g_solid && !patch_lean_check()) {
+        LOG("debris offload: unexpected code in MyCharacterListener::processConstraintsCallback; no solid stand-ins");
+        g_solid = false;
+    }
+    if (!patch_zone_hits()) LOG("debris offload: obj_zone's vtable is not as expected; blows on stand-ins do nothing");
+    session::add_frame_callback(&on_frame);  // adoption; the moves run in a game render task (registered there)
+    session::add_flush_handler(&on_exit);
+    LOG("debris offload armed: debris pieces go to the PhysX host (%u slots), the player is a kinematic capsule there, "
+        "vehicles push the pieces (%u slots)%s%s", g_slots - g_debris_first, kVehicleSlots,
+        g_batch ? "; their render instances are drawn through the batched pass" : "",
+        g_solid ? "; heavy pieces are solid to the player (Havok stand-ins), the capsule pushes light ones" : "");
+    return true;
+}
+
+FrameStats take_frame() {
+    FrameStats f = g_stats;
+    f.live = uint32_t(g_slots - g_debris_first - g_free.size());
+    g_stats = {};
+    return f;
+}
+
+std::vector<uint32_t> pieces_near(const float center[3], float radius) {
+    std::vector<uint32_t> out;
+    const ipc::SnapshotHeader* s = g_on ? pxbridge::snapshot(nullptr) : nullptr;
+    if (!s) return out;
+    const ipc::BodyPose* poses = pxbridge::poses(s);
+    const uint32_t slots = std::min<uint32_t>(s->slots, g_slots);
+    for (uint32_t i = 0; i < slots; ++i) {
+        if (!g_pieces[i].inst || !(poses[i].flags & ipc::kPoseAlive)) continue;
+        const float dx = poses[i].pos.x - center[0], dy = poses[i].pos.y - center[1], dz = poses[i].pos.z - center[2];
+        if (dx * dx + dy * dy + dz * dz < radius * radius) out.push_back(i);
+    }
+    return out;
+}
+
+void forget_pieces_of(const std::unordered_set<uint32_t>& object_handles) {
+    if (!g_on) return;
+    for (const uint32_t handle : object_handles)
+        if (handle != kNoObject) g_restored.insert(handle);
+}
+
+uint32_t piece_original(uint32_t slot) {
+    return g_on && slot < g_slots && g_pieces[slot].inst ? g_pieces[slot].original : kNoObject;
+}
+
+const std::unordered_set<uint32_t>& last_restored() { return g_last_restored; }
+
+uint32_t count_pieces_of(uint32_t object_handle) {
+    uint32_t n = 0;
+    for (uint32_t s = 0; g_on && s < g_slots; ++s) n += g_pieces[s].inst && g_pieces[s].original == object_handle;
+    return n;
+}
+
+bool piece_position(uint32_t slot, float out[3]) {
+    const ipc::SnapshotHeader* s = g_on ? pxbridge::snapshot(nullptr) : nullptr;
+    if (!s || slot < g_debris_first || slot >= g_slots || !g_pieces[slot].inst) return false;
+    const ipc::BodyPose& b = pxbridge::poses(s)[slot];
+    out[0] = b.pos.x, out[1] = b.pos.y, out[2] = b.pos.z;
+    return true;
+}
+
+void hide_debris_for_test(int what) { g_hide_request = what; }
+
+void kick_pieces_for_test(bool on) { g_expl_kicks.store(on, std::memory_order_relaxed); }
+
+Census census() {
+    if (!g_on) return {};
+    Census c{uint32_t(g_slots - g_debris_first - g_free.size()), g_slots - g_debris_first, g_piles_live, g_piled_now, g_waiting_for_pile,
+             uint32_t(g_pile_candidates.size()), g_piled_total, g_unpiled_total, g_recycled_total, g_task_frames, {}};
+    for (int k = 0; k < kTaskParts; ++k) c.task_ms[k] = g_task[k].total;
+    return c;
+}
+
+bool debris_extent(float centre[3], float& radius, float& low_y, uint32_t& pieces) {
+    const ipc::SnapshotHeader* s = g_on ? pxbridge::snapshot(nullptr) : nullptr;
+    if (!s) return false;
+    const ipc::BodyPose* poses = pxbridge::poses(s);
+    const uint32_t slots = std::min<uint32_t>(s->slots, g_slots);
+    double sum[3] = {};
+    std::vector<float> ys;
+    for (uint32_t i = 0; i < slots; ++i) {
+        if (!g_pieces[i].inst || i == g_player_slot || !(poses[i].flags & ipc::kPoseAlive)) continue;
+        sum[0] += poses[i].pos.x, sum[1] += poses[i].pos.y, sum[2] += poses[i].pos.z;
+        ys.push_back(poses[i].pos.y);
+    }
+    pieces = uint32_t(ys.size());
+    if (!pieces) return false;
+    for (int k = 0; k < 3; ++k) centre[k] = float(sum[k] / pieces);
+    std::vector<float> d;
+    d.reserve(pieces);
+    for (uint32_t i = 0; i < slots; ++i) {
+        if (!g_pieces[i].inst || i == g_player_slot || !(poses[i].flags & ipc::kPoseAlive)) continue;
+        const float dx = poses[i].pos.x - centre[0], dz = poses[i].pos.z - centre[2];
+        d.push_back(std::sqrt(dx * dx + dz * dz));
+    }
+    std::nth_element(d.begin(), d.begin() + d.size() * 8 / 10, d.end());
+    radius = d[d.size() * 8 / 10];
+    std::nth_element(ys.begin(), ys.begin() + ys.size() / 10, ys.end());
+    low_y = ys[ys.size() / 10];
+    return true;
+}
+
+}  // namespace debris_offload
