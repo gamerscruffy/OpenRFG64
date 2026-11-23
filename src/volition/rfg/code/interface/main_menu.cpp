@@ -9,6 +9,7 @@
 // WC2).
 
 #include "volition/rfg/code/interface/main_menu.h"
+#include "backends/backends.h" // OpenRFG: the backends start and stop at the main menu
 
 #include "game/build/win32/steam/master/generated_sources/version.hpp"
 #include "keen/base/crc32.hpp"
@@ -1327,6 +1328,8 @@ void main_menu_init()
 // player, the box of a boot to the main menu.
 void main_menu_enter(game_state)
 {
+    // OpenRFG: no level is loaded here, so the chosen backends start (and the others stop) now (backends/backends.h).
+    openrfg_backends_apply();
     Idle_time = 0.0f;
     Was_in_attract = false;
     Assets_loaded_main = false;

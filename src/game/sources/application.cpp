@@ -26,6 +26,7 @@
 // The NVIDIA Highlights and Discord calls go to the shipped GfeSDK.dll and discord-rpc.dll (stub_impl.md S2).
 
 #include "game/sources/application.hpp"
+#include "backends/backends.h" // OpenRFG: the backends' hardware probe
 #include "volition/audio_lib/code/audiolib_api.h"
 #include "volition/vlib/code/input/input_internal.h"
 #include "volition/vlib/code/os/os.h"
@@ -741,6 +742,8 @@ namespace keen
             copyString(m_nativeGamebuildPath, sizeof(m_nativeGamebuildPath), pGamebuild);
             keen_cf_set_filesystem(GameFramework::getFileSystem(pGameFramework));
             GraphicsSystem* pGraphicsSystem = GameFramework::getGraphicsSystem(pGameFramework);
+            // OpenRFG: what the backends can run on this machine, on a worker thread (backends/backends.h).
+            openrfg_backends_start_probe(graphics::getD3dDevice(pGraphicsSystem));
             rl_init_params init_params;
             bool vsync_enabled = false;
             int camera_fov = 0;

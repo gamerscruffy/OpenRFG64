@@ -26,6 +26,8 @@
 // OPENRFG_AUDIO), which only OpenRFG links, builds the rest: it reaches the audio, the menus and the save system, and
 // only the menus (rfg_ui) call it. Game_performance_mode, a file static in rfg.exe, has external linkage for it.
 
+#include "backends/backends.h" // OpenRFG: the backends' settings ([graphics] renderer, physics, keep_debris)
+
 #ifndef OPENRFG_AUDIO
 
 #include "volition/rfg/code/gamewide/game_options.h"
@@ -188,6 +190,8 @@ void game_options_ini_file_read_writer<0>::parse_display_settings(keen::FilePath
     rl_lod_set_terrain_distance_level(lod, keen::readIniFileInt(path, "graphics", "terrain_distance", rl_lod_get_terrain_distance_level(lod)));
     // OpenRFG: Shadow Distance, 100 to 500 percent of the game's own (rl_lod_get_shadow_distance_percent).
     rl_lod_set_shadow_distance_percent(lod, keen::readIniFileInt(path, "graphics", "shadow_distance", rl_lod_get_shadow_distance_percent(lod)));
+    // OpenRFG: the backends (renderer, physics, keep_debris; backends/backends.h).
+    openrfg_backends_read_ini(path);
     lod.m_sun_shafts_enabled = keen::readIniFileBool(path, "graphics", "sun_shafts_enabled", lod.m_sun_shafts_enabled);
     lod.m_new_data.m_texture_reduction = (unsigned char)keen::readIniFileInt(path, "graphics", "texture_resolution", lod.m_new_data.m_texture_reduction);
     lod.m_new_data.m_anisotropic_filtering = (rl_anisotropic_filtering_lod)keen::readIniFileInt(path, "graphics", "anisotropic_filtering", lod.m_new_data.m_anisotropic_filtering);
@@ -941,6 +945,7 @@ void game_options_ini_file_read_writer<1>::parse_display_settings(keen::FilePath
     keen::writeIniFileInt(path, "graphics", "draw_distance", rl_lod_get_draw_distance_level(lod)); // OpenRFG
     keen::writeIniFileInt(path, "graphics", "terrain_distance", rl_lod_get_terrain_distance_level(lod)); // OpenRFG
     keen::writeIniFileInt(path, "graphics", "shadow_distance", rl_lod_get_shadow_distance_percent(lod)); // OpenRFG
+    openrfg_backends_write_ini(path); // OpenRFG: renderer, physics, keep_debris (backends/backends.h)
     keen::writeIniFileBool(path, "graphics", "sun_shafts_enabled", lod.m_sun_shafts_enabled);
     keen::writeIniFileInt(path, "graphics", "texture_resolution", lod.m_new_data.m_texture_reduction);
     keen::writeIniFileInt(path, "graphics", "anisotropic_filtering", lod.m_new_data.m_anisotropic_filtering);
