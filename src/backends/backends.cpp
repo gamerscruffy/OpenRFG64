@@ -4,9 +4,33 @@
 
 #include "keen/base/inifile.hpp"
 
+#if defined(OPENRFG_BACKEND_PHYSX)
+#include "backends/physx/physx_backend.h"
+#endif
+
+#if defined(OPENRFG_X64)
+#include "volition/vlib/code/util/endian_type.h"
+#endif
+
 #include <stdio.h>
 
 void openrfg_log(const char* text); // crash_early.cpp
+
+#if defined(OPENRFG_X64)
+// The target of a self-relative 32-bit offset field of the game's data (et_ptr_offset). On x64 such a field may hold an
+// index into the far table (a target more than 2 GB away, endian_type.inl), which code outside the game's own cannot
+// read: rfgphys (the PhysX backend, and the plugin in OpenRFG64) finds this export with GetProcAddress on the program.
+// It lives in this file because the program always links it (an export alone would be dropped).
+extern "C" __declspec(dllexport) const void* openrfg_et_ptr_target(const void* field)
+{
+    const int offset = *static_cast<const int*>(field);
+    if (offset >= et_far::Base)
+    {
+        return et_far::far_target(offset);
+    }
+    return static_cast<const char*>(field) + offset;
+}
+#endif
 
 namespace
 {
@@ -17,7 +41,11 @@ namespace
     int g_applied_physics = -1;
     int g_applied_keep_debris = -1;
 
-    // Built into this program. The path tracer and PhysX come in later steps; until then a choice of them falls back.
+    // PhysX started (it keeps running until the game ends: stopping it is a later step), or it failed to start.
+    bool g_physx_running = false;
+    bool g_physx_failed = false;
+
+    // Built into this program. The path tracer comes in a later step; until then a choice of it falls back.
     bool renderer_built(int renderer)
     {
         return renderer == OPENRFG_RENDERER_STANDARD;
@@ -25,7 +53,11 @@ namespace
 
     bool physics_built(int physics)
     {
+#if defined(OPENRFG_BACKEND_PHYSX)
+        return true;
+#else
         return physics == OPENRFG_PHYSICS_HAVOK;
+#endif
     }
 
     int clamp_choice(int value, int count, int fallback)
@@ -61,7 +93,11 @@ namespace
         {
             return reason;
         }
-        return physics_built(physics) ? nullptr : "not built into this program yet";
+        if (!physics_built(physics))
+        {
+            return "not built into this program (no PhysX SDK given to CMake)";
+        }
+        return physics == OPENRFG_PHYSICS_PHYSX && g_physx_failed ? "PhysX did not start (backends rfgphys.log says why)" : nullptr;
     }
 }
 
@@ -172,6 +208,11 @@ int openrfg_backends_effective_renderer()
 
 int openrfg_backends_effective_physics()
 {
+    // A running PhysX cannot be stopped yet: it runs until the game ends, whatever the choice since.
+    if (g_physx_running)
+    {
+        return OPENRFG_PHYSICS_PHYSX;
+    }
     return physics_fallback_reason(g_settings.physics) == nullptr ? g_settings.physics : OPENRFG_PHYSICS_HAVOK;
 }
 
@@ -186,6 +227,20 @@ void openrfg_backends_apply()
     {
         return;
     }
+#if defined(OPENRFG_BACKEND_PHYSX)
+    // PhysX starts here, where no level is loaded (at boot, or later from the options).
+    if (openrfg_backends_effective_physics() == OPENRFG_PHYSICS_PHYSX && !g_physx_running && !g_physx_failed)
+    {
+        if (openrfg_physx_start())
+        {
+            g_physx_running = true;
+        }
+        else
+        {
+            g_physx_failed = true;
+        }
+    }
+#endif
     const int renderer = openrfg_backends_effective_renderer();
     const int physics = openrfg_backends_effective_physics();
     const int keep_debris = openrfg_backends_effective_keep_debris() ? 1 : 0;
@@ -201,12 +256,18 @@ void openrfg_backends_apply()
     char renderer_note[256] = {};
     if (renderer != g_settings.renderer)
     {
-        snprintf(renderer_note, sizeof(renderer_note), " (chosen: %s; %s)", renderer_name(g_settings.renderer), renderer_fallback_reason(g_settings.renderer));
+        const char* why = renderer_fallback_reason(g_settings.renderer);
+        snprintf(renderer_note, sizeof(renderer_note), " (chosen: %s; %s)", renderer_name(g_settings.renderer), why != nullptr ? why : "?");
     }
     char physics_note[256] = {};
     if (physics != g_settings.physics)
     {
-        snprintf(physics_note, sizeof(physics_note), " (chosen: %s; %s)", physics_name(g_settings.physics), physics_fallback_reason(g_settings.physics));
+        const char* why = physics_fallback_reason(g_settings.physics);
+        if (why == nullptr && g_physx_running)
+        {
+            why = "PhysX runs until the game restarts (stopping it comes later)";
+        }
+        snprintf(physics_note, sizeof(physics_note), " (chosen: %s; %s)", physics_name(g_settings.physics), why != nullptr ? why : "?");
     }
     const char* keep_choice = g_settings.keep_debris == OPENRFG_KEEP_DEBRIS_AUTO ? "automatic" : (g_settings.keep_debris == OPENRFG_KEEP_DEBRIS_ON ? "on" : "off");
     char msg[768];
