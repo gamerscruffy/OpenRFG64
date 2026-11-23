@@ -32,6 +32,10 @@ extern "C" __declspec(dllexport) const void* openrfg_et_ptr_target(const void* f
     }
     return static_cast<const char*>(field) + offset;
 }
+
+// The width of the world's object indices (OPENRFG_OBJECT_INDEX: 32-bit on x64, where rfg.exe's are 16-bit and cap the
+// live objects at 65,535). rfgphys reads the world's index lists with it (rfg::object_index, GetProcAddress).
+extern "C" __declspec(dllexport) const int openrfg_object_index_size = (int)sizeof(OPENRFG_OBJECT_INDEX);
 #endif
 
 namespace
