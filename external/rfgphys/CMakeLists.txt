@@ -1,0 +1,89 @@
+cmake_minimum_required(VERSION 3.25)
+project(rfgphys VERSION 0.5.0 LANGUAGES C CXX)
+
+# OpenRFG64: an x64 build for OpenRFG64 (a 64-bit OpenRFG). The upstream plugin is 32-bit only.
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(RFGPHYS_X64 ON)
+    set(MINHOOK_HDE third_party/minhook/src/hde/hde64.c)
+else()
+    set(RFGPHYS_X64 OFF)
+    set(MINHOOK_HDE third_party/minhook/src/hde/hde32.c)
+endif()
+
+# Static CRT: no redistributable needed, and no sharing of the game's MSVCR100 heap.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+add_library(minhook STATIC
+    third_party/minhook/src/buffer.c
+    third_party/minhook/src/hook.c
+    third_party/minhook/src/trampoline.c
+    ${MINHOOK_HDE})
+target_include_directories(minhook PUBLIC third_party/minhook/include)
+
+add_library(rfgphys SHARED
+    src/rfgphys/main.cpp
+    src/rfgphys/core/log.cpp
+    src/rfgphys/core/config.cpp
+    src/rfgphys/core/build_check.cpp
+    src/shared/openrfg64_column.cpp
+    src/rfgphys/core/session.cpp
+    src/rfgphys/core/gameloop.cpp
+    src/rfgphys/core/contacts.cpp
+    src/rfgphys/core/game_lock.cpp
+    src/rfgphys/core/thread_dump.cpp
+    src/rfgphys/core/hang_watch.cpp
+    src/rfgphys/core/address_space.cpp
+    src/rfgphys/dev/fly_camera.cpp
+    src/rfgphys/hooks/hooks.cpp
+    src/rfgphys/game/rfg.cpp
+    src/rfgphys/game/layout.cpp
+    src/rfgphys/telemetry/telemetry.cpp
+    src/rfgphys/telemetry/object_census.cpp
+    src/rfgphys/telemetry/render_census.cpp
+    src/rfgphys/telemetry/render_timeline.cpp
+    src/rfgphys/telemetry/profiler.cpp
+    src/rfgphys/test/automation.cpp
+    src/rfgphys/test/memory_census.cpp
+    src/rfgphys/test/restore_building.cpp
+    src/rfgphys/test/stress_pieces.cpp
+    src/rfgphys/test/vehicle_push.cpp
+    src/rfgphys/test/chunk_fall.cpp
+    src/rfgphys/test/stream_report.cpp
+    src/rfgphys/test/view_shots.cpp
+    src/rfgphys/test/viewpoints.cpp
+    src/rfgphys/test/visit.cpp
+    src/rfgphys/test/zone_cycle.cpp
+    src/rfgphys/experiments/debris_collision.cpp
+    src/rfgphys/experiments/big_buildings.cpp
+    src/rfgphys/experiments/render_tweaks.cpp
+    src/rfgphys/experiments/havok_audit.cpp
+    src/rfgphys/experiments/havok_mt.cpp
+    src/rfgphys/experiments/keep_debris.cpp
+    src/rfgphys/harness/harness.cpp
+    src/rfgphys/harness/rec_file.cpp
+    src/rfgphys/harness/checkpoint.cpp
+    src/rfgphys/harness/rng_guard.cpp
+    src/rfgphys/harness/screenshot.cpp
+    src/rfgphys/harness/track.cpp
+    src/rfgphys/physx/bridge.cpp
+    src/rfgphys/physx/collision_survey.cpp
+    src/rfgphys/physx/debris_offload.cpp
+    src/rfgphys/physx/havok_shapes.cpp
+    src/rfgphys/physx/render_routing.cpp
+    src/rfgphys/physx/test_scene.cpp
+    src/rfgphys/physx/world_mirror.cpp)
+set_target_properties(rfgphys PROPERTIES SUFFIX ".asi" CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+target_include_directories(rfgphys PRIVATE src/rfgphys src/shared)
+target_compile_definitions(rfgphys PRIVATE
+    WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE
+    RFGPHYS_VERSION="${PROJECT_VERSION}")
+target_compile_options(rfgphys PRIVATE /W4 /permissive- /utf-8 /Zi)
+target_link_options(rfgphys PRIVATE /DEBUG:FULL /OPT:REF /OPT:ICF /INCREMENTAL:NO)
+target_link_libraries(rfgphys PRIVATE minhook psapi)
+# Version resource (src/shared/version.rc.in).
+set(RC_DESCRIPTION "rfgphys - physics mod for Red Faction Guerrilla Re-Mars-tered")
+set(RC_INTERNAL_NAME "rfgphys")
+set(RC_FILENAME "rfgphys.asi")
+set(RC_FILE_TYPE "VFT_DLL")
+configure_file(src/shared/version.rc.in "${CMAKE_CURRENT_BINARY_DIR}/rfgphys_version.rc" @ONLY)
+target_sources(rfgphys PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/rfgphys_version.rc")
