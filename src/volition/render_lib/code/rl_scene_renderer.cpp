@@ -59,6 +59,7 @@ extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vKey); // 
 #include <intrin.h>
 #include <math.h>
 #include <string.h>
+#include "backends/seams.h"
 
 // <rl_scene_renderer::release> 0x004C7510 (:79)
 RL_DYNAMIC_CLASS_IMPLEMENTATION(rl_scene_renderer)
@@ -325,8 +326,17 @@ void rl_scene_renderer::initialize_deferred()
 // Notes (decompiled behaviour, kept as is): with the framebuffer resolve flag the scene's fog state is overwritten
 // (color green); the camera is copied into a heap rl_camera for part 2; the render offset is written to the main
 // renderer's state twice (directly and through the state manager pointer).
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer attaches its hook here. A virtual method: its original
+// calls rl_scene_renderer's body qualified.
+static void seam_rl_scene_renderer_render(rl_scene_renderer* self, rl_renderer& mainRenderer, rl_renderer& deferredRenderer, rl_scene& scene, rl_camera& camera, const rl_hdr_state& base_hdr_state, const rl_color_correct_state& color_correct_state)
+{
+    openrfg_seam_skip = true;
+    self->rl_scene_renderer::render(mainRenderer, deferredRenderer, scene, camera, base_hdr_state, color_correct_state);
+}
+OPENRFG_SEAM_VIRTUAL(Seam_rl_scene_renderer_render, void (*)(rl_scene_renderer*, rl_renderer&, rl_renderer&, rl_scene&, rl_camera&, const rl_hdr_state&, const rl_color_correct_state&), "rl_scene_renderer::render", &seam_rl_scene_renderer_render);
 void rl_scene_renderer::render(rl_renderer& mainRenderer, rl_renderer& deferredRenderer, rl_scene& scene, rl_camera& camera, const rl_hdr_state& base_hdr_state, const rl_color_correct_state& color_correct_state)
 {
+    OPENRFG_SEAM_ENTER(Seam_rl_scene_renderer_render, this, mainRenderer, deferredRenderer, scene, camera, base_hdr_state, color_correct_state);
     const rl_rect main_viewport(0, 0, m_main_scene_target_width, m_main_scene_target_height);
     mainRenderer.set_viewport(main_viewport);
     rl_hdr_state hdr_state(base_hdr_state);
@@ -1559,8 +1569,17 @@ void rl_scene_renderer::render_xray_pass(rl_renderer& renderer, rl_camera& camer
 // 0x004F6010 (:1917)
 // The shadow fade constants and the shadow texture (CLB target in slot 15, or the shadow map in slot 14) when shadows
 // are enabled, and the CLB target in slot 13 always.
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer's global illumination attaches its hook here.
+// rl_scene_renderer's private methods: their seams are members of a friend of it (rl_scene_renderer.h).
+struct openrfg_seams_scene_renderer
+{
+    using set_shadow_states_t = openrfg_seam_t<openrfg_seam_original<&rl_scene_renderer::set_shadow_states>::handler>;
+    static set_shadow_states_t set_shadow_states;
+};
+openrfg_seams_scene_renderer::set_shadow_states_t openrfg_seams_scene_renderer::set_shadow_states("rl_scene_renderer::set_shadow_states", nullptr, &openrfg_seam_original<&rl_scene_renderer::set_shadow_states>::body);
 void rl_scene_renderer::set_shadow_states(rl_shadow_render_parameters& shadow_render_params, rl_renderer& renderer)
 {
+    OPENRFG_SEAM_ENTER(openrfg_seams_scene_renderer::set_shadow_states, this, shadow_render_params, renderer);
     if (shadow_render_params.shadows_enabled != 0)
     {
         const float max_dist = shadow_render_params.shadow_max_dist;

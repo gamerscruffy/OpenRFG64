@@ -19,9 +19,20 @@
 
 #include <d3d11shader.h>
 #include <d3dcompiler.h>
+#include "backends/seams.h"
 
 namespace keen
 {
+    // OpenRFG (backends): the device's vertex shader creation, as a seam (backends/seams.h) known by the D3D11 method's
+    // name: the path tracer attaches its hook here (in its plugin, a detour on the device's method).
+    static HRESULT openrfg_create_vertex_shader(ID3D11Device* pDevice, const void* pShaderBytecode, SIZE_T bytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11VertexShader** ppVertexShader);
+    OPENRFG_SEAM(Seam_create_vertex_shader, &openrfg_create_vertex_shader, "ID3D11Device::CreateVertexShader");
+    static HRESULT openrfg_create_vertex_shader(ID3D11Device* pDevice, const void* pShaderBytecode, SIZE_T bytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11VertexShader** ppVertexShader)
+    {
+        OPENRFG_SEAM_ENTER(Seam_create_vertex_shader, pDevice, pShaderBytecode, bytecodeLength, pClassLinkage, ppVertexShader);
+        return pDevice->CreateVertexShader(pShaderBytecode, bytecodeLength, pClassLinkage, ppVertexShader);
+    }
+
     // 0x00C63540 (:12)
     VertexShader::VertexShader()
     {
@@ -57,7 +68,7 @@ namespace keen
             return false;
         }
 
-        if (FAILED(pGraphicsSystem->pDevice->CreateVertexShader(shaderCode.getStart(), shaderCode.getSize(), nullptr, &pVertexShader)))
+        if (FAILED(openrfg_create_vertex_shader(pGraphicsSystem->pDevice, shaderCode.getStart(), shaderCode.getSize(), nullptr, &pVertexShader)))
         {
             debug::nativePrintArgs("Could not create D3D vertex shader from shader data!\n");
             shaderCode.destroy(pDataAllocator);

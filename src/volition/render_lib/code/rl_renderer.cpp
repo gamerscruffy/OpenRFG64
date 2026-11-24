@@ -37,6 +37,7 @@
 #include "keen/math/matrix43.hpp"
 
 #include <string.h>
+#include "backends/seams.h"
 
 const unsigned int rl_renderer::kMaxTmus = 16; // 0x012B80A4
 const unsigned int rl_renderer::DYNAMIC_IB_SIZE = 0x200000; // 0x012B80A8
@@ -1485,8 +1486,11 @@ void rl_renderer::get_target_dimensions(unsigned int& width, unsigned int& heigh
 
 // 0x004F2B50 (:1447)
 // Uploads the light to the lighting constants; the main (sun) light's color is scaled by g_mainLightColorScale.
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer's light shadows attach their hook here.
+OPENRFG_SEAM(Seam_rl_renderer_set_light, &rl_renderer::set_light, "rl_renderer::set_light");
 void rl_renderer::set_light(const rl_light& light, bool isMainLight)
 {
+    OPENRFG_SEAM_ENTER(Seam_rl_renderer_set_light, this, light, isMainLight);
     keen::LightingVertexShaderConstants* vertex_constants_p = (keen::LightingVertexShaderConstants*)m_pCommandWriter->beginDynamicVertexConstants(m_pLightingVertexConstants, Lighting_constants_slot);
     light.fillLightingVertexShaderData(vertex_constants_p, m_state_p->get_render_offset());
     m_pCommandWriter->endDynamicVertexConstants();

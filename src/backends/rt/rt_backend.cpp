@@ -2,14 +2,41 @@
 //
 // rfgrt, the path tracing mod's code (external/rfgrt, a git subtree of its repository), is built as the mod builds its
 // x64 plugin: a DLL with the ray tracing core inside, backends\rfgrt\rfgrt.asi next to OpenRFG.exe, with its settings
-// (rfgrt.ini) and DLSS's runtime. It attaches to the game the way it does in OpenRFG64 (names from OpenRFG.pdb,
-// MinHook); seams in the game's source come later.
+// (rfgrt.ini) and DLSS's runtime. It reads the game the way it does in OpenRFG64 (names from OpenRFG.pdb) and attaches
+// to it through seams in the game's source (backends/seams.h): before its start, the plugin gets this binding
+// (rfgrt_set_binding), and its hooks offer every hook to it first, by the function's name in the plugin's names table;
+// only a hook whose function has no seam becomes a MinHook detour (its test harness's).
 
 #include "backends/rt/rt_backend.h"
 
 #include <windows.h>
 
 #include <string>
+
+#include "backends/seams.h"
+#include "../../../external/rfgrt/src/rfgrt/hooks/binding.h"
+
+namespace
+{
+    // rfgrt's hooks: the hook on the seam of the function `name` (`params`: the overload's, from the plugin's names
+    // table; null for the D3D11 device's methods). `now`: a hook placed once the game has made the object, at the first
+    // shader the game loads: rfgphys may still be attaching its own hooks then (its install runs on a worker thread),
+    // so only this seam is turned on.
+    bool seam_attach(const char* name, const char* params, void* detour, void** original, bool now)
+    {
+        openrfg_seam* seam = openrfg_seam_find(name, params);
+        if (seam == nullptr)
+        {
+            return false;
+        }
+        openrfg_seam_attach(seam, detour, original);
+        if (now)
+        {
+            openrfg_seam_enable(seam);
+        }
+        return true;
+    }
+}
 
 bool openrfg_rt_start()
 {
@@ -22,12 +49,15 @@ bool openrfg_rt_start()
     {
         return false;
     }
+    const auto set_binding = reinterpret_cast<void (*)(const rfgrt_binding*)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_binding")));
     const auto initialize = reinterpret_cast<void (*)()>(reinterpret_cast<void*>(GetProcAddress(module, "InitializeASI")));
     const auto state = reinterpret_cast<int (*)()>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_state")));
-    if (initialize == nullptr || state == nullptr)
+    if (set_binding == nullptr || initialize == nullptr || state == nullptr)
     {
         return false;
     }
+    const rfgrt_binding binding = {&seam_attach, &openrfg_seams_enable, &openrfg_seam_call_site};
+    set_binding(&binding);
     initialize();
     return state() == 2;
 }

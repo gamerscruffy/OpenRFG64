@@ -52,18 +52,11 @@ namespace
         ++g_seamed;
         return true;
     }
-
-    // Only handlers reached through seams ask (rfgphys's frametime, zone check and impulse handlers): while a seam's
-    // handler runs, its call site; otherwise the handler's own return address (a detour's).
-    const void* seam_caller(const void* return_address)
-    {
-        return openrfg_seam_caller != nullptr ? openrfg_seam_caller : return_address;
-    }
 }
 
 bool openrfg_physx_install(bool launch)
 {
-    hooks::set_binding({&seam_create, &openrfg_seams_enable, &seam_caller});
+    hooks::set_binding({&seam_create, &openrfg_seams_enable, &openrfg_seam_call_site});
     wchar_t exe[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring dir(exe, n);

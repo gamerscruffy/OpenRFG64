@@ -28,6 +28,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include "backends/seams.h"
 
 extern event_trigger* Morph_process_finished_trigger; // 0x01B7BCE8 (rl_deformable_mesh_instance.cpp)
 
@@ -130,8 +131,20 @@ bool rl_scene_renderer::render_spot_light_shadow_map(rl_renderer& renderer, rl_c
 // transforms, viewport, z range and macro state are restored afterwards.
 // Notes (decompiled behaviour, kept as is): the pixel and vertex shader resources are unbound directly on the D3D
 // context (bypassing the command writer's cache), and the base pass flag is left as base_pass.
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer attaches its hooks here and on clb_render.
+// rl_scene_renderer's private methods: their seams are members of a friend of it (rl_scene_renderer.h).
+struct openrfg_seams_scene_shadows
+{
+    using render_shadow_pass_t = openrfg_seam_t<openrfg_seam_original<&rl_scene_renderer::render_shadow_pass>::handler>;
+    using clb_render_t = openrfg_seam_t<openrfg_seam_original<&rl_scene_renderer::clb_render>::handler>;
+    static render_shadow_pass_t render_shadow_pass;
+    static clb_render_t clb_render;
+};
+openrfg_seams_scene_shadows::render_shadow_pass_t openrfg_seams_scene_shadows::render_shadow_pass("rl_scene_renderer::render_shadow_pass", nullptr, &openrfg_seam_original<&rl_scene_renderer::render_shadow_pass>::body);
+openrfg_seams_scene_shadows::clb_render_t openrfg_seams_scene_shadows::clb_render("rl_scene_renderer::clb_render", nullptr, &openrfg_seam_original<&rl_scene_renderer::clb_render>::body);
 void rl_scene_renderer::render_shadow_pass(rl_renderer& renderer, rl_camera& camera, rl_light& light, const rl_dev_render_target& depth_target, int width, int height, rl_shadow_creation_parameters& shadow_creation_params, rl_batched_pass& batch_to_use, const unsigned int vis_flags, rl_renderable_instance** transparent_casters, unsigned int num_transparent_casters, const bool base_pass)
 {
+    OPENRFG_SEAM_ENTER(openrfg_seams_scene_shadows::render_shadow_pass, this, renderer, camera, light, depth_target, width, height, shadow_creation_params, batch_to_use, vis_flags, transparent_casters, num_transparent_casters, base_pass);
     // Magic number: 16, every pixel and vertex shader resource slot.
     ID3D11ShaderResourceView* null_views[16] = {};
     ID3D11DeviceContext* context_p = renderer.m_pCommandWriter->getBuffer()->pContext;
@@ -283,8 +296,10 @@ float wrapMinMax(float x, float min, float max)
 // 0x00545CB0 (:297)
 // Ends the morph processing job, then (CLB shadow mode) clears the CLB target to white; with a shadow LOD the near,
 // mid and far shadow maps (and the extended terrain one) are rendered and projected, and the cloud shadows added.
+// OpenRFG (backends): a seam (openrfg_seams_scene_shadows, above).
 void rl_scene_renderer::clb_render(rl_renderer& renderer, rl_camera& camera, rl_light& light, rl_visibility_manager& visibility_manager, rl_batched_pass& batch_to_use, rl_renderable_instance** transparent_casters, int num_transparent_casters)
 {
+    OPENRFG_SEAM_ENTER(openrfg_seams_scene_shadows::clb_render, this, renderer, camera, light, visibility_manager, batch_to_use, transparent_casters, num_transparent_casters);
     if (Morph_process_finished_trigger != nullptr)
     {
         scheduler_relinquish_cpu(Morph_process_finished_trigger, ccjt_d3d);

@@ -30,6 +30,7 @@
 #include <new>
 #include <stdlib.h>
 #include <string.h>
+#include "backends/seams.h"
 
 namespace keen
 {
@@ -2183,8 +2184,11 @@ namespace keen
         }
 
         // 0x00C5C310 (:2915)
-        void endCommandBuffer(GraphicsSystem*, GraphicsCommandBuffer* pCommandBuffer)
+        // OpenRFG (backends): a seam (backends/seams.h); the path tracer attaches its hook here.
+        OPENRFG_SEAM(Seam_end_command_buffer, &endCommandBuffer, "keen::graphics::endCommandBuffer");
+        void endCommandBuffer(GraphicsSystem* pGraphicsSystem, GraphicsCommandBuffer* pCommandBuffer)
         {
+            OPENRFG_SEAM_ENTER(Seam_end_command_buffer, pGraphicsSystem, pCommandBuffer);
             RecordedCommandBuffer* pRecordedBuffer = (RecordedCommandBuffer*)pCommandBuffer->pRenderCommandBufferStorage;
             const HRESULT result = pCommandBuffer->pContext->FinishCommandList(FALSE, &pRecordedBuffer->pCommandList);
             if (result != S_OK)
