@@ -742,8 +742,10 @@ namespace keen
             copyString(m_nativeGamebuildPath, sizeof(m_nativeGamebuildPath), pGamebuild);
             keen_cf_set_filesystem(GameFramework::getFileSystem(pGameFramework));
             GraphicsSystem* pGraphicsSystem = GameFramework::getGraphicsSystem(pGameFramework);
-            // OpenRFG: what the backends can run on this machine, and the chosen PhysX's start, on worker threads
-            // (backends/backends.h); the main menu takes their results.
+            // OpenRFG: what the backends can run on this machine, on a worker thread, and the chosen backends' start
+            // (backends/backends.h): config.ini's settings were read with the framework's parameters, and the game
+            // creates its shaders and meshes later (rl_init). A chosen path tracer starts here, a chosen PhysX on a
+            // worker thread; the main menu takes their results.
             openrfg_backends_start_probe(graphics::getD3dDevice(pGraphicsSystem));
             openrfg_backends_start_early();
             rl_init_params init_params;

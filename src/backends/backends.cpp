@@ -7,6 +7,9 @@
 #if defined(OPENRFG_BACKEND_PHYSX)
 #include "backends/physx/physx_backend.h"
 #endif
+#if defined(OPENRFG_BACKEND_RT)
+#include "backends/rt/rt_backend.h"
+#endif
 
 #if defined(OPENRFG_X64)
 #include "volition/vlib/code/util/endian_type.h"
@@ -127,10 +130,19 @@ namespace
     }
 #endif
 
-    // Built into this program. The path tracer comes in a later step; until then a choice of it falls back.
+    // The path tracer, started at boot (it cannot start later or stop yet: a change applies when the game starts
+    // again), or failed to start then.
+    bool g_rt_running = false;
+    bool g_rt_failed = false;
+
+    // Built into this program.
     bool renderer_built(int renderer)
     {
+#if defined(OPENRFG_BACKEND_RT)
+        return true;
+#else
         return renderer == OPENRFG_RENDERER_STANDARD;
+#endif
     }
 
     bool physics_built(int physics)
@@ -157,7 +169,7 @@ namespace
         return physics == OPENRFG_PHYSICS_PHYSX ? "PhysX" : "Havok";
     }
 
-    // Why a choice does not run: the machine cannot, or this program does not have it yet.
+    // Why a choice does not run: the machine cannot, this program does not have it, or it could not start.
     const char* renderer_fallback_reason(int renderer)
     {
         const char* reason = nullptr;
@@ -165,7 +177,11 @@ namespace
         {
             return reason;
         }
-        return renderer_built(renderer) ? nullptr : "not built into this program yet";
+        if (!renderer_built(renderer))
+        {
+            return "not built into this program";
+        }
+        return renderer == OPENRFG_RENDERER_PATH_TRACED && g_rt_failed ? "the path tracer did not start (the log under backends rfgrt says why)" : nullptr;
     }
 
     const char* physics_fallback_reason(int physics)
@@ -342,7 +358,8 @@ bool openrfg_backends_keep_debris_resolved(int keep_debris)
 
 int openrfg_backends_effective_renderer()
 {
-    return renderer_fallback_reason(g_settings.renderer) == nullptr ? g_settings.renderer : OPENRFG_RENDERER_STANDARD;
+    // The path tracer runs from boot to the end of the game whatever the choice since (it cannot start later or stop yet).
+    return g_rt_running ? OPENRFG_RENDERER_PATH_TRACED : OPENRFG_RENDERER_STANDARD;
 }
 
 int openrfg_backends_effective_physics()
@@ -367,11 +384,26 @@ bool openrfg_backends_effective_keep_debris()
 
 void openrfg_backends_start_early()
 {
-#if defined(OPENRFG_BACKEND_PHYSX)
     if (!openrfg_backends_enabled())
     {
         return;
     }
+#if defined(OPENRFG_BACKEND_RT)
+    // The path tracer first, on this thread: it must be running before the game creates its shaders and meshes, and its
+    // start reads OpenRFG.pdb with DbgHelp, which rfgphys's install (below, on its own thread) also uses: DbgHelp is
+    // single-threaded. No frame has run yet, so the hang watchdog is not armed.
+    if (g_settings.renderer == OPENRFG_RENDERER_PATH_TRACED && renderer_fallback_reason(OPENRFG_RENDERER_PATH_TRACED) == nullptr)
+    {
+        const ULONGLONG t0 = GetTickCount64();
+        g_rt_running = openrfg_rt_start();
+        g_rt_failed = !g_rt_running;
+        char msg[160];
+        snprintf(msg, sizeof(msg), g_rt_running ? "BACKENDS path tracer started in %llu ms" : "BACKENDS path tracer did not start (%llu ms; the log under backends rfgrt says why)",
+                 (unsigned long long)(GetTickCount64() - t0));
+        openrfg_log(msg);
+    }
+#endif
+#if defined(OPENRFG_BACKEND_PHYSX)
     if (openrfg_backends_effective_physics() == OPENRFG_PHYSICS_PHYSX)
     {
         physx_begin_install(true);
@@ -425,7 +457,7 @@ void openrfg_backends_apply()
     if (renderer != g_settings.renderer)
     {
         const char* why = renderer_fallback_reason(g_settings.renderer);
-        snprintf(renderer_note, sizeof(renderer_note), " (chosen: %s; %s)", renderer_name(g_settings.renderer), why != nullptr ? why : "?");
+        snprintf(renderer_note, sizeof(renderer_note), " (chosen: %s; %s)", renderer_name(g_settings.renderer), why != nullptr ? why : "it applies when the game starts again");
     }
     char physics_note[256] = {};
     if (physics != g_settings.physics)

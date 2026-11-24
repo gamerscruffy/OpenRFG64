@@ -25,6 +25,15 @@ namespace
 {
     int g_seamed = 0;
 
+    // A detour of another module at the function's entry (the path tracer's MinHook on rfg_do_frame, while it has no
+    // seams): a seam's original enters the function again from the top, through that detour a second time. Two detours
+    // chain instead (a detour's trampoline skips the other's jump).
+    bool entry_patched(uint32_t rva)
+    {
+        const uint8_t* entry = static_cast<const uint8_t*>(rfg::addr(rva));
+        return entry[0] == 0xE9 || (entry[0] == 0xFF && entry[1] == 0x25);
+    }
+
     // rfgphys's hooks::create: the hook on the seam of the function its names table resolved to `rva`.
     bool seam_create(uint32_t rva, void* detour, void** original, const char* name)
     {
@@ -33,6 +42,11 @@ namespace
         if (seam == nullptr)
         {
             return false; // rfgphys's hooks say what it does instead
+        }
+        if (entry_patched(rva))
+        {
+            LOG("hook %s: another module's detour is at the function's entry: a detour of ours too, chained", name);
+            return false;
         }
         openrfg_seam_attach(seam, detour, original);
         ++g_seamed;

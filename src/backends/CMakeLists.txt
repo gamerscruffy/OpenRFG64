@@ -13,6 +13,9 @@ target_link_libraries(rfg PUBLIC openrfg_backends)
 # KEEP DEBRIS (keep_debris.h) uses the game's types: it is compiled into the rfg library itself.
 target_sources(rfg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/keep_debris.cpp)
 
+# The backends' files next to OpenRFG.exe: backends/rfgphys.ini, backends/rfgphysx/, backends/rfgrt/.
+set(OPENRFG_BACKENDS_OUT ${CMAKE_BINARY_DIR}/src/openrfg/backends)
+
 # ---- PhysX: rfgphys (external/rfgphys, the PhysX mod's repository as a git subtree).
 # Its game code is built into the game; its core (the PhysX host's code with PhysX's static libraries, which have
 # their own C runtime) is a DLL that steps PhysX on a thread of the game: backends\rfgphysx\rfgphysx_core.dll next to
@@ -21,7 +24,6 @@ target_sources(rfg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/keep_debris.cpp)
 set(OPENRFG_PHYSX_INSTALL "" CACHE PATH "The PhysX SDK built with rfgphys's patch (its release-gpu/install folder); empty: no PhysX backend")
 if(OPENRFG_X64 AND OPENRFG_PHYSX_INSTALL AND EXISTS "${OPENRFG_PHYSX_INSTALL}/lib/PhysX_static_64.lib")
     set(RFGPHYS ${CMAKE_SOURCE_DIR}/external/rfgphys)
-    set(OPENRFG_BACKENDS_OUT ${CMAKE_BINARY_DIR}/src/openrfg/backends)
     message(STATUS "OpenRFG: the PhysX backend is built (PhysX SDK ${OPENRFG_PHYSX_INSTALL})")
 
     # rfgphys's game code: the plugin without its ASI entry (main.cpp), C++20, the game's runtime.
@@ -113,4 +115,21 @@ if(OPENRFG_X64 AND OPENRFG_PHYSX_INSTALL AND EXISTS "${OPENRFG_PHYSX_INSTALL}/li
     add_dependencies(openrfg_backends rfgphysx_core)
 elseif(OPENRFG_X64)
     message(STATUS "OpenRFG: no PhysX backend (OPENRFG_PHYSX_INSTALL is not a PhysX SDK build)")
+endif()
+
+# ---- The path tracer: rfgrt (rt/CMakeLists.txt). Needs the Windows SDK's shader compilers (fxc, dxc).
+option(OPENRFG_PATH_TRACER "Build the path tracing backend (external/rfgrt)" ON)
+if(OPENRFG_X64 AND OPENRFG_PATH_TRACER)
+    file(GLOB _openrfg_sdk_bins "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64")
+    find_program(OPENRFG_FXC fxc PATHS ${_openrfg_sdk_bins} NO_DEFAULT_PATH)
+    find_program(OPENRFG_DXC dxc PATHS ${_openrfg_sdk_bins} NO_DEFAULT_PATH)
+    if(OPENRFG_FXC AND OPENRFG_DXC)
+        message(STATUS "OpenRFG: the path tracing backend is built (external/rfgrt)")
+        add_subdirectory(rt)
+        target_sources(openrfg_backends PRIVATE rt/rt_backend.cpp)
+        target_compile_definitions(openrfg_backends PRIVATE OPENRFG_BACKEND_RT=1)
+        add_dependencies(openrfg_backends rfgrt)
+    else()
+        message(STATUS "OpenRFG: no path tracing backend (the Windows SDK's fxc and dxc were not found)")
+    endif()
 endif()
