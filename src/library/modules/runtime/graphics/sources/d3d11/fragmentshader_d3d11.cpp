@@ -23,6 +23,18 @@ namespace keen
         return pDevice->CreatePixelShader(pShaderBytecode, bytecodeLength, pClassLinkage, ppPixelShader);
     }
 
+    // OpenRFG (backends): the release of the pixel shader in a FragmentShader's slot for it, as a seam: the path tracer,
+    // which switches with the game running, makes its patched shaders beside the originals and releases the other
+    // version here.
+    static void openrfg_release_pixel_shader(ID3D11PixelShader** ppPixelShader);
+    OPENRFG_SEAM(Seam_release_pixel_shader, &openrfg_release_pixel_shader, "openrfg_release_pixel_shader");
+    static void openrfg_release_pixel_shader(ID3D11PixelShader** ppPixelShader)
+    {
+        OPENRFG_SEAM_ENTER(Seam_release_pixel_shader, ppPixelShader);
+        (*ppPixelShader)->Release();
+        *ppPixelShader = nullptr;
+    }
+
     // 0x00C5B080 (:12)
     FragmentShader::FragmentShader()
     {
@@ -71,8 +83,7 @@ namespace keen
     {
         if (pPixelShader != nullptr)
         {
-            pPixelShader->Release();
-            pPixelShader = nullptr;
+            openrfg_release_pixel_shader(&pPixelShader);
         }
     }
 }

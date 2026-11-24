@@ -14,7 +14,8 @@
 // once, without a restart. The 32-bit build has no backends (openrfg_backends_enabled is false, the rows are hidden).
 //
 // PhysX is built in when CMake is given the PhysX SDK (physx/physx_backend.h): HAVOK and PHYSX switch at the main menu.
-// The path tracer is not built in yet: STANDARD runs whatever the renderer choice (the log says so).
+// The path tracer is built in when CMake finds the shader compilers (rt/rt_backend.h): it is loaded at boot whenever the
+// machine can run it, and STANDARD and PATH TRACED switch at the main menu too.
 #pragma once
 
 struct ID3D11Device;

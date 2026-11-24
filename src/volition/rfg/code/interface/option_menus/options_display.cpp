@@ -286,31 +286,15 @@ static void display_add_openrfg_level_labels()
     }
 }
 
-// OpenRFG: while the path tracer cannot start or stop with the game running (backends.h), the renderer that does not
-// run now takes effect when the game starts again, and its label says so.
-static wchar_t kRenderer_standard_restart[] = L"STANDARD (RESTART)";
-static wchar_t kRenderer_path_traced_restart[] = L"PATH TRACED (RESTART)";
-
 // OpenRFG: the backend rows' captions and labels.
 static void display_add_openrfg_backend_labels()
 {
     display_add_openrfg_caption(kRenderer_caption_key, kRenderer_caption);
     display_add_openrfg_caption(kPhysics_caption_key, kPhysics_caption);
     display_add_openrfg_caption(kKeep_debris_caption_key, kKeep_debris_caption);
-    const bool path_tracer = openrfg_backends_renderer_supported(OPENRFG_RENDERER_PATH_TRACED);
-    const int renderer_running = openrfg_backends_effective_renderer();
     for (display_level_label& label : cDisplay_backend_labels)
     {
-        wchar_t* text = label.text;
-        if (path_tracer && strcmp(label.key, "OPENRFG_RENDERER_STANDARD") == 0 && renderer_running != OPENRFG_RENDERER_STANDARD)
-        {
-            text = kRenderer_standard_restart;
-        }
-        else if (path_tracer && strcmp(label.key, "OPENRFG_RENDERER_PATH_TRACED") == 0 && renderer_running != OPENRFG_RENDERER_PATH_TRACED)
-        {
-            text = kRenderer_path_traced_restart;
-        }
-        display_add_openrfg_caption(label.key, text);
+        display_add_openrfg_caption(label.key, label.text);
     }
 }
 

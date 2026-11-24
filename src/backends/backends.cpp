@@ -130,9 +130,10 @@ namespace
     }
 #endif
 
-    // The path tracer, started at boot (it cannot start later or stop yet: a change applies when the game starts
-    // again), or failed to start then.
-    bool g_rt_running = false;
+    // The path tracer: loaded at boot when the machine can run it, whatever the choice (it must see the game's shaders
+    // and meshes made), and switched on or off at the main menu; or it failed to start.
+    bool g_rt_loaded = false;
+    bool g_rt_on = false;
     bool g_rt_failed = false;
 
     // Built into this program.
@@ -358,8 +359,7 @@ bool openrfg_backends_keep_debris_resolved(int keep_debris)
 
 int openrfg_backends_effective_renderer()
 {
-    // The path tracer runs from boot to the end of the game whatever the choice since (it cannot start later or stop yet).
-    return g_rt_running ? OPENRFG_RENDERER_PATH_TRACED : OPENRFG_RENDERER_STANDARD;
+    return g_rt_on ? OPENRFG_RENDERER_PATH_TRACED : OPENRFG_RENDERER_STANDARD;
 }
 
 int openrfg_backends_effective_physics()
@@ -389,17 +389,20 @@ void openrfg_backends_start_early()
         return;
     }
 #if defined(OPENRFG_BACKEND_RT)
-    // The path tracer first, on this thread: it must be running before the game creates its shaders and meshes, and its
-    // start reads OpenRFG.pdb with DbgHelp, which rfgphys's install (below, on its own thread) also uses: DbgHelp is
-    // single-threaded. No frame has run yet, so the hang watchdog is not armed.
-    if (g_settings.renderer == OPENRFG_RENDERER_PATH_TRACED && renderer_fallback_reason(OPENRFG_RENDERER_PATH_TRACED) == nullptr)
+    // The path tracer first, on this thread, whenever the machine can run it: it must be there before the game creates
+    // its shaders and meshes, for path tracing chosen later too (it keeps what a later start needs). Its start reads
+    // OpenRFG.pdb with DbgHelp, which rfgphys's install (below, on its own thread) also uses: DbgHelp is single-threaded.
+    // No frame has run yet, so the hang watchdog is not armed.
+    if (renderer_fallback_reason(OPENRFG_RENDERER_PATH_TRACED) == nullptr)
     {
+        const bool on = g_settings.renderer == OPENRFG_RENDERER_PATH_TRACED;
         const ULONGLONG t0 = GetTickCount64();
-        g_rt_running = openrfg_rt_start();
-        g_rt_failed = !g_rt_running;
-        char msg[160];
-        snprintf(msg, sizeof(msg), g_rt_running ? "BACKENDS path tracer started in %llu ms" : "BACKENDS path tracer did not start (%llu ms; the log under backends rfgrt says why)",
-                 (unsigned long long)(GetTickCount64() - t0));
+        g_rt_loaded = openrfg_rt_start(on);
+        g_rt_failed = !g_rt_loaded;
+        g_rt_on = g_rt_loaded && on;
+        char msg[192];
+        snprintf(msg, sizeof(msg), g_rt_loaded ? "BACKENDS path tracer started in %llu ms (path tracing %s)" : "BACKENDS path tracer did not start (%llu ms; the log under backends rfgrt says why)%s",
+                 (unsigned long long)(GetTickCount64() - t0), g_rt_loaded ? (on ? "on" : "off") : "");
         openrfg_log(msg);
     }
 #endif
@@ -413,6 +416,22 @@ void openrfg_backends_start_early()
         physx_begin_install(false);
     }
 #endif
+}
+
+// The path tracer on or off as chosen (at the main menu, where no level is loaded: off at once, and on with its core
+// starting on a thread of its own). Path tracing that cannot be switched on counts as failed.
+static void rt_reconcile()
+{
+    const bool want = g_settings.renderer == OPENRFG_RENDERER_PATH_TRACED;
+    if (!g_rt_loaded || want == g_rt_on)
+    {
+        return;
+    }
+    g_rt_on = openrfg_rt_set_active(want);
+    if (want && !g_rt_on)
+    {
+        g_rt_failed = true;
+    }
 }
 
 void openrfg_backends_main_menu_frame()
@@ -440,6 +459,7 @@ void openrfg_backends_apply()
 #else
     const char* physx_note = "";
 #endif
+    rt_reconcile();
     const int renderer = openrfg_backends_effective_renderer();
     const int physics = openrfg_backends_effective_physics();
     const int keep_debris = openrfg_backends_effective_keep_debris() ? 1 : 0;
@@ -447,8 +467,7 @@ void openrfg_backends_apply()
     {
         return;
     }
-    // Here the backends that no longer run stop and the chosen ones start (no level is loaded): PhysX above; the path
-    // tracer is not built in yet.
+    // Here the backends that no longer run stopped and the chosen ones started (no level is loaded): above.
     g_applied_renderer = renderer;
     g_applied_physics = physics;
     g_applied_keep_debris = keep_debris;
@@ -457,7 +476,7 @@ void openrfg_backends_apply()
     if (renderer != g_settings.renderer)
     {
         const char* why = renderer_fallback_reason(g_settings.renderer);
-        snprintf(renderer_note, sizeof(renderer_note), " (chosen: %s; %s)", renderer_name(g_settings.renderer), why != nullptr ? why : "it applies when the game starts again");
+        snprintf(renderer_note, sizeof(renderer_note), " (chosen: %s; %s)", renderer_name(g_settings.renderer), why != nullptr ? why : "?");
     }
     char physics_note[256] = {};
     if (physics != g_settings.physics)

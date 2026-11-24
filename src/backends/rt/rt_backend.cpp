@@ -5,7 +5,8 @@
 // (rfgrt.ini) and DLSS's runtime. It reads the game the way it does in OpenRFG64 (names from OpenRFG.pdb) and attaches
 // to it through seams in the game's source (backends/seams.h): before its start, the plugin gets this binding
 // (rfgrt_set_binding), and its hooks offer every hook to it first, by the function's name in the plugin's names table;
-// only a hook whose function has no seam becomes a MinHook detour (its test harness's).
+// only a hook whose function has no seam becomes a MinHook detour (its test harness's). It switches with the game
+// running (rfgrt_set_active): loaded at boot either way, it starts with path tracing on or off.
 
 #include "backends/rt/rt_backend.h"
 
@@ -36,9 +37,11 @@ namespace
         }
         return true;
     }
+
+    int (*g_set_active)(int) = nullptr;
 }
 
-bool openrfg_rt_start()
+bool openrfg_rt_start(bool on)
 {
     wchar_t exe[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -52,12 +55,19 @@ bool openrfg_rt_start()
     const auto set_binding = reinterpret_cast<void (*)(const rfgrt_binding*)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_binding")));
     const auto initialize = reinterpret_cast<void (*)()>(reinterpret_cast<void*>(GetProcAddress(module, "InitializeASI")));
     const auto state = reinterpret_cast<int (*)()>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_state")));
-    if (set_binding == nullptr || initialize == nullptr || state == nullptr)
+    g_set_active = reinterpret_cast<int (*)(int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_active")));
+    if (set_binding == nullptr || initialize == nullptr || state == nullptr || g_set_active == nullptr)
     {
         return false;
     }
     const rfgrt_binding binding = {&seam_attach, &openrfg_seams_enable, &openrfg_seam_call_site};
     set_binding(&binding);
+    g_set_active(on ? 1 : 0); // before its start: it switches, and starts on or off
     initialize();
     return state() == 2;
+}
+
+bool openrfg_rt_set_active(bool on)
+{
+    return g_set_active != nullptr && g_set_active(on ? 1 : 0) != 0;
 }
