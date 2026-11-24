@@ -110,6 +110,21 @@ if(OPENRFG_X64 AND OPENRFG_PHYSX_INSTALL AND EXISTS "${OPENRFG_PHYSX_INSTALL}/li
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${OPENRFG_PHYSX_INSTALL}/bin/PhysXGpu.dll ${OPENRFG_BACKENDS_OUT}/rfgphysx/PhysXGpu_64.dll)
     configure_file(physx/rfgphys.ini ${OPENRFG_BACKENDS_OUT}/rfgphys.ini COPYONLY)
 
+    # rfgphys's names table: its names, struct layouts and optional layout values looked up in OpenRFG.pdb once after
+    # each link of the game (its tools/names_table), written beside rfgphys.ini, so that it needs neither the PDB nor
+    # DbgHelp at start-up (src/shared/openrfg64_column.h).
+    add_executable(rfgphys_names ${RFGPHYS}/tools/names_table/main.cpp ${RFGPHYS}/src/rfgphys/game/layout.cpp
+        ${RFGPHYS}/src/shared/openrfg64_column.cpp)
+    set_target_properties(rfgphys_names PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_include_directories(rfgphys_names PRIVATE ${RFGPHYS}/src/rfgphys ${RFGPHYS}/src/shared)
+    target_compile_definitions(rfgphys_names PRIVATE WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    add_custom_command(OUTPUT ${OPENRFG_BACKENDS_OUT}/rfgphys.names
+        COMMAND rfgphys_names $<TARGET_FILE:OpenRFG> ${OPENRFG_BACKENDS_OUT}/rfgphys.names
+        DEPENDS OpenRFG rfgphys_names
+        COMMENT "rfgphys's names table from OpenRFG.pdb"
+        VERBATIM)
+    add_custom_target(rfgphys_names_table ALL DEPENDS ${OPENRFG_BACKENDS_OUT}/rfgphys.names)
+
     target_compile_definitions(openrfg_backends PRIVATE OPENRFG_BACKEND_PHYSX=1)
     target_link_libraries(openrfg_backends PUBLIC openrfg_backend_physx)
     add_dependencies(openrfg_backends rfgphysx_core)

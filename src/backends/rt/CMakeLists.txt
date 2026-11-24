@@ -12,6 +12,17 @@ set_property(DIRECTORY PROPERTY LINK_OPTIONS "")
 add_subdirectory(${CMAKE_SOURCE_DIR}/external/rfgrt ${CMAKE_BINARY_DIR}/external/rfgrt EXCLUDE_FROM_ALL)
 
 set_target_properties(rfgrt PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${OPENRFG_BACKENDS_OUT}/rfgrt)
+
+# rfgrt's names table: its values looked up in OpenRFG.pdb once after each link of the game (the mod's
+# tools/names_table), written beside the plugin, so that it needs neither the PDB nor DbgHelp at start-up
+# (src/shared/openrfg64_column.h).
+set(OPENRFG_RFGRT_NAMES ${OPENRFG_BACKENDS_OUT}/rfgrt/rfgrt.names)
+add_custom_command(OUTPUT ${OPENRFG_RFGRT_NAMES}
+    COMMAND rfgrt_names $<TARGET_FILE:OpenRFG> ${OPENRFG_RFGRT_NAMES}
+    DEPENDS OpenRFG rfgrt_names
+    COMMENT "rfgrt's names table from OpenRFG.pdb"
+    VERBATIM)
+add_custom_target(rfgrt_names_table ALL DEPENDS ${OPENRFG_RFGRT_NAMES})
 configure_file(rfgrt.ini ${OPENRFG_BACKENDS_OUT}/rfgrt/rfgrt.ini COPYONLY)
 # DLSS Ray Reconstruction (GI.Denoiser=2): the SDK in external/rfgrt/third_party/dlss (out of git: the mod's
 # tools/fetch_dlss.ps1); its runtime goes next to the plugin, where the core looks for it.
