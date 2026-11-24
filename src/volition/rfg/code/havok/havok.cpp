@@ -116,6 +116,7 @@
 
 #include <intrin.h>
 #include <math.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 #ifdef OPENRFG_X64
 // 15x15 World Detail Distance loads more than 32767 collision models; once the table was full every new vehicle got
@@ -2885,8 +2886,12 @@ bool havok_body_get_aabb(unsigned int handle, const vector& pos, const matrix& o
 
 // ---- velocities and mass
 // 0x008237A0 (:4738)
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+static constexpr void (*Havok_body_get_linear_velocity_by_handle)(unsigned int, vector&) = &havok_body_get_linear_velocity;
+OPENRFG_SEAM_OVERLOAD(Seam_havok_body_get_linear_velocity, Havok_body_get_linear_velocity_by_handle, "havok_body_get_linear_velocity", "(uint, vector*)");
 void havok_body_get_linear_velocity(unsigned int handle, vector& vel)
 {
+    OPENRFG_SEAM_ENTER(Seam_havok_body_get_linear_velocity, handle, vel);
     if (handle != 0xFFFFFFFF && Hk_rigid_bodies[handle] != nullptr)
     {
         havok_body_get_linear_velocity(Hk_rigid_bodies[handle], vel);
@@ -3285,8 +3290,12 @@ bool havok_body_is_active(unsigned int handle)
 }
 
 // 0x00823C20 (:5031)
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+static constexpr void (*Havok_body_apply_linear_impulse_by_handle)(unsigned int, const vector&) = &havok_body_apply_linear_impulse;
+OPENRFG_SEAM_OVERLOAD(Seam_havok_body_apply_linear_impulse, Havok_body_apply_linear_impulse_by_handle, "havok_body_apply_linear_impulse", "(uint, vector*)");
 void havok_body_apply_linear_impulse(unsigned int handle, const vector& linear_impulse)
 {
+    OPENRFG_SEAM_ENTER(Seam_havok_body_apply_linear_impulse, handle, linear_impulse);
     if (handle != 0xFFFFFFFF && Hk_rigid_bodies[handle] != nullptr)
     {
         havok_body_apply_linear_impulse(Hk_rigid_bodies[handle], linear_impulse);

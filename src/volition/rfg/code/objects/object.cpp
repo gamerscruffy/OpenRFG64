@@ -52,6 +52,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 // ---- globals
 float Shard_fade_dist0_sqr = 1225.0f; // 0x0169453C, 35 m: shards with an odd subpiece index fade beyond this
@@ -1169,8 +1170,11 @@ void object_level_init_post()
 
 // 0x00AB3A50 (:1241)
 // object_item_level_shutdown (the items and their high-res textures) is inlined in rfg.exe.
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_object_level_shutdown, &object_level_shutdown, "object_level_shutdown");
 void object_level_shutdown()
 {
+    OPENRFG_SEAM_ENTER0(Seam_object_level_shutdown);
     projectile_destroy_all();
     player_level_shutdown_all();
     npc_free_all();

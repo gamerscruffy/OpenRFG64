@@ -17,11 +17,15 @@
 #include "volition/rfg/code/level/world.h"
 #include "volition/rfg/code/multi/multi_game/multi_game.h"
 #include "volition/rfg/code/objects/object.h"
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 // 0x0081C0D0 (:21)
 // Deletes the object and its children; players and zones are kept.
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_delete_object_outside_bpo, &delete_object_outside_bpo, "delete_object_outside_bpo");
 void delete_object_outside_bpo(object* objp)
 {
+    OPENRFG_SEAM_ENTER(Seam_delete_object_outside_bpo, objp);
     if (objp == nullptr)
     {
         return;

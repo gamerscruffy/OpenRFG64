@@ -42,6 +42,7 @@ void openrfg_fail_log(const char* tag, const char* format, ...); // crash_early.
 #include <intrin.h>
 #include <stdlib.h>
 #include <string.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 // <rl_destroyable_model_instance_shared_base::factory_init> 0x0050CA20 (:33)
 // <rl_destroyable_model_instance_shared_base::release> 0x0050CB20 (:33)
@@ -1347,8 +1348,11 @@ static void process_vertex(unsigned int& new_idx, unsigned int& next_vert, const
 // in world space (relative to the instance), one render block per material. Vertices are shared within a sub instance
 // only. A pause of the recompile system (Rl_recompile_mesh_pause_count) is waited out at every step; an instance
 // invalidated meanwhile (params_p->m_valid 0) gives up. Null when there is nothing to compile.
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_compile_cache_data, &rl_destroyable_model_instance::compile_cache_data, "rl_destroyable_model_instance::compile_cache_data");
 rl_mesh_recompile_data* rl_destroyable_model_instance::compile_cache_data(rl_mesh_recompile_parameters* params_p)
 {
+    OPENRFG_SEAM_ENTER(Seam_compile_cache_data, this, params_p);
     const rl_material_map* mat_map = m_mat_map;
     if (mat_map == nullptr || !mat_map->m_isSet)
     {
@@ -1637,8 +1641,11 @@ rl_mesh_recompile_data* rl_destroyable_model_instance::compile_cache_data(rl_mes
 // 0x004BEAC0 (:1908)
 // Installs (or drops) the compiled mesh. The batchable flag from before the first recompile is kept in
 // kWasBatchable; a compiled mesh is drawn unbatched.
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_set_compiled_cache_data, &rl_destroyable_model_instance::set_compiled_cache_data, "rl_destroyable_model_instance::set_compiled_cache_data");
 rl_mesh_recompile_data* rl_destroyable_model_instance::set_compiled_cache_data(rl_mesh_recompile_data* data_p, rl_mesh_recompile_parameters* params_p)
 {
+    OPENRFG_SEAM_ENTER(Seam_set_compiled_cache_data, this, data_p, params_p);
     rl_mesh_recompile_data* old_data_p = m_recompile_data_p;
     if (old_data_p == nullptr)
     {

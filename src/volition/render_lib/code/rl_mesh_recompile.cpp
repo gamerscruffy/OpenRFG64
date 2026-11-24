@@ -23,6 +23,7 @@
 #include <intrin.h>
 #include <string.h>
 #include <windows.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 // size 0x8
 struct CompletionEntry
@@ -291,8 +292,11 @@ void rl_mesh_recompile_shutdown()
 // 0x005290D0 (:201)
 // Queues a recompile of the instance (invalidating its pending one) when recompiling is enabled and a parameter record
 // is free; outside init the recompile thread is paused around it.
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_rl_start_recompile_mesh_instance, &rl_start_recompile_mesh_instance, "rl_start_recompile_mesh_instance");
 void rl_start_recompile_mesh_instance(rl_destroyable_model_instance* instance_p, bool initing)
 {
+    OPENRFG_SEAM_ENTER(Seam_rl_start_recompile_mesh_instance, instance_p, initing);
     if (!Rl_recompile_mesh_enable || s_params_pool.size() <= 0)
     {
         // Fix (rfgphys's d_start_recompile does the same in rfg.exe): with no request free the instance's pending

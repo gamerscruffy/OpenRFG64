@@ -87,6 +87,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 // Object names: a fixed pool of 2048 strings with free and used lists (alloc_obj_name / dealloc_obj_name); an object
 // stores the index of its name (set_object_name / get_object_name, "" when it has none).
@@ -1670,8 +1671,11 @@ bool world::post_load_stream(world_zone* start_zone)
 }
 
 // 0x0092CF70 (:2009)
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_world_object_physically_in_original_zone, &world::object_physically_in_original_zone, "world::object_physically_in_original_zone");
 bool world::object_physically_in_original_zone(object* objp)
 {
+    OPENRFG_SEAM_ENTER(Seam_world_object_physically_in_original_zone, this, objp);
     if (objp->obj_flags.persistent)
     {
         return true;

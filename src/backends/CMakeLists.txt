@@ -2,7 +2,8 @@
 # The game reaches them from its options (rfg, rfg_ui) and its start-up (rfg_app), all of which link rfg.
 add_library(openrfg_backends STATIC
     backends.cpp
-    backends_probe.cpp)
+    backends_probe.cpp
+    seams.cpp)
 target_link_libraries(openrfg_backends PUBLIC keen_base)
 # Only the 64-bit build has backends (the 32-bit build keeps the settings code, without rows or probe).
 if(OPENRFG_X64)

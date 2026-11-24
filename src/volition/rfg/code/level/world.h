@@ -264,6 +264,7 @@ private:
     bool process_streaming_zone(world_zone* wz); // 0x00940550 (world_stream.cpp:957)
     bool stream_zone(world_zone* wz); // 0x0091D750 (world_stream.cpp:1027)
     void destream_zone(world_zone* wz); // 0x0091D790 (world_stream.cpp:1061)
+    friend struct openrfg_seams_world; // OpenRFG (backends): the seams of its private methods (world_stream.cpp)
     void stream_request(object* objp, unsigned int srid, stream2_priority priority); // 0x0091D7E0 (world_stream.cpp:1083)
     void get_hierarchy_bbox(vector& bmin, vector& bmax, object* objp); // 0x0091D810 (world_stream.cpp:1098)
     void stream_parent_notify(object* child); // 0x0093D650 (world_stream.cpp:1113)
