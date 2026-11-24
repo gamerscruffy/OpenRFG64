@@ -14,6 +14,8 @@
 
 #include "volition/rfg/code/gamewide/game_render.h"
 
+#include "backends/seams.h" // OpenRFG: the seam after the scene (openrfg_scene_drawn)
+
 #include "volition/render_lib/code/rl_camera.h"
 #include "volition/rfg/code/objects/object_light.h"
 #include "volition/render_lib/code/rl_color.h"
@@ -964,6 +966,16 @@ static float debug_axis_magnitude(float axis)
 // The free camera (debug axes: strafe and forward at 0.5 per unit, heading and pitch at 1.5 radians per second),
 // the scene when render_scene is set, a depth clear (and color when the scene is not drawn), then the deferred
 // primitives.
+// OpenRFG (backends): the scene drawn (its post-processing too), its HUD and interface not yet (playback_deferred,
+// below) and its depth not yet cleared: a seam (backends/seams.h) the path tracer's presenter attaches to, for DLSS Frame
+// Generation's frame before the HUD, the game's depth and the camera.
+static void openrfg_scene_drawn(rl_scene_renderer* scene_renderer_p, rl_camera* camera_p);
+OPENRFG_SEAM(Seam_scene_drawn, &openrfg_scene_drawn, "openrfg_scene_drawn");
+static void openrfg_scene_drawn(rl_scene_renderer* scene_renderer_p, rl_camera* camera_p)
+{
+    OPENRFG_SEAM_ENTER(Seam_scene_drawn, scene_renderer_p, camera_p);
+}
+
 static void render_frame(rl_renderer& renderer, bool render_scene, rl_renderer& deferredRenderer)
 {
     rl_camera* camera_p = camera_get_main_render_camera();
@@ -1000,6 +1012,7 @@ static void render_frame(rl_renderer& renderer, bool render_scene, rl_renderer& 
     if (render_scene)
     {
         Scene_main_p->render(renderer, *camera_p, deferredRenderer);
+        openrfg_scene_drawn(Scene_main_p->get_scene_renderer(), camera_p); // OpenRFG
     }
     else
     {

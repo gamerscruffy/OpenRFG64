@@ -40,9 +40,10 @@ namespace
 
     int (*g_set_active)(int) = nullptr;
     void (*g_set_dlss_mode)(int) = nullptr; // (a plugin without DLSS's modes has none)
+    void (*g_set_frame_generation)(int) = nullptr; // (nor one without frame generation)
 }
 
-bool openrfg_rt_start(bool on, int dlss_mode)
+bool openrfg_rt_start(bool on, int dlss_mode, bool frame_generation)
 {
     wchar_t exe[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -58,6 +59,7 @@ bool openrfg_rt_start(bool on, int dlss_mode)
     const auto state = reinterpret_cast<int (*)()>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_state")));
     g_set_active = reinterpret_cast<int (*)(int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_active")));
     g_set_dlss_mode = reinterpret_cast<void (*)(int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_dlss_mode")));
+    g_set_frame_generation = reinterpret_cast<void (*)(int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_frame_generation")));
     if (set_binding == nullptr || initialize == nullptr || state == nullptr || g_set_active == nullptr)
     {
         return false;
@@ -66,6 +68,7 @@ bool openrfg_rt_start(bool on, int dlss_mode)
     set_binding(&binding);
     g_set_active(on ? 1 : 0); // before its start: it switches, and starts on or off
     openrfg_rt_set_dlss_mode(dlss_mode);
+    openrfg_rt_set_frame_generation(frame_generation);
     initialize();
     return state() == 2;
 }
@@ -80,5 +83,13 @@ void openrfg_rt_set_dlss_mode(int mode)
     if (g_set_dlss_mode != nullptr)
     {
         g_set_dlss_mode(mode);
+    }
+}
+
+void openrfg_rt_set_frame_generation(bool on)
+{
+    if (g_set_frame_generation != nullptr)
+    {
+        g_set_frame_generation(on ? 1 : 0);
     }
 }
