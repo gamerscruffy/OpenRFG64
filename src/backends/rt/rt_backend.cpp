@@ -39,9 +39,10 @@ namespace
     }
 
     int (*g_set_active)(int) = nullptr;
+    void (*g_set_dlss_mode)(int) = nullptr; // (a plugin without DLSS's modes has none)
 }
 
-bool openrfg_rt_start(bool on)
+bool openrfg_rt_start(bool on, int dlss_mode)
 {
     wchar_t exe[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -56,6 +57,7 @@ bool openrfg_rt_start(bool on)
     const auto initialize = reinterpret_cast<void (*)()>(reinterpret_cast<void*>(GetProcAddress(module, "InitializeASI")));
     const auto state = reinterpret_cast<int (*)()>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_state")));
     g_set_active = reinterpret_cast<int (*)(int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_active")));
+    g_set_dlss_mode = reinterpret_cast<void (*)(int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_dlss_mode")));
     if (set_binding == nullptr || initialize == nullptr || state == nullptr || g_set_active == nullptr)
     {
         return false;
@@ -63,6 +65,7 @@ bool openrfg_rt_start(bool on)
     const rfgrt_binding binding = {&seam_attach, &openrfg_seams_enable, &openrfg_seam_call_site};
     set_binding(&binding);
     g_set_active(on ? 1 : 0); // before its start: it switches, and starts on or off
+    openrfg_rt_set_dlss_mode(dlss_mode);
     initialize();
     return state() == 2;
 }
@@ -70,4 +73,12 @@ bool openrfg_rt_start(bool on)
 bool openrfg_rt_set_active(bool on)
 {
     return g_set_active != nullptr && g_set_active(on ? 1 : 0) != 0;
+}
+
+void openrfg_rt_set_dlss_mode(int mode)
+{
+    if (g_set_dlss_mode != nullptr)
+    {
+        g_set_dlss_mode(mode);
+    }
 }

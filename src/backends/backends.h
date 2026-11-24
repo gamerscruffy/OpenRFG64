@@ -1,12 +1,16 @@
 // OpenRFG (VOM, new code): the selectable backends.
 //
-// Three settings on the display options' general page, saved in config.ini [graphics]:
+// Four settings on the display options' general page, saved in config.ini [graphics]:
 // - RENDERER (renderer): STANDARD, the game's own Direct3D 11 renderer, or PATH TRACED, the game's renderer with
 //   path-traced lighting (rfgrt's Direct3D 12 core in the game's process).
 // - PHYSICS (physics): HAVOK, the game's physics, or PHYSX, the debris in PhysX (rfgphys, in the game's process).
 //   PhysX is the default.
 // - KEEP DEBRIS (keep_debris): with PHYSX, the debris stays (no fades, no load-balance deletions). -1 is automatic:
 //   on with a GPU that runs PhysX, off without one (the CPU could not carry every piece of a demolition).
+// - DLSS (dlss): OFF, DLAA, QUALITY, BALANCED, PERFORMANCE or ULTRA PERFORMANCE. With PATH TRACED, how much of the
+//   picture the path tracer's light is traced at, DLSS Ray Reconstruction upscaling it (rfgrt's DLSS.Mode; OFF: its own
+//   filter). With STANDARD it does nothing yet (research/docs/03-dlss-framegen-plan.md, phase 5). It changes in game
+//   too (openrfg_backends_apply_dlss): the path tracer switches at its next frame.
 //
 // The settings are the user's choice; what runs is the effective backend. A choice this program or this machine
 // cannot run falls back (path traced to standard, PhysX to Havok), and the log says why (BACKENDS lines). The options
@@ -46,12 +50,25 @@ enum openrfg_keep_debris : int
     OPENRFG_KEEP_DEBRIS_ON = 1
 };
 
+// The values of rfgrt's DLSS.Mode (rfgrt_set_dlss_mode).
+enum openrfg_dlss : int
+{
+    OPENRFG_DLSS_OFF = 0,
+    OPENRFG_DLSS_DLAA = 1,
+    OPENRFG_DLSS_QUALITY = 2,
+    OPENRFG_DLSS_BALANCED = 3,
+    OPENRFG_DLSS_PERFORMANCE = 4,
+    OPENRFG_DLSS_ULTRA_PERFORMANCE = 5,
+    OPENRFG_DLSS_COUNT = 6
+};
+
 // The user's choices.
 struct openrfg_backend_settings
 {
     int renderer = OPENRFG_RENDERER_STANDARD;
     int physics = OPENRFG_PHYSICS_PHYSX;
     int keep_debris = OPENRFG_KEEP_DEBRIS_AUTO;
+    int dlss = OPENRFG_DLSS_DLAA;
 };
 
 // What this machine can run, found once at start-up (openrfg_backends_start_probe).
@@ -112,3 +129,6 @@ void openrfg_backends_apply();
 // Each main menu frame (main_menu_process): settles a change that could not be made at once (an install that finished
 // after the choice changed). Cheap.
 void openrfg_backends_main_menu_frame();
+// DLSS's setting to the path tracer, anywhere (in a level too): it keeps it for later starts, and a running core
+// switches at its next frame. openrfg_backends_apply does it too.
+void openrfg_backends_apply_dlss();
