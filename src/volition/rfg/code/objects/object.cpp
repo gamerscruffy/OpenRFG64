@@ -963,8 +963,17 @@ bool object::attach_index_is_valid(int index)
 }
 
 // 0x00710C90 (.h:371)
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+// A virtual method: its original calls object's body qualified. rfgphys acts on obj_zone's objects only.
+static void seam_object_process_bullet_hit(object* self, human* attacker, float damage, const weapon_fire_info& fire_info)
+{
+    openrfg_seam_skip = true;
+    self->object::process_bullet_hit(attacker, damage, fire_info);
+}
+OPENRFG_SEAM_VIRTUAL(Seam_object_process_bullet_hit, void (*)(object*, human*, float, const weapon_fire_info&), "object::process_bullet_hit", &seam_object_process_bullet_hit);
 void object::process_bullet_hit(human* attacker, float damage, const weapon_fire_info& fire_info)
 {
+    OPENRFG_SEAM_ENTER(Seam_object_process_bullet_hit, this, attacker, damage, fire_info);
 }
 
 // 0x00710CA0 (.h:374)

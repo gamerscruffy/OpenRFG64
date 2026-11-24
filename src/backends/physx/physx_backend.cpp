@@ -24,7 +24,6 @@
 namespace
 {
     int g_seamed = 0;
-    int g_detoured = 0;
 
     // rfgphys's hooks::create: the hook on the seam of the function its names table resolved to `rva`.
     bool seam_create(uint32_t rva, void* detour, void** original, const char* name)
@@ -33,9 +32,7 @@ namespace
         openrfg_seam* seam = symbol != nullptr ? openrfg_seam_find(symbol->name, symbol->signature) : nullptr;
         if (seam == nullptr)
         {
-            ++g_detoured;
-            LOG("hook %s: no seam in the game's source; a MinHook detour", name);
-            return false;
+            return false; // rfgphys's hooks say what it does instead
         }
         openrfg_seam_attach(seam, detour, original);
         ++g_seamed;
@@ -58,7 +55,7 @@ bool openrfg_physx_install(bool launch)
     std::wstring dir(exe, n);
     dir = dir.substr(0, dir.find_last_of(L"\\/")) + L"\\backends";
     startup::run(dir, launch);
-    LOG("OpenRFG64 VOM: %d hooks on seams in the game's source, %d MinHook detours", g_seamed, g_detoured);
+    LOG("OpenRFG64 VOM: %d hooks on seams in the game's source", g_seamed);
     // With launch the core is starting now (or did not load: openrfg_physx_state says failed); whether PhysX comes up
     // is told later in rfgphys.log.
     return pxbridge::installed();
