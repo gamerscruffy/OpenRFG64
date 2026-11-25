@@ -48,6 +48,7 @@
 #include "volition/rfg/code/ai/combat/combat_melee_actions.h"
 #include "volition/rfg/code/ai/sorted_list.h"
 #include "volition/rfg/code/code_effects/explosion_shared.h"
+#include "volition/rfg/code/code_effects/explosion.h"
 #include "volition/rfg/code/code_effects/material_effects.h"
 #include "volition/rfg/code/code_effects/material_effects_shared.h"
 #include "volition/rfg/code/effects/effects.h"
@@ -844,6 +845,115 @@ void human_combat_init(human_combat* hcp)
     hcp->pain_sound_timestamp.set(0);
 }
 
+// ---- OpenRFG: the Hammer of the Gods cheat (CHEATS_HAMMER_OF_THE_GODS)
+// The player's melee hits land with twice the Super Hammer's damage and impulse, and each hit sets off a shockwave
+// (at most every Hotg_shockwave_delay_ms, a swing hits several objects). The shockwave is an explosion of our own,
+// built once from the table's: the Shockwave backpack's explosion (its push and look) widened to Hotg_radius, with the
+// effects and camera shake of the table's widest explosion added and the structural damage of its strongest one
+// raised by half, so buildings come down. The player is the explosion's source, which explosions skip, so the
+// player is neither hurt nor thrown.
+static const float Hotg_force_multiplier = 2.0f; // times the Super Hammer cheat
+static const float Hotg_radius = 20.0f; // metres
+static const float Hotg_impulse_multiplier = 1.5f; // times the Shockwave backpack's
+static const float Hotg_structural_multiplier = 1.5f; // times the table's strongest explosion
+static const unsigned int Hotg_shockwave_delay_ms = 350;
+static explosion_info Hotg_explosion;
+static int Hotg_explosion_state; // 0 not built, 1 built, -1 no explosion table entries
+static timestamp Hotg_shockwave_timer;
+
+static const explosion_info* hotg_get_explosion()
+{
+    if (Hotg_explosion_state != 0)
+    {
+        return Hotg_explosion_state > 0 ? &Hotg_explosion : nullptr;
+    }
+    const explosion_info* widest = nullptr;
+    int max_structural = 0;
+    for (unsigned int i = 0; i < Num_explosion_infos; i++)
+    {
+        const explosion_info* e = explosion_lookup(i);
+        if (e == nullptr)
+        {
+            continue;
+        }
+        if (widest == nullptr || widest->m_radius < e->m_radius)
+        {
+            widest = e;
+        }
+        if (max_structural < e->m_structural_damage)
+        {
+            max_structural = e->m_structural_damage;
+        }
+    }
+    const explosion_info* base = nullptr;
+    const multi_backpack_info* shockwave_pack = multi_game_backpack_get_info("Shockwave");
+    if (shockwave_pack != nullptr)
+    {
+        base = shockwave_pack->active_abilities.shockwave_explosion_info != nullptr ? shockwave_pack->active_abilities.shockwave_explosion_info : shockwave_pack->passive_abilities.shockwave_explosion_info;
+    }
+    if (base == nullptr)
+    {
+        base = widest;
+    }
+    if (base == nullptr)
+    {
+        Hotg_explosion_state = -1;
+        return nullptr;
+    }
+    Hotg_explosion = *base;
+    explosion_info& e = Hotg_explosion;
+    strncpy(e.m_name, "hammer_of_the_gods", sizeof(e.m_name) - 1);
+    e.m_name[sizeof(e.m_name) - 1] = '\0';
+    // Not the shape cutter path: the explosion has to damage and push (explosion_create_internal).
+    e.flags &= ~0x8000u;
+    e.m_radius = e.m_radius < Hotg_radius ? Hotg_radius : e.m_radius;
+    e.m_secondary_radius = e.m_radius;
+    e.m_knockdown_radius = e.m_radius;
+    e.m_flinch_radius = e.m_radius;
+    if (e.m_ai_sound_radius < e.m_radius * 4.0f)
+    {
+        e.m_ai_sound_radius = e.m_radius * 4.0f;
+    }
+    e.m_impulse_magnitude = (base->m_impulse_magnitude != 0.0f ? base->m_impulse_magnitude : (widest != nullptr ? widest->m_impulse_magnitude : 0.0f)) * Hotg_impulse_multiplier;
+    const int structural = max_structural > base->m_structural_damage ? max_structural : base->m_structural_damage;
+    e.m_structural_damage = (int)((float)structural * Hotg_structural_multiplier);
+    e.m_human_min_damage_hitpoints *= 2;
+    e.m_human_max_damage_hitpoints *= 2;
+    e.m_vehicle_min_damage_hitpoints *= 2;
+    e.m_vehicle_max_damage_hitpoints *= 2;
+    e.salvage_max_pieces = 0;
+    e.always_ragdoll = true;
+    e.ignore_orientation = true;
+    if (widest != nullptr && widest != base)
+    {
+        // The widest explosion's effects join the shockwave's (up to the four an explosion can play).
+        for (unsigned int i = 0; i < widest->m_num_effects && e.m_num_effects < explosion_info::MAX_EFFECTS; i++)
+        {
+            e.m_effects[e.m_num_effects++] = widest->m_effects[i];
+        }
+        if (widest->camera_shake_type[0] != '\0')
+        {
+            memcpy(e.camera_shake_type, widest->camera_shake_type, sizeof(e.camera_shake_type));
+        }
+        e.camera_shake_multiplier = widest->camera_shake_multiplier > e.camera_shake_multiplier ? widest->camera_shake_multiplier : e.camera_shake_multiplier;
+        e.camera_shake_falloff = widest->camera_shake_falloff > e.camera_shake_falloff ? widest->camera_shake_falloff : e.camera_shake_falloff;
+        e.blast_decal_radius = widest->blast_decal_radius > e.blast_decal_radius ? widest->blast_decal_radius : e.blast_decal_radius;
+    }
+    e.camera_shake_multiplier *= 1.5f;
+    e.camera_shake_falloff = e.camera_shake_falloff < e.m_radius * 3.0f ? e.m_radius * 3.0f : e.camera_shake_falloff;
+    Hotg_explosion_state = 1;
+#ifdef OPENRFG_X64
+    {
+        extern void openrfg_log(const char*);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "HOTG explosion built: base=%s widest=%s radius=%.1f impulse=%.0f structural=%d effects=%u shake=%s x%.2f",
+                 base->m_name, widest != nullptr ? widest->m_name : "-", e.m_radius, e.m_impulse_magnitude, e.m_structural_damage, e.m_num_effects, e.camera_shake_type, e.camera_shake_multiplier);
+        openrfg_log(msg);
+    }
+#endif
+    return &Hotg_explosion;
+}
+
 // 0x00AD13B0 (:1535)
 // One melee hit on one object: knockdowns and shoves for npcs, the damage and impulse through the target's
 // process_melee_hit, and the swing stops (human_melee_cancel_attack) when the target takes no damage.
@@ -914,11 +1024,15 @@ void human_combat_unified_melee_hit(object* target, human* attacker, const vecto
     float damage = human_combat_get_melee_damage(attacker, attacker_cmp, target);
     float impulse_scale = target->get_obj_type() == OT_HUMAN ? attacker_cmp->ragdoll_impulse : attacker_cmp->impact_impulse;
     vector bonus = ZERO_VECTOR;
-    if (stats_cheat_enabled(CHEATS_SUPER_HAMMER))
+    // OpenRFG: Hammer of the Gods, the player's hits only (single player).
+    const bool hammer_of_the_gods = !Multiplayer && attacker->get_sub_type() == OT_SUB_HUMAN_PLAYER && stats_cheat_enabled(CHEATS_HAMMER_OF_THE_GODS);
+    if (stats_cheat_enabled(CHEATS_SUPER_HAMMER) || hammer_of_the_gods)
     {
         const float cheat_impulse = target->get_obj_type() == OT_HUMAN ? Super_hammer_ragdoll_impulse : Super_hammer_vehicle_impulse;
-        impulse_scale = cheat_impulse * impulse_scale;
-        damage = Super_hammer_damage * damage;
+        // OpenRFG: Hammer of the Gods hits twice as hard as the Super Hammer (it replaces it, the two do not stack).
+        const float force = hammer_of_the_gods ? Hotg_force_multiplier : 1.0f;
+        impulse_scale = cheat_impulse * impulse_scale * force;
+        damage = Super_hammer_damage * damage * force;
         bonus.y = Super_hammer_upward_bonus;
     }
     const float away = attacker_cmp->away_impulse_scale;
@@ -933,6 +1047,16 @@ void human_combat_unified_melee_hit(object* target, human* attacker, const vecto
         rfg_mover_init_damage_applied();
     }
     const bool damaged = target->process_melee_hit(attacker, damage, impulse, hit_pos, hit_normal, hit_shape_key, *w_info);
+    if (hammer_of_the_gods && (!Hotg_shockwave_timer.valid() || Hotg_shockwave_timer.elapsed()))
+    {
+        // OpenRFG: the shockwave, after the direct hit. The player is its source, so explosions leave the player alone.
+        const explosion_info* shockwave = hotg_get_explosion();
+        if (shockwave != nullptr)
+        {
+            Hotg_shockwave_timer.set(Hotg_shockwave_delay_ms);
+            explosion_create(shockwave, attacker, attacker, hit_pos, IDENTITY_MATRIX, nullptr, w_info, false);
+        }
+    }
     if ((!damaged || (!Multiplayer && !wrecking_crew_is_active() && target->get_obj_type() == OT_HUMAN && ((human*)target)->h_info != nullptr &&
                       ((human*)target)->h_info->flags.body_armor)) &&
         do_check_swing)

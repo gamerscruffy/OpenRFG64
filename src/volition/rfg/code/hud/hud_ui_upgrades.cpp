@@ -38,6 +38,7 @@
 #include "keen/base/trace.hpp"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 // Magic numbers: 62 upgrade definitions, four rows on the screen.
@@ -792,6 +793,22 @@ void hud_ui_upgrades_render(rl_renderer*)
     ui_render(Control_id_upgrades, false);
 }
 
+#ifdef OPENRFG_X64
+// Diagnostics for the jetpack (upgrade 0) missing from the table: its state each time the list is built.
+void openrfg_log(const char*);
+static void log_jetpack_table_state(player_meta_data* meta, bool listed)
+{
+    if (meta == nullptr)
+    {
+        return;
+    }
+    const upgrade_level* next = meta->get_next_upgrade_level(0);
+    char msg[256];
+    snprintf(msg, sizeof(msg), "UPGRADETABLE jetpack listed=%d next_level=%s next_available=%d show_locked=%d jetpack_lvl_static=%d value=%d backpack_type=%d", listed ? 1 : 0, next != nullptr ? "yes" : "NONE", meta->is_next_upgrade_available(0) ? 1 : 0, next != nullptr && next->show_locked ? 1 : 0, (int)meta_data_get_jetpack_upgrade_level(), meta->get_upgrade_value(0), (int)upgrade_get_backpack_type());
+    openrfg_log(msg);
+}
+#endif
+
 // 0x0087C950 (:1073)
 void hud_ui_upgrades_update_list()
 {
@@ -823,6 +840,9 @@ void hud_ui_upgrades_update_list()
         none.is_new = false;
         none.price = -1;
         Upgrades_list.add(none);
+#ifdef OPENRFG_X64
+        log_jetpack_table_state(meta_data, false);
+#endif
         return;
     }
     for (int i = 0; i < Num_upgrades; i++)
@@ -843,7 +863,12 @@ void hud_ui_upgrades_update_list()
         item.description_crc = level->description_crc;
         item.icon_name = data->get_icon_name();
         item.blueprint_name = data->get_blueprint_name();
-        const unsigned short cost = level->get_cost(data->get_id(), false);
+        unsigned short cost = level->get_cost(data->get_id(), false);
+        // OpenRFG: the owned jetpack that is not worn comes back for free (purchase_upgrade).
+        if (i == 0 && meta_data->is_jetpack_reequip_offered())
+        {
+            cost = 0;
+        }
         item.locked = level->show_locked;
         item.available = !item.locked && meta_data->get_salvage() >= (int)cost;
         item.is_new = meta_data->is_next_upgrade_new_to_the_store(i);
@@ -855,4 +880,17 @@ void hud_ui_upgrades_update_list()
             hud_ui_weapon_cabinet_add_weapon(data->get_weapon_info(), false);
         }
     }
+#ifdef OPENRFG_X64
+    {
+        bool jetpack_listed = false;
+        for (int i = 0; i < Upgrades_list.size(); i++)
+        {
+            if ((int)Upgrades_list[i].index == 0)
+            {
+                jetpack_listed = true;
+            }
+        }
+        log_jetpack_table_state(meta_data, jetpack_listed);
+    }
+#endif
 }

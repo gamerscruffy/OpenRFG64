@@ -38,6 +38,10 @@
 #include "volition/rfg/code/gameplay/road_distance_info.h"
 #include "volition/rfg/code/gameplay/safehouse_vip.h"
 #include "volition/rfg/code/gameplay/upgrades.h"
+#include "volition/rfg/code/interface/option_menus/option_menu_system.h"
+#include "volition/rfg/code/objects/humans/player.h"
+#include "volition/rfg/code/objects/humans/player_meta_data.h"
+#include <stdio.h>
 #include "volition/rfg/code/gameplay/vehicle_drop_off.h"
 #include "volition/rfg/code/gameplay/wrecking_crew/wrecking_crew.h"
 #include "volition/rfg/code/gamewide/gameaudio.h"
@@ -231,9 +235,80 @@ void gameplay_level_init_spawn()
     amb_spawn_level_init_spawn();
 }
 
+#ifdef OPENRFG_X64
+// ---- OpenRFG: unlockall.txt
+// With a file named unlockall.txt in the game's working directory, every map gets everything unlocked once the player
+// exists: all cheats (cheats_menu_unlock_all_cheats), and every level of every upgrade bought for free
+// (unlock_upgrade makes a level available, purchase_upgrade with force_purchase takes it without salvage). That
+// covers the weapons (they go into the weapons cabinet), armor, the hammers and backpacks (all unlocked, the last
+// one of each equipped) and the jetpack. Done again for each new player object (each map load or reload).
+void openrfg_log(const char*);
+static void openrfg_unlock_all_do_frame()
+{
+    static unsigned int s_done_for_player = 0xFFFFFFFF;
+    static int s_file_state = -1; // -1 not checked, 0 absent, 1 present
+    if (Player == nullptr || Multiplayer)
+    {
+        return;
+    }
+    const unsigned int handle = Player->get_handle();
+    if (handle == s_done_for_player)
+    {
+        return;
+    }
+    s_done_for_player = handle;
+    FILE* marker = fopen("unlockall.txt", "rb");
+    s_file_state = marker != nullptr ? 1 : 0;
+    if (marker == nullptr)
+    {
+        return;
+    }
+    fclose(marker);
+    const int cheats = cheats_menu_unlock_all_cheats();
+    int purchased = 0;
+    player_meta_data* meta = player_get_meta_data();
+    if (meta != nullptr)
+    {
+        for (unsigned int id = 0; id < NUM_OF_UPGRADE_DEFINITIONS; id++)
+        {
+            const upgrade_definition_data* data = upgrade_get_data_by_index(id);
+            if (data == nullptr)
+            {
+                continue;
+            }
+            unsigned int max_level = data->get_max_level();
+            // purchase_upgrade itself refuses levels past 15 (its availability bitfield is 16 bits), and a bad or
+            // sentinel level count must not turn this into a billion calls (it froze the game once).
+            if (max_level > 15)
+            {
+                char warn[96];
+                snprintf(warn, sizeof(warn), "UNLOCKALL upgrade %u reports max level %u, capped to 15", id, max_level);
+                openrfg_log(warn);
+                max_level = 15;
+            }
+            for (unsigned int level = 1; level <= max_level; level++)
+            {
+                meta->unlock_upgrade(id, level, false);
+                // Takes the next level while there is one (a bounded loop: the jetpack counts its levels differently).
+                for (int guard = 0; guard < 8 && meta->purchase_upgrade(id, false, true) == 5; guard++)
+                {
+                    purchased++;
+                }
+            }
+        }
+    }
+    char msg[160];
+    snprintf(msg, sizeof(msg), "UNLOCKALL cheats=%d upgrade_levels_purchased=%d meta=%s", cheats, purchased, meta != nullptr ? "ok" : "MISSING");
+    openrfg_log(msg);
+}
+#endif
+
 // 0x007B97F0 (:323)
 void gameplay_do_frame()
 {
+#ifdef OPENRFG_X64
+    openrfg_unlock_all_do_frame();
+#endif
     object_spawn_node_do_frame();
     srm_do_frame();
     gsm_do_frame();

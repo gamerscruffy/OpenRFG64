@@ -42,6 +42,10 @@ public:
     bool is_next_upgrade_new_to_the_store(unsigned int upgrade_id); // 0x00A11BB0 (:509)
     const upgrade_level* get_current_upgrade_level(unsigned int upgrade_id); // 0x00A11BF0 (:523)
     const upgrade_level* get_next_upgrade_level(unsigned int upgrade_id); // 0x00A365C0 (:534)
+    // OpenRFG: true when the jetpack is owned (its level is kept apart, it survives buying a backpack) but not worn.
+    // The table then offers the jetpack itself, free, at the level owned (the original offered its level 2 upgrade, the
+    // recharge, by that name).
+    bool is_jetpack_reequip_offered() const;
     void unlock_upgrade(unsigned int upgrade_id, unsigned int level, bool force_purchase); // 0x00A11C20 (:559)
     int purchase_upgrade(unsigned int upgrade_id, bool only_if_free, bool force_purchase); // 0x00AC3BA0 (:586)
     void mining_destroyed(unsigned int mine_handle); // 0x00A11C90 (:821)

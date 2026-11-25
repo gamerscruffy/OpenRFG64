@@ -13,6 +13,7 @@
 #include "volition/rfg/code/gamewide/stats.h"
 #include "volition/rfg/code/interface/loading.h"
 #include "volition/rfg/code/interface/localization/localization_shared.h"
+#include "keen/base/crc32.hpp"
 #include "volition/rfg/code/interface/main_menu.h"
 #include "volition/rfg/code/interface/option_menus/ingame_options.h"
 #include "volition/rfg/code/interface/ui_document_manager.h"
@@ -31,8 +32,12 @@ struct cheat_achievement_mapping
 };
 OPENRFG_SIZE_ASSERT(sizeof(cheat_achievement_mapping) == 0xC, "cheat_achievement_mapping");
 
-// Magic number: the number of cheats.
-static const int Num_cheats = 11;
+// Magic number: the number of cheats (11 in the original; OpenRFG adds Hammer of the Gods, CHEATS_HAMMER_OF_THE_GODS).
+static const int Num_cheats = 12;
+// OpenRFG: Hammer of the Gods has no achievement and no localized caption; it is always unlocked and its caption is
+// added to the localization table when the menu is made.
+static const char* kHammer_of_the_gods_key = "OPENRFG_CHEAT_HAMMER_OF_THE_GODS";
+static wchar_t kHammer_of_the_gods_caption[] = L"HAMMER OF THE GODS";
 
 // ---- file-static globals
 // Magic numbers: the achievements of the main game and of the DLC; -1 is none.
@@ -49,6 +54,7 @@ static const cheat_achievement_mapping Cheat_achievement_mappings[Num_cheats] = 
     {{(steam_achievement_ids)0x06, (steam_achievement_ids)-1}, "MENU_MAX_MORALE"},
     {{(steam_achievement_ids)0x08, (steam_achievement_ids)0x35}, "MENU_MAX_TECHNOLOGY"},
     {{(steam_achievement_ids)0x13, (steam_achievement_ids)0x3A}, "MENU_ALWAYS_YELLOW_ALERT"},
+    {{(steam_achievement_ids)-1, (steam_achievement_ids)-1}, "OPENRFG_CHEAT_HAMMER_OF_THE_GODS"}, // OpenRFG
 };
 static const char* kOptionRowGroup = {"row_group"}; // 0x016630B4
 static const char* kOptionHighlightArrows = {"row_highlight_arrows"}; // 0x016630B8
@@ -67,6 +73,13 @@ static bool Change_made; // 0x02C036DD
 static bool Mb_value; // 0x02C036DE
 static bool Unlock_all_cheats; // 0x02C036DF
 static bool Cheats_choices[Num_cheats]; // 0x02C036E0
+// OpenRFG: the extra row after the cheats, "Allow saving with cheats" (Cheats_allow_saving, stats.h). It is not a cheat:
+// it does not warn, does not mark cheats as used, and is applied by Accept like the rows above.
+static const int Row_allow_saving = Num_cheats;
+static bool Allow_saving_choice;
+static bool Allow_saving_changed;
+static const char* kAllow_saving_caption_key = "OPENRFG_CHEATS_ALLOW_SAVE";
+static wchar_t kAllow_saving_caption[] = L"ALLOW SAVING WITH CHEATS";
 extern bool Active; // 0x02C03754, ui_document_hud_tool_tips.cpp's
 
 static void option_change_occurred(int choice, void* new_value);
@@ -105,10 +118,16 @@ static void cheats_selection_hint(hint_type hint)
                 stats_set_cheat((cheat_indexes)i, Cheats_choices[i]);
             }
         }
+        if (Allow_saving_changed)
+        {
+            // OpenRFG: Accept applies the saving option (game_options_save_to_ini writes it with the other options).
+            Cheats_allow_saving = Allow_saving_choice;
+            Allow_saving_changed = false;
+        }
     }
     else if (hint == HT_ABORT)
     {
-        if (Change_made)
+        if (Change_made || Allow_saving_changed)
         {
             Message_box_handle_cheats = ui_add_msgbox(MBT_ACCEPT_CANCEL, "MENU_WARNING", "MENU_LOSE_CHANGES_CONFIRM", cheats_menu_cancel_message_cb, false, false, nullptr, nullptr, false);
             return;
@@ -132,6 +151,10 @@ static void cheats_selection_hint(hint_type hint)
 // The asm passes the cheat in EAX. An achievement already awarded unlocks the cheat in the profile.
 static bool cheats_menu_is_cheat_unlocked(cheat_indexes index, int dlc_id)
 {
+    if (index == CHEATS_HAMMER_OF_THE_GODS)
+    {
+        return true; // OpenRFG: no achievement unlocks it
+    }
     player_profile_data* profile = player_profile_get("cheats", Player_controller_index != 0xFFFFFFFF ? Player_controller_index : 0);
     if (profile == nullptr)
     {
@@ -171,11 +194,39 @@ void cheats_menu_unlock_cheat_for_achievement(steam_achievement_ids achievement_
     }
 }
 
+// OpenRFG (unlockall.txt): every cheat unlocked, in both achievement sets, and the menu shows them all. Returns the
+// number of cheats, or -1 when there is no profile yet.
+int cheats_menu_unlock_all_cheats()
+{
+    Unlock_all_cheats = true;
+    player_profile_data* profile = player_profile_get("cheats", Player_controller_index != 0xFFFFFFFF ? Player_controller_index : 0);
+    if (profile == nullptr)
+    {
+        return -1;
+    }
+    for (int i = 0; i < Num_cheats; i++)
+    {
+        profile->new_data.cheats_unlocked[0][i] = true;
+        profile->new_data.cheats_unlocked[1][i] = true;
+    }
+    return (int)Num_cheats;
+}
+
 // 0x0090ED70 (:260)
 static void cheats_menu_create()
 {
     Menu_handle_cheats = ui_menu_add(Doc_handle_cheats, "MENU_CHEATS", nullptr, cheats_selection_hint, "OM", true, -1, -1, false);
     const int dlc_id = dlc_get_current_id();
+    // OpenRFG: the Hammer of the Gods caption.
+    {
+        const unsigned int caption_hash = keen::getCrc32LwrValue(kHammer_of_the_gods_key);
+        wchar_t* existing = nullptr;
+        Localization_hash.get(caption_hash, existing);
+        if (existing == nullptr)
+        {
+            Localization_hash.insert_key_data(caption_hash, kHammer_of_the_gods_caption);
+        }
+    }
     for (int i = 0; i < Num_cheats; i++)
     {
         const bool unlocked = Unlock_all_cheats || cheats_menu_is_cheat_unlocked((cheat_indexes)i, dlc_id);
@@ -183,6 +234,17 @@ static void cheats_menu_create()
         ui_menu_add_char_list_item(Menu_handle_cheats, caption, cCheats_choices, 2, option_change_occurred, Cheats_choices[i] ? 1 : 0, true);
         ui_menu_enable_menu_item(Menu_handle_cheats, i, unlocked);
         ui_menu_show_menu_item(Menu_handle_cheats, i, unlocked);
+    }
+    // OpenRFG: the "Allow saving with cheats" row, always shown. Its caption goes into the localization table once.
+    {
+        const unsigned int caption_hash = keen::getCrc32LwrValue(kAllow_saving_caption_key);
+        wchar_t* existing = nullptr;
+        Localization_hash.get(caption_hash, existing);
+        if (existing == nullptr)
+        {
+            Localization_hash.insert_key_data(caption_hash, kAllow_saving_caption);
+        }
+        ui_menu_add_char_list_item(Menu_handle_cheats, kAllow_saving_caption_key, cCheats_choices, 2, option_change_occurred, Allow_saving_choice ? 1 : 0, true);
     }
     char text[128];
     char image[256];
@@ -233,6 +295,13 @@ static bool cheats_warning_cb(int mbox_handle, int, msgbox_choice choice)
 // The first cheat turned on in a game warns first. rfg.exe inlines ui_add_msgbox here.
 static void option_change_occurred(int choice, void* new_value)
 {
+    if (choice == Row_allow_saving)
+    {
+        // OpenRFG: not a cheat, so no warning and no Change_made (which would also skip the first cheat's warning).
+        Allow_saving_choice = new_value != nullptr;
+        Allow_saving_changed = true;
+        return;
+    }
     if (cheats_are_enabled() || Change_made)
     {
         if ((unsigned int)choice < 12 && choice < Num_cheats)
@@ -253,6 +322,8 @@ void cheats_menu_enter(game_state prev_state)
     (void)prev_state;
     Assets_loaded_cheats = false;
     Change_made = false;
+    Allow_saving_choice = Cheats_allow_saving; // OpenRFG
+    Allow_saving_changed = false;
     Doc_handle_cheats = ui_load_document(cDoc_name, DFIT_NONE, 0.0f, DLT_NORMAL, false, STREAM_PRIORITY_AUDIO_CACHE_LOAD, false);
     if (Doc_handle_cheats == -1)
     {

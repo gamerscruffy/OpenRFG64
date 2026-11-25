@@ -213,6 +213,7 @@ void cheats_menu_process(); // 0x00915A00 (cheats_menu.cpp:464)
 void cheats_menu_handshake(rl_renderer*); // 0x0088F650 (cheats_menu.cpp:503)
 void cheats_menu_render(rl_renderer*); // 0x008FD460 (cheats_menu.cpp:508)
 bool cheats_menu_cheats_unlocked(); // 0x0088F660 (cheats_menu.cpp:525)
+int cheats_menu_unlock_all_cheats(); // OpenRFG (unlockall.txt): marks every cheat unlocked in the profile, returns the count
 void extras_menu_init(); // 0x009174E0 (extras_menu.cpp:280)
 void extras_menu_enter(game_state prev_state); // 0x00890EB0 (extras_menu.cpp:296)
 void extras_menu_exit(game_state new_state); // 0x008D6A80 (extras_menu.cpp:301)
