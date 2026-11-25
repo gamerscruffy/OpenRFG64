@@ -7,10 +7,11 @@
 //   PhysX is the default.
 // - KEEP DEBRIS (keep_debris): with PHYSX, the debris stays (no fades, no load-balance deletions). -1 is automatic:
 //   on with a GPU that runs PhysX, off without one (the CPU could not carry every piece of a demolition).
-// - DLSS (dlss): OFF, DLAA, QUALITY, BALANCED, PERFORMANCE or ULTRA PERFORMANCE. With PATH TRACED, how much of the
-//   picture the path tracer's light is traced at, DLSS Ray Reconstruction upscaling it (rfgrt's DLSS.Mode; OFF: its own
-//   filter). With STANDARD it does nothing yet (research/docs/03-dlss-framegen-plan.md, phase 5). It changes in game
-//   too (openrfg_backends_apply_live): the path tracer switches at its next frame.
+// - DLSS (dlss): OFF, DLAA, QUALITY, BALANCED, PERFORMANCE or ULTRA PERFORMANCE: DLSS Super Resolution for the game's
+//   frame, with either renderer (dlss/dlss_frame.h): the scene rendered at NVIDIA's render size for the mode and
+//   upscaled before the HUD (DLAA: at full size, as anti-aliasing). With PATH TRACED the path tracer's light is traced at
+//   that size too, DLSS Ray Reconstruction denoising it there (rfgrt's DLSS.Mode DLAA; OFF: its own filter). It changes
+//   in game too (openrfg_backends_apply_live): from the next frame.
 // - FRAME GENERATION (frame_generation): DLSS Frame Generation, one generated frame between each two (NVIDIA GeForce RTX
 //   40 or 50 series): the path tracer's presenter presents the game's frames through a Direct3D 12 swap chain and NVIDIA
 //   Streamline, with either renderer. Off by default. It changes in game too, from the next frame.

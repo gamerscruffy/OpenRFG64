@@ -15,6 +15,7 @@
 #include "volition/rfg/code/gamewide/game_render.h"
 
 #include "backends/seams.h" // OpenRFG: the seam after the scene (openrfg_scene_drawn)
+#include "backends/dlss/dlss_frame.h" // OpenRFG (VOM): DLSS for the game's frame
 
 #include "volition/render_lib/code/rl_camera.h"
 #include "volition/rfg/code/objects/object_light.h"
@@ -1007,11 +1008,33 @@ static void render_frame(rl_renderer& renderer, bool render_scene, rl_renderer& 
         set_entity_transform(camera_p, s_freeCamPos, orient);
     }
     camera_p->render_begin(renderer);
+    // OpenRFG (VOM): DLSS for the game's frame (backends/dlss/dlss_frame.h): the camera's unjittered transform for the
+    // motion, then its projection jittered while the scene is drawn, and unjittered again for the HUD (and for the
+    // seam below: frame generation's camera).
+    const bool dlss = render_scene && openrfg_dlss_frame_active();
+    if (dlss)
+    {
+        const matrix& orient = camera_p->get_rotation();
+        const vector& position = camera_p->get_position();
+        const matrix44& projection = camera_p->get_projection_transform();
+        float projection_rows[16];
+        for (unsigned int i = 0; i < 16; i++)
+        {
+            projection_rows[i] = projection.element(i >> 2, i & 3);
+        }
+        openrfg_dlss_frame_scene_begin(&orient.rvec.x, &orient.uvec.x, &orient.fvec.x, &position.x, projection_rows);
+        camera_p->render_refresh(renderer);
+    }
     // Magic numbers: clear flags 4 (depth) and 1 (color).
     unsigned int clear_flags = 4;
     if (render_scene)
     {
         Scene_main_p->render(renderer, *camera_p, deferredRenderer);
+        if (dlss)
+        {
+            openrfg_dlss_frame_scene_end();
+            camera_p->render_refresh(renderer);
+        }
         openrfg_scene_drawn(Scene_main_p->get_scene_renderer(), camera_p); // OpenRFG
     }
     else

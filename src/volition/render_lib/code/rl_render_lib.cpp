@@ -28,6 +28,7 @@
 #include "volition/render_lib/code/rl_shader_defines.h"
 #include "volition/render_lib/code/rl_shader_fixup.h"
 #include "volition/render_lib/code/rl_vertex_formats.hpp"
+#include "backends/dlss/dlss_frame.h" // OpenRFG (VOM): a new DLSS mode makes the scene's targets again
 #include "volition/vlib/code/bmpman/bmpman_defs.h"
 #include "volition/vlib/code/cfile/cfile.h"
 #include "volition/vlib/code/util/string_util.h"
@@ -1545,7 +1546,8 @@ void rl_render_lib::check_device_status()
         Active_scene_p->m_scene_renderer_p->m_new_level_of_detail = m_level_of_detail;
         rl_singleton_phoenix<rl_particle_renderer>::get_instance()->m_level_of_detail = m_level_of_detail.m_particle_lod;
     }
-    else if (m_screen_info.get_screen_width() == m_last_width && m_screen_info.get_screen_height() == m_last_height && m_screen_info.get_window_mode() == m_lastWindowMode)
+    else if (m_screen_info.get_screen_width() == m_last_width && m_screen_info.get_screen_height() == m_last_height && m_screen_info.get_window_mode() == m_lastWindowMode &&
+             !openrfg_dlss_frame_targets_stale()) // OpenRFG (VOM): a new DLSS mode makes the scene's targets again
     {
         return;
     }

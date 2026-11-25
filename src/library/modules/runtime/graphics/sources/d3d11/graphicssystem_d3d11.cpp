@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "backends/seams.h"
+#include "backends/dlss/dlss_frame.h" // OpenRFG (VOM): DLSS's mip bias
 
 namespace keen
 {
@@ -1313,6 +1314,7 @@ namespace keen
         void destroySamplerState(GraphicsSystem* pGraphicsSystem, const SamplerState* pSamplerState)
         {
             // Notes (decompiled behaviour, kept as is): no null check, unlike the other destroy functions.
+            openrfg_dlss_frame_sampler_destroyed(pSamplerState->pState); // OpenRFG (VOM): its copy with DLSS's mip bias goes too
             pSamplerState->pState->Release();
             pGraphicsSystem->stateObjectPool.freeSamplerState(pSamplerState);
         }

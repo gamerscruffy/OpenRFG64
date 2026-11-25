@@ -34,6 +34,7 @@ bool display_options_load_from_cache(rfg_game_options* game_options, rl_screen_i
 #else // OPENRFG_UI
 
 #include "backends/backends.h" // OpenRFG: rows 6-10 of the general page
+#include "backends/dlss/dlss_frame.h" // OpenRFG: the DLSS row (where DLSS runs)
 #include "keen/base/crc32.hpp"
 #include "keen/base/string.hpp"
 #include "keen/base/trace.hpp"
@@ -162,9 +163,10 @@ static display_level_label cDisplay_backend_labels[4] = {
     {"OPENRFG_PHYSICS_HAVOK", L"HAVOK"}, {"OPENRFG_PHYSICS_PHYSX", L"PHYSX"}};
 static const char* cDisplay_renderer_names[OPENRFG_RENDERER_COUNT] = {"OPENRFG_RENDERER_STANDARD", "OPENRFG_RENDERER_PATH_TRACED"};
 static const char* cDisplay_physics_names[OPENRFG_PHYSICS_COUNT] = {"OPENRFG_PHYSICS_HAVOK", "OPENRFG_PHYSICS_PHYSX"};
-// OpenRFG: row 9, DLSS (backends.h openrfg_dlss). With PATH TRACED: how much of the picture its light is traced at, DLSS
-// Ray Reconstruction upscaling it; greyed out with STANDARD until DLSS works there. It changes in game too: Accept hands
-// it to openrfg_backends_apply_live, and the path tracer switches at its next frame.
+// OpenRFG: row 9, DLSS (backends.h openrfg_dlss): DLSS Super Resolution for the game's frame, with either renderer
+// (backends/dlss/dlss_frame.h; greyed out where it cannot run); with PATH TRACED the path tracer's light follows the
+// frame's size. Without the frame's DLSS built, only with PATH TRACED (its light alone). It changes in game too: Accept
+// hands it to openrfg_backends_apply_live, and the next frame renders at the new size.
 static const int DOPTIONS_ROW_DLSS = 9;
 static const char* kDlss_caption_key = "OPENRFG_DLSS";
 static wchar_t kDlss_caption[] = L"DLSS";
@@ -354,7 +356,7 @@ static bool display_backends_changed()
 }
 
 // OpenRFG: which backend rows can change: from the main menu only, to what this machine can run, KEEP DEBRIS only with
-// PhysX; DLSS with PATH TRACED, in game too.
+// PhysX; DLSS where it runs (either renderer, or PATH TRACED alone without the frame's DLSS), in game too.
 static void display_update_backend_rows()
 {
     if (!openrfg_backends_enabled())
@@ -366,7 +368,8 @@ static void display_update_backend_rows()
     ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_RENDERER, at_main_menu && path_tracing);
     ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_PHYSICS, at_main_menu && openrfg_backends_physics_supported(OPENRFG_PHYSICS_PHYSX));
     ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_KEEP_DEBRIS, at_main_menu && Pending_backends.physics == OPENRFG_PHYSICS_PHYSX);
-    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_DLSS, path_tracing && Pending_backends.renderer == OPENRFG_RENDERER_PATH_TRACED);
+    const bool dlss_frame = openrfg_dlss_frame_supported();
+    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_DLSS, dlss_frame || (path_tracing && Pending_backends.renderer == OPENRFG_RENDERER_PATH_TRACED));
     ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_FRAME_GENERATION, path_tracing);
 }
 
@@ -750,7 +753,7 @@ static void option_change_occurred_doptions(int choice, void* new_value)
             }
             display_info_set_to_default_lod_settings((display_default_settings)value);
             return;
-        case DOPTIONS_ROW_RENDERER: // OpenRFG: DLSS follows it (only with PATH TRACED for now)
+        case DOPTIONS_ROW_RENDERER: // OpenRFG: DLSS follows it (without the frame's DLSS, only with PATH TRACED)
             Pending_backends.renderer = value;
             display_update_backend_rows();
             return;

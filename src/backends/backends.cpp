@@ -10,6 +10,7 @@
 #if defined(OPENRFG_BACKEND_RT)
 #include "backends/rt/rt_backend.h"
 #endif
+#include "backends/dlss/dlss_frame.h"
 
 #if defined(OPENRFG_X64)
 #include "volition/vlib/code/util/endian_type.h"
@@ -161,6 +162,18 @@ namespace
     {
         static const char* const names[OPENRFG_DLSS_COUNT] = {"off", "DLAA", "quality", "balanced", "performance", "ultra performance"};
         return dlss >= 0 && dlss < OPENRFG_DLSS_COUNT ? names[dlss] : "?";
+    }
+
+    // The path tracer's DLSS mode for the DLSS row's: with DLSS for the game's frame (dlss/dlss_frame.h) the scene, and
+    // with it the path tracer's light, is already at DLSS's render size: Ray Reconstruction denoises it at that size
+    // (DLAA), and the frame's DLSS upscales the whole picture. OFF stays off (the path tracer's own filter).
+    int rt_dlss_mode(int dlss)
+    {
+#if defined(OPENRFG_DLSS)
+        return dlss == OPENRFG_DLSS_OFF ? OPENRFG_DLSS_OFF : OPENRFG_DLSS_DLAA;
+#else
+        return dlss;
+#endif
     }
 
     int clamp_choice(int value, int count, int fallback)
@@ -402,6 +415,8 @@ void openrfg_backends_start_early()
     {
         return;
     }
+    // DLSS for the game's frame: its mode before the first frame makes the scene's targets.
+    openrfg_dlss_frame_set_mode(g_settings.dlss);
 #if defined(OPENRFG_BACKEND_RT)
     // The path tracer first, on this thread, whenever the machine can run it: it must be there before the game creates
     // its shaders and meshes, for path tracing chosen later too (it keeps what a later start needs). Its start reads
@@ -411,7 +426,7 @@ void openrfg_backends_start_early()
     {
         const bool on = g_settings.renderer == OPENRFG_RENDERER_PATH_TRACED;
         const ULONGLONG t0 = GetTickCount64();
-        g_rt_loaded = openrfg_rt_start(on, g_settings.dlss, g_settings.frame_generation != 0);
+        g_rt_loaded = openrfg_rt_start(on, rt_dlss_mode(g_settings.dlss), g_settings.frame_generation != 0);
         g_rt_failed = !g_rt_loaded;
         g_rt_on = g_rt_loaded && on;
         if (g_rt_loaded)
@@ -449,7 +464,7 @@ static void rt_apply_live()
     }
     if (g_settings.dlss != g_applied_dlss)
     {
-        openrfg_rt_set_dlss_mode(g_settings.dlss);
+        openrfg_rt_set_dlss_mode(rt_dlss_mode(g_settings.dlss));
         g_applied_dlss = g_settings.dlss;
         char msg[96];
         snprintf(msg, sizeof(msg), "BACKENDS DLSS %s", dlss_name(g_settings.dlss));
@@ -468,6 +483,7 @@ void openrfg_backends_apply_live()
 {
     if (openrfg_backends_enabled())
     {
+        openrfg_dlss_frame_set_mode(g_settings.dlss); // the game's frame: from the next frame (new targets)
         rt_apply_live();
     }
 }
@@ -514,6 +530,7 @@ void openrfg_backends_apply()
     const char* physx_note = "";
 #endif
     rt_reconcile();
+    openrfg_dlss_frame_set_mode(g_settings.dlss);
     rt_apply_live();
     const int renderer = openrfg_backends_effective_renderer();
     const int physics = openrfg_backends_effective_physics();

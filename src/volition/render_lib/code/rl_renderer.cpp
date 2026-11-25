@@ -38,6 +38,8 @@
 
 #include <string.h>
 #include "backends/seams.h"
+#include "backends/dlss/dlss_frame.h" // OpenRFG (VOM): the scene's size with DLSS
+#include "keen/graphics/graphicssystem.hpp"
 
 const unsigned int rl_renderer::kMaxTmus = 16; // 0x012B80A4
 const unsigned int rl_renderer::DYNAMIC_IB_SIZE = 0x200000; // 0x012B80A8
@@ -214,7 +216,12 @@ void rl_renderer::updateResourceSizes(keen::GraphicsCommandWriter* pCommandWrite
     m_pCommandWriter = pCommandWriter;
     release_all_resources();
     rl_scene_renderer* scene_renderer_p = Active_scene_p->m_scene_renderer_p;
-    scene_renderer_p->resize(m_pRenderLib->get_screen_info()->get_screen_width(), m_pRenderLib->get_screen_info()->get_screen_height(), highQualityOnConsoles);
+    // OpenRFG (VOM): with DLSS upscaling the game's frame the scene is rendered at DLSS's render size, the screen's size
+    // otherwise (backends/dlss/dlss_frame.h).
+    int scene_width = 0;
+    int scene_height = 0;
+    openrfg_dlss_frame_targets(keen::graphics::getD3dDevice(Init_params.m_pKeenGraphicsSystem), m_pRenderLib->get_screen_info()->get_screen_width(), m_pRenderLib->get_screen_info()->get_screen_height(), &scene_width, &scene_height);
+    scene_renderer_p->resize(scene_width, scene_height, highQualityOnConsoles);
     rl_particle_renderer* particle_renderer_p = rl_singleton_phoenix<rl_particle_renderer>::get_instance();
     particle_renderer_p->m_quarter_width = scene_renderer_p->m_main_scene_target_width >> 2;
     particle_renderer_p->m_quarter_height = scene_renderer_p->m_main_scene_target_height >> 2;
