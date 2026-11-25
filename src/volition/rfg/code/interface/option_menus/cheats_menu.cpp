@@ -32,12 +32,15 @@ struct cheat_achievement_mapping
 };
 OPENRFG_SIZE_ASSERT(sizeof(cheat_achievement_mapping) == 0xC, "cheat_achievement_mapping");
 
-// Magic number: the number of cheats (11 in the original; OpenRFG adds Hammer of the Gods, CHEATS_HAMMER_OF_THE_GODS).
-static const int Num_cheats = 12;
+// Magic number: the number of cheats (11 in the original; OpenRFG adds Hammer of the Gods, CHEATS_HAMMER_OF_THE_GODS,
+// and Satellite Mode, CHEATS_SATELLITE_MODE).
+static const int Num_cheats = 13;
 // OpenRFG: Hammer of the Gods has no achievement and no localized caption; it is always unlocked and its caption is
 // added to the localization table when the menu is made.
 static const char* kHammer_of_the_gods_key = "OPENRFG_CHEAT_HAMMER_OF_THE_GODS";
 static wchar_t kHammer_of_the_gods_caption[] = L"HAMMER OF THE GODS";
+static const char* kSatellite_mode_key = "OPENRFG_CHEAT_SATELLITE_MODE"; // OpenRFG, like Hammer of the Gods
+static wchar_t kSatellite_mode_caption[] = L"SATELLITE MODE";
 
 // ---- file-static globals
 // Magic numbers: the achievements of the main game and of the DLC; -1 is none.
@@ -55,6 +58,7 @@ static const cheat_achievement_mapping Cheat_achievement_mappings[Num_cheats] = 
     {{(steam_achievement_ids)0x08, (steam_achievement_ids)0x35}, "MENU_MAX_TECHNOLOGY"},
     {{(steam_achievement_ids)0x13, (steam_achievement_ids)0x3A}, "MENU_ALWAYS_YELLOW_ALERT"},
     {{(steam_achievement_ids)-1, (steam_achievement_ids)-1}, "OPENRFG_CHEAT_HAMMER_OF_THE_GODS"}, // OpenRFG
+    {{(steam_achievement_ids)-1, (steam_achievement_ids)-1}, "OPENRFG_CHEAT_SATELLITE_MODE"}, // OpenRFG
 };
 static const char* kOptionRowGroup = {"row_group"}; // 0x016630B4
 static const char* kOptionHighlightArrows = {"row_highlight_arrows"}; // 0x016630B8
@@ -151,7 +155,7 @@ static void cheats_selection_hint(hint_type hint)
 // The asm passes the cheat in EAX. An achievement already awarded unlocks the cheat in the profile.
 static bool cheats_menu_is_cheat_unlocked(cheat_indexes index, int dlc_id)
 {
-    if (index == CHEATS_HAMMER_OF_THE_GODS)
+    if (index == CHEATS_HAMMER_OF_THE_GODS || index == CHEATS_SATELLITE_MODE)
     {
         return true; // OpenRFG: no achievement unlocks it
     }
@@ -217,14 +221,19 @@ static void cheats_menu_create()
 {
     Menu_handle_cheats = ui_menu_add(Doc_handle_cheats, "MENU_CHEATS", nullptr, cheats_selection_hint, "OM", true, -1, -1, false);
     const int dlc_id = dlc_get_current_id();
-    // OpenRFG: the Hammer of the Gods caption.
+    // OpenRFG: the captions of the cheats OpenRFG adds.
     {
-        const unsigned int caption_hash = keen::getCrc32LwrValue(kHammer_of_the_gods_key);
-        wchar_t* existing = nullptr;
-        Localization_hash.get(caption_hash, existing);
-        if (existing == nullptr)
+        const char* const keys[] = {kHammer_of_the_gods_key, kSatellite_mode_key};
+        wchar_t* const captions[] = {kHammer_of_the_gods_caption, kSatellite_mode_caption};
+        for (int k = 0; k < 2; k++)
         {
-            Localization_hash.insert_key_data(caption_hash, kHammer_of_the_gods_caption);
+            const unsigned int caption_hash = keen::getCrc32LwrValue(keys[k]);
+            wchar_t* existing = nullptr;
+            Localization_hash.get(caption_hash, existing);
+            if (existing == nullptr)
+            {
+                Localization_hash.insert_key_data(caption_hash, captions[k]);
+            }
         }
     }
     for (int i = 0; i < Num_cheats; i++)
@@ -273,7 +282,7 @@ static bool cheats_warning_cb(int mbox_handle, int, msgbox_choice choice)
     }
     if (choice == MBC_OK)
     {
-        if ((unsigned int)Mb_choice < 12 && Mb_choice < Num_cheats)
+        if ((unsigned int)Mb_choice < (unsigned int)Num_cheats)
         {
             Cheats_choices[Mb_choice] = Mb_value;
             Change_made = true;
@@ -283,7 +292,7 @@ static bool cheats_warning_cb(int mbox_handle, int, msgbox_choice choice)
     {
         keen::debug::nativePrintArgs("Int3 critical function at %s(%d)\n", __FILE__, __LINE__);
     }
-    else if ((unsigned int)Mb_choice < 12) // Magic number: 12, as the asm tests, one past the last cheat.
+    else if ((unsigned int)Mb_choice < (unsigned int)Num_cheats) // rfg.exe tests 12, one past its last cheat.
     {
         ui_menu_set_char_list_index(Menu_handle_cheats, Mb_choice, 0);
     }
@@ -304,7 +313,7 @@ static void option_change_occurred(int choice, void* new_value)
     }
     if (cheats_are_enabled() || Change_made)
     {
-        if ((unsigned int)choice < 12 && choice < Num_cheats)
+        if ((unsigned int)choice < (unsigned int)Num_cheats)
         {
             Change_made = true;
             Cheats_choices[choice] = new_value != nullptr;

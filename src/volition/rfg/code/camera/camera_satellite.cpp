@@ -38,6 +38,8 @@
 #include "volition/vlib/code/math/floating.h"
 #include "volition/vlib/code/time/timestamp.h"
 #include "volition/rfg/code/gamewide/tweak_table.h"
+#include "volition/rfg/code/gamewide/stats.h"
+#include "volition/rfg/code/multi/multi_core/include/multi.h"
 
 #include <math.h>
 
@@ -110,6 +112,9 @@ static vector2 Satellite_input_vel_gyro; // 0x01DE6AB8
 static vector Satellite_target_previous_pos; // 0x01DE6B00
 static vector Satellite_last_hit_pos; // 0x01DE6B5C
 static bool old_reticule; // get_satellite_target's previous answer
+// OpenRFG (the Satellite Mode cheat): the view was started by the cheat, so leaving it flies back and lands the player
+// where they were, as at the end of a mission's satellite view, instead of the no-mission save-and-warp.
+static bool Satellite_started_by_cheat;
 
 // 0x008987C0
 camera_satellite_hud_data::camera_satellite_hud_data()
@@ -486,7 +491,7 @@ void camera_satellite_process(float step_time, bool last_step_of_frame)
 
     if (Satellite_exit)
     {
-        if (!mission_is_active())
+        if (!mission_is_active() && !Satellite_started_by_cheat)
         {
             camera_stop_satellite_mode_internal();
             game_clock_set_time(Satellite_exit_hour, Satellite_exit_minute, 0);
@@ -509,6 +514,7 @@ void camera_satellite_process(float step_time, bool last_step_of_frame)
             human_set_cast_shadows(pp, true, true);
             human_set_cast_drop_shadows(pp, true, true);
             activity_reinstate_diversions(ADR_SATELLITE);
+            Satellite_started_by_cheat = false; // OpenRFG
             return;
         }
         // Fly back towards the original position until its zone streams in.
@@ -817,6 +823,53 @@ void camera_satellite_level_init()
     }
     Satellite_return_to_target = false;
     Satellite_return_to_target_user_initiated = false;
+    Satellite_started_by_cheat = false; // OpenRFG
+}
+
+// OpenRFG: the Satellite Mode cheat (CHEATS_SATELLITE_MODE), once a frame. Turning the cheat on enters the satellite
+// artillery view of the Eos missions where the player stands (once gameplay resumes after the menu); turning it off
+// leaves it and lands the player back where they were. A mission's own satellite view is left alone: the cheat neither
+// starts over it nor ends it.
+void camera_satellite_cheat_do_frame()
+{
+    static bool was_on;
+    static bool pending;
+    const bool on = !Multiplayer && stats_cheat_enabled(CHEATS_SATELLITE_MODE);
+    if (on && !was_on)
+    {
+        pending = true;
+    }
+    if (!on)
+    {
+        pending = false;
+        if (was_on && Satellite_started_by_cheat && Rfg_camera.mode == CAMERA_SATELLITE_MODE && !Satellite_exit)
+        {
+            camera_stop_satellite_mode();
+        }
+    }
+    was_on = on;
+    if (!pending || gameseq_get_state() != GS_GAMEPLAY || Rfg_camera.mode == CAMERA_SATELLITE_MODE)
+    {
+        return;
+    }
+    player* const pp = player_get_local_player();
+    if (pp == nullptr || human_is_dead(pp) || human_in_vehicle(pp) != nullptr)
+    {
+        return; // waits until the player is on foot
+    }
+    pending = false;
+    camera_start_satellite_mode();
+    if (Rfg_camera.mode != CAMERA_SATELLITE_MODE)
+    {
+        return;
+    }
+    Satellite_started_by_cheat = true;
+    // The view tilts down only while it turns towards a target (camera_satellite_process), and a mission always names
+    // one; with none, the camera kept the third-person angle. Look straight down the current heading from the start.
+    camera_satellite_update_ideal_orient(fl_atan2_safe(Rfg_camera.ideal_orient.fvec.x, Rfg_camera.ideal_orient.fvec.z));
+    // Magic number: the guns sit 150 m west of where the view starts, so rounds come in from one side, as a mission's do.
+    const vector source(pp->pos.x - 150.0f, pp->pos.y, pp->pos.z);
+    camera_satellite_set_weapon_source_pos(source);
 }
 
 // 0x006D6240 (:900)

@@ -73,6 +73,7 @@
 #include "volition/rfg/code/spawn/spawn_object_group.h"
 #include "volition/rfg/code/spawn/spawn_resource_manager.h"
 #include "volition/rfg/code/vehicle_ai/vehicle_ai.h"
+#include "volition/rfg/code/camera/camera_satellite.h"
 #include "volition/vlib/code/util/varray.h"
 
 // ---- internal functions of alert_level_manager.cpp and marauder_raid.cpp, which rfg.pdb lists as local
@@ -309,6 +310,7 @@ void gameplay_do_frame()
 #ifdef OPENRFG_X64
     openrfg_unlock_all_do_frame();
 #endif
+    camera_satellite_cheat_do_frame(); // OpenRFG: the Satellite Mode cheat
     object_spawn_node_do_frame();
     srm_do_frame();
     gsm_do_frame();

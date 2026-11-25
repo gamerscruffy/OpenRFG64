@@ -680,7 +680,8 @@ enum cheat_indexes
     CHEATS_MAX_TECHNOLOGY = 9,
     CHEATS_ALWAYS_YELLOW_ALERT = 10,
     CHEATS_HAMMER_OF_THE_GODS = 11, // OpenRFG: a shockwave on every hammer hit (human_combat_unified_melee_hit)
-    NUM_CHEAT_INDEXES = 12,
+    CHEATS_SATELLITE_MODE = 12, // OpenRFG: the satellite artillery view of the Eos missions (camera_satellite_cheat_do_frame)
+    NUM_CHEAT_INDEXES = 13,
     NUM_RESERVED_CHEAT_INDEXES = 64,
 };
 
