@@ -14,6 +14,7 @@ constexpr uint32_t kMaxGov = 8;         // load-governor readings kept per frame
 
 enum StartType : uint32_t { kStartNone = 0, kStartSave = 1, kStartWreckingCrew = 2, kStartNewGame = 3 };
 constexpr uint32_t kFlagVirtualClock = 1;
+constexpr uint32_t kFlagOpenRFG64 = 2;  // made in OpenRFG64: exe_timestamp is its OpenRFG.exe's, not an rfg.exe build's
 
 #pragma pack(push, 1)
 // frametime_calculate's state at the start event: frame counters (AI staggers work by Framecount), the 16-frame
@@ -42,7 +43,7 @@ struct Header {
     uint32_t flags;                 // kFlag*
     int32_t clock_anchor_ms;        // virtual clock at the start event (timer_get milliseconds)
     uint32_t checkpoint_interval;
-    uint32_t exe_timestamp;         // rfg.exe build of the recording
+    uint32_t exe_timestamp;         // rfg.exe build of the recording (kFlagOpenRFG64: OpenRFG.exe's PE timestamp)
     uint8_t wc_options[0x2C];       // Wrecking_crew_options as the match began
     int32_t wc_character_index[4];  // Wc_player_infos[i].character_index
     char wc_map_file[64];
