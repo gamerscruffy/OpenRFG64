@@ -3871,6 +3871,9 @@ static void vi_exit_teleport(vi_instance* vii, unsigned int human_index)
 {
     vi_human_manager* hm = &vii->humans[human_index];
     human* hp = vi_human_from_handle(hm->handle);
+    if (hp == NULL) {
+        return; // OpenRFG fix: the human is gone (see vi_request_exit)
+    }
     hm->interaction = VI_INTERACTION_EXIT;
     human_set_state(hp, HS_VEHICLE_EXITING, HMS_CURRENT, -1.0f);
     vi_trace_step(vii, human_index, "exit: teleport out of the seat, no animation");
@@ -4385,6 +4388,11 @@ static void vi_request_exit(vi_instance* vii, unsigned int human_index, bool swi
     }
     human* hp = vi_human_from_handle(hm->handle);
     vehicle* vp = vii->vvm.vp;
+    if (hp == NULL) {
+        // OpenRFG fix: a human gone mid-exit (killed and removed, as under artillery fire) still asks each frame;
+        // rfg.exe read through NULL in vi_exit_teleport / human_set_state.
+        return;
+    }
     if (hm->interaction == VI_INTERACTION_EXIT) {
         if (hm->exit_data.flags.teleport != 0) {
             vi_exit_teleport(vii, human_index);
