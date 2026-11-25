@@ -49,6 +49,8 @@
 #include "volition/rfg/code/ai/sorted_list.h"
 #include "volition/rfg/code/code_effects/explosion_shared.h"
 #include "volition/rfg/code/code_effects/explosion.h"
+#include <ctype.h>
+#include <string.h>
 #include "volition/rfg/code/code_effects/material_effects.h"
 #include "volition/rfg/code/code_effects/material_effects_shared.h"
 #include "volition/rfg/code/effects/effects.h"
@@ -924,31 +926,76 @@ static const explosion_info* hotg_get_explosion()
     e.salvage_max_pieces = 0;
     e.always_ragdoll = true;
     e.ignore_orientation = true;
-    if (widest != nullptr && widest != base)
+    // The look: a shockwave, not a fireball. The physics base (a big bomb when the Shockwave backpack is missing, as
+    // in single player) keeps its push and damage, but its own effects filled the screen. The effects, shake and
+    // decal come from the first table explosion whose name reads like a shockwave instead; with none, the hit plays
+    // no explosion effect of its own (the debris and dust of what it breaks still show).
+    static const char* const look_names[] = {"shockwave", "tremor", "concussion", "thump", "shock", "pulse"};
+    const explosion_info* look = nullptr;
+    for (unsigned int n = 0; n < sizeof(look_names) / sizeof(look_names[0]) && look == nullptr; n++)
     {
-        // The widest explosion's effects join the shockwave's (up to the four an explosion can play).
-        for (unsigned int i = 0; i < widest->m_num_effects && e.m_num_effects < explosion_info::MAX_EFFECTS; i++)
+        for (unsigned int i = 0; i < Num_explosion_infos && look == nullptr; i++)
         {
-            e.m_effects[e.m_num_effects++] = widest->m_effects[i];
+            const explosion_info* c = explosion_lookup(i);
+            if (c == nullptr || c->m_num_effects == 0)
+            {
+                continue;
+            }
+            char lower[sizeof(c->m_name)];
+            unsigned int k = 0;
+            for (; k + 1 < sizeof(lower) && c->m_name[k] != '\0'; k++)
+            {
+                lower[k] = (char)tolower((unsigned char)c->m_name[k]);
+            }
+            lower[k] = '\0';
+            if (strstr(lower, look_names[n]) != nullptr)
+            {
+                look = c;
+            }
         }
-        if (widest->camera_shake_type[0] != '\0')
-        {
-            memcpy(e.camera_shake_type, widest->camera_shake_type, sizeof(e.camera_shake_type));
-        }
-        e.camera_shake_multiplier = widest->camera_shake_multiplier > e.camera_shake_multiplier ? widest->camera_shake_multiplier : e.camera_shake_multiplier;
-        e.camera_shake_falloff = widest->camera_shake_falloff > e.camera_shake_falloff ? widest->camera_shake_falloff : e.camera_shake_falloff;
-        e.blast_decal_radius = widest->blast_decal_radius > e.blast_decal_radius ? widest->blast_decal_radius : e.blast_decal_radius;
     }
-    e.camera_shake_multiplier *= 1.5f;
-    e.camera_shake_falloff = e.camera_shake_falloff < e.m_radius * 3.0f ? e.m_radius * 3.0f : e.camera_shake_falloff;
+    if (look != nullptr)
+    {
+        e.m_num_effects = look->m_num_effects;
+        memcpy(e.m_effects, look->m_effects, sizeof(e.m_effects));
+        memcpy(e.camera_shake_type, look->camera_shake_type, sizeof(e.camera_shake_type));
+        e.camera_shake_multiplier = look->camera_shake_multiplier;
+        e.camera_shake_falloff = look->camera_shake_falloff;
+        e.blast_decal_radius = look->blast_decal_radius;
+    }
+    else
+    {
+        e.m_num_effects = 0;
+        e.blast_decal_radius = 0.0f;
+    }
+    // A firm thump felt across the shockwave, no stronger than the table gives it.
+    e.camera_shake_falloff = e.camera_shake_falloff < e.m_radius * 2.0f ? e.m_radius * 2.0f : e.camera_shake_falloff;
     Hotg_explosion_state = 1;
 #ifdef OPENRFG_X64
     {
         extern void openrfg_log(const char*);
         char msg[256];
-        snprintf(msg, sizeof(msg), "HOTG explosion built: base=%s widest=%s radius=%.1f impulse=%.0f structural=%d effects=%u shake=%s x%.2f",
-                 base->m_name, widest != nullptr ? widest->m_name : "-", e.m_radius, e.m_impulse_magnitude, e.m_structural_damage, e.m_num_effects, e.camera_shake_type, e.camera_shake_multiplier);
+        snprintf(msg, sizeof(msg), "HOTG explosion built: base=%s look=%s radius=%.1f impulse=%.0f structural=%d effects=%u shake=%s x%.2f",
+                 base->m_name, look != nullptr ? look->m_name : "none", e.m_radius, e.m_impulse_magnitude, e.m_structural_damage, e.m_num_effects, e.camera_shake_type, e.camera_shake_multiplier);
         openrfg_log(msg);
+        // Every explosion in the table, so the look can be picked by name if the match above is not the right one.
+        char line[240];
+        int len = snprintf(line, sizeof(line), "HOTG explosions:");
+        for (unsigned int i = 0; i < Num_explosion_infos; i++)
+        {
+            const explosion_info* c = explosion_lookup(i);
+            if (c == nullptr)
+            {
+                continue;
+            }
+            if (len + (int)strlen(c->m_name) + 8 >= (int)sizeof(line))
+            {
+                openrfg_log(line);
+                len = snprintf(line, sizeof(line), "HOTG explosions:");
+            }
+            len += snprintf(line + len, sizeof(line) - len, " %s(%u)", c->m_name, c->m_num_effects);
+        }
+        openrfg_log(line);
     }
 #endif
     return &Hotg_explosion;
