@@ -40,8 +40,12 @@ bool openrfg_dlss_frame_supported();
 // screen's; from then on the frames are rendered for DLSS (or not). The render thread, as the targets are made again
 // (rl_renderer::updateResourceSizes); NGX starts at the first call.
 void openrfg_dlss_frame_targets(ID3D11Device* device, int out_w, int out_h, int* scene_w, int* scene_h);
-// The mode wanted is not the one the targets were made for, or DLSS has not sized them yet (the game's first ones,
-// made at start-up): rl_render_lib::check_device_status then asks for new targets.
+// While the main scene goes to the main menu's frame instead of the screen (the menu's character: scene renderer flag 4,
+// the menu then shows the scene's first temp target, which the frame's DLSS path does not write), DLSS stands aside: the
+// targets at full size, the game's own post processing. rl_render_lib::check_device_status, each frame.
+void openrfg_dlss_frame_set_suspended(bool suspended);
+// The mode wanted (OFF while suspended) is not the one the targets were made for, or DLSS has not sized them yet (the
+// game's first ones, made at start-up): rl_render_lib::check_device_status then asks for new targets.
 bool openrfg_dlss_frame_targets_stale();
 // The targets are made for DLSS: the post effects end in DLSS's input, FXAA left out, the camera jittered.
 bool openrfg_dlss_frame_active();

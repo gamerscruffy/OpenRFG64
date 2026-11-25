@@ -40,6 +40,7 @@ namespace
 
     volatile LONG g_mode_wanted = kModeDlaa; // any thread
     volatile LONG g_supported = 0;
+    bool g_suspended = false; // the main menu's character (openrfg_dlss_frame_set_suspended): the render thread
 
     // The render thread's, from here on.
     bool g_ngx_tried = false;
@@ -145,6 +146,12 @@ namespace
     int clamp_mode(LONG mode)
     {
         return mode >= kModeOff && mode < kModeCount ? (int)mode : kModeDlaa;
+    }
+
+    // The mode the targets should be made for: the row's, OFF while suspended.
+    int effective_mode()
+    {
+        return g_suspended ? kModeOff : clamp_mode(InterlockedCompareExchange(&g_mode_wanted, 0, 0));
     }
 
     NVSDK_NGX_PerfQuality_Value quality_value(int mode)
@@ -698,9 +705,15 @@ bool openrfg_dlss_frame_supported()
     return InterlockedCompareExchange(&g_supported, 0, 0) != 0;
 }
 
+void openrfg_dlss_frame_set_suspended(bool suspended)
+{
+    g_suspended = suspended;
+}
+
 void openrfg_dlss_frame_targets(ID3D11Device* device, int out_w, int out_h, int* scene_w, int* scene_h)
 {
-    const int mode = clamp_mode(InterlockedCompareExchange(&g_mode_wanted, 0, 0));
+    const int wanted = clamp_mode(InterlockedCompareExchange(&g_mode_wanted, 0, 0));
+    const int mode = effective_mode();
     const bool was_active = g_active;
     const int was_w = g_scene_w;
     const int was_h = g_scene_h;
@@ -749,7 +762,8 @@ void openrfg_dlss_frame_targets(ID3D11Device* device, int out_w, int out_h, int*
         }
         else
         {
-            logf("off for the game's frame (%s%s): the scene at %dx%d", kModeNames[mode], mode == kModeOff ? "" : (!g_ngx_ok ? ", unavailable" : ", failed"), out_w, out_h);
+            const char* why = g_suspended && wanted != kModeOff ? ", while the main menu shows its character" : (mode == kModeOff ? "" : (!g_ngx_ok ? ", unavailable" : ", failed"));
+            logf("off for the game's frame (%s%s): the scene at %dx%d", kModeNames[wanted], why, out_w, out_h);
         }
     }
 }
@@ -758,7 +772,7 @@ bool openrfg_dlss_frame_targets_stale()
 {
     // (also until DLSS has sized them once: the game makes its first targets at start-up, and makes them again only when
     // the window's size or mode changes)
-    return g_targets_mode < 0 || clamp_mode(InterlockedCompareExchange(&g_mode_wanted, 0, 0)) != g_targets_mode || (g_active && g_failed_mode == g_targets_mode);
+    return g_targets_mode < 0 || effective_mode() != g_targets_mode || (g_active && g_failed_mode == g_targets_mode);
 }
 
 bool openrfg_dlss_frame_active()
@@ -1031,6 +1045,10 @@ bool openrfg_dlss_frame_upscale(const keen::TextureData* color, const keen::Text
 #else
 
 void openrfg_dlss_frame_set_mode(int)
+{
+}
+
+void openrfg_dlss_frame_set_suspended(bool)
 {
 }
 

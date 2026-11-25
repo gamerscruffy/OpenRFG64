@@ -1539,6 +1539,10 @@ void rl_render_lib::check_device_status()
     int refresh_denom;
     m_screen_info.get_refresh_rate(refresh_num, refresh_denom);
     update_screen_info(refresh_num, refresh_denom);
+    // OpenRFG (VOM): DLSS stands aside while the main scene goes to the main menu's frame (its character: scene renderer
+    // flag 4; the menu shows the scene's first temp target, which DLSS's post processing does not write).
+    rl_scene_renderer* active_scene_renderer = Active_scene_p != nullptr ? Active_scene_p->m_scene_renderer_p : nullptr;
+    openrfg_dlss_frame_set_suspended(active_scene_renderer != nullptr && active_scene_renderer->get_framebuffer_resolve_enabled());
     m_sizesChanged = false;
     if (m_lodChanged)
     {
