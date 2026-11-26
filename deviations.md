@@ -353,6 +353,7 @@ The counts above are from the original check. A later comparison with the binary
 | Location | Function | rfg.exe | Deviation | Why |
 |---|---|---|---|---|
 | `src/volition/rfg/code/vehicle/vehicle_class.cpp:488` | `vehicle_turret_turn_off_components` | `0x00BA8850` | vehicle_turret_turn_off_components stops the parent walk when parent is -1, where rfg.exe goes on and reads the component before the first. Also: vehicle_turret_turn_off_components stops walking at parent -1 instead of reading the component before the first. | Inferred: avoids an out-of-bounds read of m_components[-1]. |
+| `src/volition/rfg/code/vehicle/vehicle_interaction.cpp:4391` | `vi_request_exit`, `vi_exit_teleport` | `0x00BB44D0`, `0x00B98AE0` | Both return when the human's handle no longer resolves, where rfg.exe goes on with NULL. | A human removed mid-exit (killed by shelling, for example) kept asking to exit each frame and crashed in `human_set_state` (read of 0x350). |
 
 ### rfg/weapons
 
