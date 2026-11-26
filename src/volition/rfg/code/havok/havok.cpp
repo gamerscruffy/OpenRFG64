@@ -3415,6 +3415,38 @@ void havok_body_set_movable(unsigned int handle, bool movable)
     havok_body_set_movable(handle != 0xFFFFFFFF ? Hk_rigid_bodies[handle] : nullptr, movable);
 }
 
+// OpenRFG (the Gravity Tether's Chunk mode): a body created fixed has no stored dynamic motion, and Havok's
+// setRigidBodyMotionType quietly keeps such a body fixed. Give it one with these mass properties (body-local centre of
+// mass and inertia), then make it dynamic. Returns whether it is dynamic now.
+bool havok_body_openrfg_make_dynamic(unsigned int handle, float mass, const vector& center_of_mass, const matrix& inertia_tensor)
+{
+    hkpRigidBody* rb = handle != 0xFFFFFFFF ? Hk_rigid_bodies[handle] : nullptr;
+    if (rb == nullptr || mass <= 0.0f)
+    {
+        return false;
+    }
+    const unsigned char type = rb->m_motion.m_type.m_storage;
+    if ((type == hkpMotion::MOTION_FIXED || type == hkpMotion::MOTION_KEYFRAMED) && rb->m_motion.m_savedMotion == nullptr)
+    {
+        hkpMaxSizeMotion* saved = new hkpMaxSizeMotion();
+        const int mem_size = saved->getMemorySizeAndFlags();
+        const int ref_count = saved->getReferenceCount();
+        hkMatrix3f inertia;
+        inertia.m_col0.set(inertia_tensor.rvec.x, inertia_tensor.rvec.y, inertia_tensor.rvec.z, 0.0f);
+        inertia.m_col1.set(inertia_tensor.uvec.x, inertia_tensor.uvec.y, inertia_tensor.uvec.z, 0.0f);
+        inertia.m_col2.set(inertia_tensor.fvec.x, inertia_tensor.fvec.y, inertia_tensor.fvec.z, 0.0f);
+        hkVector4f com;
+        com.set(center_of_mass.x, center_of_mass.y, center_of_mass.z, 0.0f);
+        // Magic numbers: Havok's default velocity limits (200 m/s, 100 rad/s).
+        hkpRigidBody::createDynamicRigidMotion(hkpMotion::MOTION_DYNAMIC, rb->m_motion.m_motionState.getTransform().getTranslation(), rb->m_motion.m_motionState.getSweptTransform().m_rotation1, mass, inertia, com, 200.0f, 100.0f, saved);
+        saved->setMemorySizeFlagsAndReferenceCount(mem_size, ref_count);
+        rb->m_motion.m_savedMotion = saved;
+        rb->m_motion.m_savedQualityTypeIndex = (unsigned short)(unsigned char)rb->m_collidable.m_broadPhaseHandle.m_objectQualityType;
+    }
+    havok_body_set_movable(rb, true);
+    return havok_body_is_movable(rb);
+}
+
 // 0x008179A0 (:5155)
 void havok_body_apply_hard_keyframe(unsigned int handle, const matrix& next_rotation, const vector& next_position, float time_step)
 {

@@ -74,6 +74,7 @@
 #include "volition/rfg/code/spawn/spawn_resource_manager.h"
 #include "volition/rfg/code/vehicle_ai/vehicle_ai.h"
 #include "volition/rfg/code/camera/camera_satellite.h"
+#include "volition/rfg/code/weapons/grav_tether.h"
 #include "volition/vlib/code/util/varray.h"
 
 // ---- internal functions of alert_level_manager.cpp and marauder_raid.cpp, which rfg.pdb lists as local
@@ -210,6 +211,7 @@ void gameplay_level_init_pre()
 // 0x007B8A60 (:281)
 void gameplay_level_init_post()
 {
+    grav_tether_level_init(); // OpenRFG
     convoy_end_find_end_points();
     marauder_raid_level_init_post();
     obj_activity_spawn_level_init_post();
@@ -311,6 +313,7 @@ void gameplay_do_frame()
     openrfg_unlock_all_do_frame();
 #endif
     camera_satellite_cheat_do_frame(); // OpenRFG: the Satellite Mode cheat
+    grav_tether_do_frame(); // OpenRFG: the Gravity Tether (F4)
     object_spawn_node_do_frame();
     srm_do_frame();
     gsm_do_frame();
