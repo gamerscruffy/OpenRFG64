@@ -166,6 +166,8 @@ public:
     int get_mainscene_width() const; // 0x004BCE50 (.h:155)
     int get_mainscene_height() const; // 0x004BCE60 (.h:156)
 private:
+    friend struct openrfg_seams_scene_renderer; // OpenRFG (backends): private methods' seams (rl_scene_renderer.cpp)
+    friend struct openrfg_seams_scene_shadows; // OpenRFG (backends): the same, in rl_scene_shadows.cpp
     bool get_framebuffer_lock_completed(); // 0x004BCEA0 (.h:432)
     bool get_framebuffer_lock_initiated(); // 0x004BCEB0 (.h:437)
     void complete_lock_frame_buffer(rl_renderer& renderer); // 0x0050AD90 (.h:442)

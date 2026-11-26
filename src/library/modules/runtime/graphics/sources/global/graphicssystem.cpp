@@ -11,6 +11,7 @@
 #include "keen/base/crc32.hpp"
 
 #include <string.h>
+#include "backends/seams.h"
 
 namespace keen
 {
@@ -231,8 +232,13 @@ namespace keen
         }
 
         // 0x00C6F700 (:46)
+        // OpenRFG (backends): a seam (backends/seams.h); the path tracer attaches its hook here (the shader's name,
+        // for its shader patch).
+        static constexpr const FragmentShader* (*Create_fragment_shader_from_file)(GraphicsSystem*, const char*, const char*) = &createFragmentShaderFromFile;
+        OPENRFG_SEAM_OVERLOAD(Seam_create_fragment_shader_from_file, Create_fragment_shader_from_file, "keen::graphics::createFragmentShaderFromFile", "(keen::GraphicsSystem*, rchar*, rchar*)");
         const FragmentShader* createFragmentShaderFromFile(GraphicsSystem* pGraphicsSystem, const char* pFileName, const char* pDebugName)
         {
+            OPENRFG_SEAM_ENTER(Seam_create_fragment_shader_from_file, pGraphicsSystem, pFileName, pDebugName);
             if (pDebugName == nullptr)
             {
                 pDebugName = pFileName;
@@ -253,8 +259,13 @@ namespace keen
         }
 
         // 0x00C6F750 (:80)
+        // OpenRFG (backends): a seam (backends/seams.h); the path tracer attaches its hook here (the shader's name,
+        // for its shader patch).
+        static constexpr const VertexShader* (*Create_vertex_shader_from_file)(GraphicsSystem*, const char*, const char*) = &createVertexShaderFromFile;
+        OPENRFG_SEAM_OVERLOAD(Seam_create_vertex_shader_from_file, Create_vertex_shader_from_file, "keen::graphics::createVertexShaderFromFile", "(keen::GraphicsSystem*, rchar*, rchar*)");
         const VertexShader* createVertexShaderFromFile(GraphicsSystem* pGraphicsSystem, const char* pFileName, const char* pDebugName)
         {
+            OPENRFG_SEAM_ENTER(Seam_create_vertex_shader_from_file, pGraphicsSystem, pFileName, pDebugName);
             if (pDebugName == nullptr)
             {
                 pDebugName = pFileName;

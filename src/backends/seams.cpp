@@ -41,6 +41,22 @@ void openrfg_seams_enable()
 {
     for (openrfg_seam* s = g_seams; s != nullptr; s = s->next)
     {
-        s->handler = s->attached;
+        // Only seams with a handler: one a backend attaches meanwhile on another thread and turns on at once
+        // (openrfg_seam_enable) is not turned off again by a stale read.
+        void* attached = s->attached;
+        if (attached != nullptr)
+        {
+            s->handler = attached;
+        }
     }
+}
+
+void openrfg_seam_enable(openrfg_seam* seam)
+{
+    seam->handler = seam->attached;
+}
+
+const void* openrfg_seam_call_site(const void* return_address)
+{
+    return openrfg_seam_caller != nullptr ? openrfg_seam_caller : return_address;
 }

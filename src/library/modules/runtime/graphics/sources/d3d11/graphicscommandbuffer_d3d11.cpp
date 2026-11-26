@@ -22,6 +22,7 @@
 #include "keen/graphics/rendergeometry.hpp"
 #include "keen/graphics/vertexformat.hpp"
 #include "keen/base/trace.hpp"
+#include "backends/dlss/dlss_frame.h" // OpenRFG (VOM): DLSS's mip bias
 
 #include <string.h>
 
@@ -246,8 +247,9 @@ namespace keen
         // 0x004B2BE0 (.h:273)
         void writeSetFragmentShaderSamplerStateCommand(GraphicsCommandBuffer* pCommandBuffer, uint32 samplerIndex, const SamplerState* pSampler)
         {
-            ID3D11SamplerState* pState = nullptr;
-            pCommandBuffer->pContext->PSSetSamplers(samplerIndex, 1, pSampler != nullptr ? &pSampler->pState : &pState);
+            // OpenRFG (VOM): while the scene is drawn for DLSS, the sampler with DLSS's mip bias (backends/dlss/dlss_frame.h).
+            ID3D11SamplerState* pState = pSampler != nullptr ? openrfg_dlss_frame_sampler(pSampler->pState) : nullptr;
+            pCommandBuffer->pContext->PSSetSamplers(samplerIndex, 1, &pState);
         }
 
         // 0x00C5B6C0 (.h:289)

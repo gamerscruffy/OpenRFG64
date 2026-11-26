@@ -1,12 +1,20 @@
 // OpenRFG (VOM, new code): the selectable backends.
 //
-// Three settings on the display options' general page, saved in config.ini [graphics]:
+// Five settings on the display options' general page, saved in config.ini [graphics]:
 // - RENDERER (renderer): STANDARD, the game's own Direct3D 11 renderer, or PATH TRACED, the game's renderer with
 //   path-traced lighting (rfgrt's Direct3D 12 core in the game's process).
 // - PHYSICS (physics): HAVOK, the game's physics, or PHYSX, the debris in PhysX (rfgphys, in the game's process).
 //   PhysX is the default.
 // - KEEP DEBRIS (keep_debris): with PHYSX, the debris stays (no fades, no load-balance deletions). -1 is automatic:
 //   on with a GPU that runs PhysX, off without one (the CPU could not carry every piece of a demolition).
+// - DLSS (dlss): OFF, DLAA, QUALITY, BALANCED, PERFORMANCE or ULTRA PERFORMANCE: DLSS Super Resolution for the game's
+//   frame, with either renderer (dlss/dlss_frame.h): the scene rendered at NVIDIA's render size for the mode and
+//   upscaled before the HUD (DLAA: at full size, as anti-aliasing). With PATH TRACED the path tracer's light is traced at
+//   that size too, DLSS Ray Reconstruction denoising it there (rfgrt's DLSS.Mode DLAA; OFF: its own filter). It changes
+//   in game too (openrfg_backends_apply_live): from the next frame.
+// - FRAME GENERATION (frame_generation): DLSS Frame Generation, one generated frame between each two (NVIDIA GeForce RTX
+//   40 or 50 series): the path tracer's presenter presents the game's frames through a Direct3D 12 swap chain and NVIDIA
+//   Streamline, with either renderer. Off by default. It changes in game too, from the next frame.
 //
 // The settings are the user's choice; what runs is the effective backend. A choice this program or this machine
 // cannot run falls back (path traced to standard, PhysX to Havok), and the log says why (BACKENDS lines). The options
@@ -14,7 +22,8 @@
 // once, without a restart. The 32-bit build has no backends (openrfg_backends_enabled is false, the rows are hidden).
 //
 // PhysX is built in when CMake is given the PhysX SDK (physx/physx_backend.h): HAVOK and PHYSX switch at the main menu.
-// The path tracer is not built in yet: STANDARD runs whatever the renderer choice (the log says so).
+// The path tracer is built in when CMake finds the shader compilers (rt/rt_backend.h): it is loaded at boot whenever the
+// machine can run it, and STANDARD and PATH TRACED switch at the main menu too.
 #pragma once
 
 struct ID3D11Device;
@@ -45,12 +54,26 @@ enum openrfg_keep_debris : int
     OPENRFG_KEEP_DEBRIS_ON = 1
 };
 
+// The values of rfgrt's DLSS.Mode (rfgrt_set_dlss_mode).
+enum openrfg_dlss : int
+{
+    OPENRFG_DLSS_OFF = 0,
+    OPENRFG_DLSS_DLAA = 1,
+    OPENRFG_DLSS_QUALITY = 2,
+    OPENRFG_DLSS_BALANCED = 3,
+    OPENRFG_DLSS_PERFORMANCE = 4,
+    OPENRFG_DLSS_ULTRA_PERFORMANCE = 5,
+    OPENRFG_DLSS_COUNT = 6
+};
+
 // The user's choices.
 struct openrfg_backend_settings
 {
     int renderer = OPENRFG_RENDERER_STANDARD;
     int physics = OPENRFG_PHYSICS_PHYSX;
     int keep_debris = OPENRFG_KEEP_DEBRIS_AUTO;
+    int dlss = OPENRFG_DLSS_DLAA;
+    int frame_generation = 0; // 1: on
 };
 
 // What this machine can run, found once at start-up (openrfg_backends_start_probe).
@@ -111,3 +134,6 @@ void openrfg_backends_apply();
 // Each main menu frame (main_menu_process): settles a change that could not be made at once (an install that finished
 // after the choice changed). Cheap.
 void openrfg_backends_main_menu_frame();
+// The settings that change while playing (DLSS, FRAME GENERATION) to the path tracer, anywhere (in a level too): it keeps
+// them for later starts, and switches from its next frame. openrfg_backends_apply does it too.
+void openrfg_backends_apply_live();

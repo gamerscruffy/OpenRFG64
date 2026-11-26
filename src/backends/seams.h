@@ -4,9 +4,10 @@
 // with the function's arguments (a method's object first). The handler may call the original, which runs the
 // function's body. With nothing attached the function runs as it always did.
 //
-// A seam is known by the function's name in OpenRFG.pdb (and, for an overload, its parameters as rfgphys's names table
-// writes them). rfgphys attaches its hooks to seams through its hooks::Binding (backends/physx/physx_backend.cpp), where
-// the plugins attach the same handlers as MinHook detours; a hook whose function has no seam stays a detour.
+// A seam is known by the function's name in OpenRFG.pdb (and, for an overload, its parameters as the mods' names tables
+// write them). The backends' mods attach their hooks to seams through a binding: rfgphys's hooks::Binding
+// (backends/physx/physx_backend.cpp) and rfgrt's rfgrt_binding (backends/rt/rt_backend.cpp), where the plugins attach
+// the same handlers as MinHook detours; a hook whose function has no seam stays a detour.
 //
 //     OPENRFG_SEAM(Seam_explosion_create, &explosion_create, "explosion_create"); // namespace scope, before the body
 //     void explosion_create(const explosion_info* info, object* source, ...)
@@ -15,7 +16,8 @@
 //         ...
 //
 // A method's seam passes `this` first: OPENRFG_SEAM_ENTER(Seam_world_destream_zone, this, wz). A virtual method needs
-// its body called without the virtual call: OPENRFG_SEAM_VIRTUAL, with a function that calls it qualified.
+// its body called without the virtual call: OPENRFG_SEAM_VIRTUAL, with a function that calls it qualified. A method
+// that returns a class has the handler of its x64 ABI: OPENRFG_SEAM_EXPLICIT (rl_scene::add_renderable_instance).
 #pragma once
 
 #include <intrin.h>
@@ -40,11 +42,18 @@ openrfg_seam* openrfg_seam_find(const char* name, const char* signature);
 void openrfg_seam_attach(openrfg_seam* seam, void* handler, void** original);
 // Turns the attached handlers on.
 void openrfg_seams_enable();
+// Turns one seam's attached handler on, while others may still be attached without it (a hook placed once the game has
+// made an object: the path tracer's on the D3D11 device's shader creation).
+void openrfg_seam_enable(openrfg_seam* seam);
 
 // The thread's next seam lets the call through to the body (set by an original right before it calls the function).
 extern thread_local bool openrfg_seam_skip;
 // The game's call site of the call a seam passed to its handler (rfgphys's hooks::caller).
 extern thread_local const void* openrfg_seam_caller;
+
+// Where the game called the running handler from: through a seam, the seam's call site; else `return_address`, the
+// handler's own (a detour's). The bindings' caller (rfgphys's hooks::caller, rfgrt's).
+const void* openrfg_seam_call_site(const void* return_address);
 
 struct openrfg_seam_caller_scope
 {
@@ -126,8 +135,12 @@ struct openrfg_seam_original<F, R (C::*)(A...) const>
     static openrfg_seam_t<openrfg_seam_original<function>::handler> seam(pdb_name, nullptr, &openrfg_seam_original<function>::body)
 #define OPENRFG_SEAM_OVERLOAD(seam, function, pdb_name, params) \
     static openrfg_seam_t<openrfg_seam_original<function>::handler> seam(pdb_name, params, &openrfg_seam_original<function>::body)
-// A virtual method: `handler_type` takes the object first; `body` sets openrfg_seam_skip and calls the method qualified.
-#define OPENRFG_SEAM_VIRTUAL(seam, handler_type, pdb_name, body) static openrfg_seam_t<handler_type> seam(pdb_name, nullptr, body)
+// A seam with its handler's type and its original given: `handler_type` takes the object first; `body` sets
+// openrfg_seam_skip and calls the function. For a method that returns a class: x64 returns it through a pointer the
+// caller passes after the object, which the handler takes and returns, as a detour on the method would.
+#define OPENRFG_SEAM_EXPLICIT(seam, handler_type, pdb_name, body) static openrfg_seam_t<handler_type> seam(pdb_name, nullptr, body)
+// A virtual method: `body` calls the method qualified (its body without the virtual call).
+#define OPENRFG_SEAM_VIRTUAL(seam, handler_type, pdb_name, body) OPENRFG_SEAM_EXPLICIT(seam, handler_type, pdb_name, body)
 
 // The first line of the function: the call goes to the handler while one is on.
 #define OPENRFG_SEAM_ENTER(seam, ...) \

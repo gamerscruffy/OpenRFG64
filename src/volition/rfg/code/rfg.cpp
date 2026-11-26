@@ -935,7 +935,7 @@ void rfg_init_stage_2_done_2()
 
 // 0x005D2500 (:5273)
 void openrfg_heartbeat();
-// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer and rfgphys's PhysX backend attach their hooks here.
 OPENRFG_SEAM(Seam_rfg_do_frame, &rfg_do_frame, "rfg_do_frame");
 bool rfg_do_frame()
 {
