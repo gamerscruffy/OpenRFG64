@@ -406,7 +406,7 @@ static void ingame_options_create_button_hints()
 // Not during a mission, an orange/red alert, demolitions master or with cheats; then when saving is enabled.
 bool ingame_options_should_show_save_game()
 {
-    if (mission_is_active() || gsm_get_alert_level() == ALERT_LEVEL_ORANGE || gsm_get_alert_level() == ALERT_LEVEL_RED || activity_running_or_shutting_down(ACTIVITY_MODE_DEMOLITIONS_MASTER) || cheats_are_enabled())
+    if (mission_is_active() || gsm_get_alert_level() == ALERT_LEVEL_ORANGE || gsm_get_alert_level() == ALERT_LEVEL_RED || activity_running_or_shutting_down(ACTIVITY_MODE_DEMOLITIONS_MASTER) || stats_saving_blocked_by_cheats())
     {
         return false;
     }

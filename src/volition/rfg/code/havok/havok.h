@@ -414,6 +414,7 @@ void havok_body_apply_linear_velocity(unsigned int handle, const vector& velocit
 void havok_body_apply_point_velocity(unsigned int handle, const vector& velocity, const vector& point); // 0x00829790 (:5098)
 void havok_body_set_movable(hkpRigidBody* rb, bool movable); // 0x00823D40 (:5121)
 void havok_body_set_movable(unsigned int handle, bool movable); // 0x00823DA0 (:5143)
+bool havok_body_openrfg_make_dynamic(unsigned int handle, float mass, const vector& center_of_mass, const matrix& inertia_tensor); // OpenRFG
 void havok_body_apply_hard_keyframe(unsigned int handle, const matrix& next_rotation, const vector& next_position, float time_step); // 0x008179A0 (:5155)
 void havok_body_set_motion_type(unsigned int handle, unsigned int type); // 0x00817A90 (:5175)
 int havok_body_get_motion_type(hkpRigidBody* rb); // 0x00817AD0 (:5189)

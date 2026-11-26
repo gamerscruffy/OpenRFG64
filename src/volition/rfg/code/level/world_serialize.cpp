@@ -1486,7 +1486,7 @@ void world::save_and_continue(game_save_info* save_slot, bool checkpoint, bool a
     }
     else
     {
-        sl_flags.game_save_to_disk = !cheats_are_enabled();
+        sl_flags.game_save_to_disk = !stats_saving_blocked_by_cheats(); // OpenRFG: was !cheats_are_enabled()
     }
     pending_game_save_slot = save_slot;
 }
