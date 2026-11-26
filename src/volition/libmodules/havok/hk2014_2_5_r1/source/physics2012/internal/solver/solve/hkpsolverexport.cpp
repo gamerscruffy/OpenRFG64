@@ -28,10 +28,12 @@ namespace
 {
 // x64 safety: a friction schema's results pointer that is null or a -1 sentinel (stale or overwritten schema data) crashed the
 // solver export after a vehicle collision. The data only warm-starts the next step, so skipping that constraint is harmless.
+// The real pointer is a hkpSimpleContactConstraintDataInfoInternal, which is alignas(16); a garbage one that passed the
+// range check (00000000395CAD81, odd) crashed here after a level load, so a misaligned one is rejected too.
 bool frictionInfoValid(const void* info, const char* what)
 {
     const unsigned long long v = (unsigned long long)(const char*)info;
-    if (v >= 0x10000ull && v < 0x00007FFFFFFF0000ull)
+    if (v >= 0x10000ull && v < 0x00007FFFFFFF0000ull && (v & 0xFull) == 0)
     {
         return true;
     }
