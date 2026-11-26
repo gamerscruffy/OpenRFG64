@@ -16,6 +16,7 @@
 #include "keen/base/thread.hpp"
 
 #include <intrin.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 float Frametime = 1.0f / 30.0f; // 0x01519560
 float Frametime_real = 1.0f / 30.0f; // 0x01519564
@@ -68,8 +69,11 @@ void frametime_reset()
 
 // 0x005AD200 (:124)
 // Precision (from the asm): each statement is evaluated in double and rounded to float once, as written below.
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_frametime_calculate, &frametime_calculate, "frametime_calculate");
 void frametime_calculate(bool require_framerate_multiple, float framerate_multiple, float fixed_framerate)
 {
+    OPENRFG_SEAM_ENTER(Seam_frametime_calculate, require_framerate_multiple, framerate_multiple, fixed_framerate);
     _InterlockedIncrement((volatile long*)&Framecount_increment_always); // LOCK XADD
     if (!Frametime_inited)
     {

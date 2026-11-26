@@ -33,6 +33,8 @@ bool display_options_load_from_cache(rfg_game_options* game_options, rl_screen_i
 
 #else // OPENRFG_UI
 
+#include "backends/backends.h" // OpenRFG: rows 6-10 of the general page
+#include "backends/dlss/dlss_frame.h" // OpenRFG: the DLSS row (where DLSS runs)
 #include "keen/base/crc32.hpp"
 #include "keen/base/string.hpp"
 #include "keen/base/trace.hpp"
@@ -144,6 +146,52 @@ static const char* kShadow_distance_caption_key = "OPENRFG_SHADOW_DISTANCE";
 static wchar_t kShadow_distance_caption[] = L"SHADOW DISTANCE";
 static const int DOPTIONS_ADVANCED_ROW_SHADOW_DISTANCE = 14;
 static int Shadow_distance_slider_pct = RL_SHADOW_DISTANCE_MIN_PCT;
+// OpenRFG: rows 6-8 of the general page, the backends (backends/backends.h): RENDERER, PHYSICS and KEEP DEBRIS. They
+// change only from the main menu (no level loaded; greyed out in game, like the screen rows), only to what this machine
+// can run, and KEEP DEBRIS only with PhysX. Accept hands them to openrfg_backends_apply at once.
+static const int DOPTIONS_ROW_RENDERER = 6;
+static const int DOPTIONS_ROW_PHYSICS = 7;
+static const int DOPTIONS_ROW_KEEP_DEBRIS = 8;
+static const char* kRenderer_caption_key = "OPENRFG_RENDERER";
+static wchar_t kRenderer_caption[] = L"RENDERER";
+static const char* kPhysics_caption_key = "OPENRFG_PHYSICS";
+static wchar_t kPhysics_caption[] = L"PHYSICS";
+static const char* kKeep_debris_caption_key = "OPENRFG_KEEP_DEBRIS";
+static wchar_t kKeep_debris_caption[] = L"KEEP DEBRIS";
+static display_level_label cDisplay_backend_labels[4] = {
+    {"OPENRFG_RENDERER_STANDARD", L"STANDARD"}, {"OPENRFG_RENDERER_PATH_TRACED", L"PATH TRACED"},
+    {"OPENRFG_PHYSICS_HAVOK", L"HAVOK"}, {"OPENRFG_PHYSICS_PHYSX", L"PHYSX"}};
+static const char* cDisplay_renderer_names[OPENRFG_RENDERER_COUNT] = {"OPENRFG_RENDERER_STANDARD", "OPENRFG_RENDERER_PATH_TRACED"};
+static const char* cDisplay_physics_names[OPENRFG_PHYSICS_COUNT] = {"OPENRFG_PHYSICS_HAVOK", "OPENRFG_PHYSICS_PHYSX"};
+// OpenRFG: row 9, DLSS (backends.h openrfg_dlss): DLSS Super Resolution for the game's frame, with either renderer
+// (backends/dlss/dlss_frame.h; greyed out where it cannot run); with PATH TRACED the path tracer's light follows the
+// frame's size. Without the frame's DLSS built, only with PATH TRACED (its light alone). It changes in game too: Accept
+// hands it to openrfg_backends_apply_live, and the next frame renders at the new size.
+static const int DOPTIONS_ROW_DLSS = 9;
+static const char* kDlss_caption_key = "OPENRFG_DLSS";
+static wchar_t kDlss_caption[] = L"DLSS";
+struct display_dlss_label
+{
+    const char* key;
+    wchar_t text[24];
+};
+static display_dlss_label cDisplay_dlss_labels[OPENRFG_DLSS_COUNT] = {
+    {"OPENRFG_DLSS_OFF", L"OFF"}, {"OPENRFG_DLSS_DLAA", L"DLAA"}, {"OPENRFG_DLSS_QUALITY", L"QUALITY"},
+    {"OPENRFG_DLSS_BALANCED", L"BALANCED"}, {"OPENRFG_DLSS_PERFORMANCE", L"PERFORMANCE"},
+    {"OPENRFG_DLSS_ULTRA_PERFORMANCE", L"ULTRA PERFORMANCE"}};
+static const char* cDisplay_dlss_names[OPENRFG_DLSS_COUNT] = {"OPENRFG_DLSS_OFF", "OPENRFG_DLSS_DLAA", "OPENRFG_DLSS_QUALITY",
+                                                              "OPENRFG_DLSS_BALANCED", "OPENRFG_DLSS_PERFORMANCE", "OPENRFG_DLSS_ULTRA_PERFORMANCE"};
+// OpenRFG: row 10, FRAME GENERATION (backends.h): DLSS Frame Generation through the path tracer's presenter, with either
+// renderer, where the path tracer is loaded (an RTX card); it changes in game too, from the next frame.
+static const int DOPTIONS_ROW_FRAME_GENERATION = 10;
+static const char* kFrame_generation_caption_key = "OPENRFG_FRAME_GENERATION";
+static wchar_t kFrame_generation_caption[] = L"FRAME GENERATION";
+static bool Pending_frame_generation;
+static openrfg_backend_settings Old_backends;
+static openrfg_backend_settings Pending_backends;
+// KEEP DEBRIS as its row shows it (the automatic value resolved); changing the row makes the setting explicit.
+static bool Old_keep_debris;
+static bool Pending_keep_debris;
 static const char* cAnti_alias_lod_names[7] = {"MENU_OFF", "MENU_AA_LOD_MODE_2X", "MENU_AA_LOD_MODE_4X", "MENU_AA_LOD_MODE_8X", "MENU_AA_LOD_MODE_16X", "MENU_AA_LOD_MODE_8XQ", "MENU_AA_LOD_MODE_16XQ"}; // 0x016641B0
 static const char* cDisplay_default_lod_setting_names[5] = {"MENU_LOW", "MENU_MED", "MENU_HIGH", "MENU_VERY_HIGH", "MENU_CUSTOM"}; // 0x016641CC
 static const char* cDisplay_window_mode_names[3] = {"MENU_WINDOW_MODE_WINDOWED", "MENU_WINDOW_MODE_BORDERLESS", "MENU_WINDOW_MODE_FULLSCREEN"}; // 0x016641E0
@@ -261,6 +309,68 @@ static void display_add_openrfg_level_labels()
     {
         display_add_openrfg_caption(label.key, label.text);
     }
+}
+
+// OpenRFG: the backend rows' captions and labels.
+static void display_add_openrfg_backend_labels()
+{
+    display_add_openrfg_caption(kRenderer_caption_key, kRenderer_caption);
+    display_add_openrfg_caption(kPhysics_caption_key, kPhysics_caption);
+    display_add_openrfg_caption(kKeep_debris_caption_key, kKeep_debris_caption);
+    display_add_openrfg_caption(kDlss_caption_key, kDlss_caption);
+    display_add_openrfg_caption(kFrame_generation_caption_key, kFrame_generation_caption);
+    for (display_level_label& label : cDisplay_backend_labels)
+    {
+        display_add_openrfg_caption(label.key, label.text);
+    }
+    for (display_dlss_label& label : cDisplay_dlss_labels)
+    {
+        display_add_openrfg_caption(label.key, label.text);
+    }
+}
+
+// OpenRFG: the menu was opened from the main menu, not from the game (the rule of the screen rows and of
+// display_reset_defaults).
+static bool display_openrfg_at_main_menu()
+{
+    return gameseq_get_state() != GS_MAINMENU_IDLE && Doc_handle_main != -1;
+}
+
+// OpenRFG: the backend rows as settings. KEEP DEBRIS stays automatic until its row changes.
+static openrfg_backend_settings display_pending_backends()
+{
+    openrfg_backend_settings settings = Pending_backends;
+    if (Pending_keep_debris != Old_keep_debris)
+    {
+        settings.keep_debris = Pending_keep_debris ? OPENRFG_KEEP_DEBRIS_ON : OPENRFG_KEEP_DEBRIS_OFF;
+    }
+    settings.frame_generation = Pending_frame_generation ? 1 : 0;
+    return settings;
+}
+
+static bool display_backends_changed()
+{
+    const openrfg_backend_settings pending = display_pending_backends();
+    return pending.renderer != Old_backends.renderer || pending.physics != Old_backends.physics || pending.keep_debris != Old_backends.keep_debris ||
+           pending.dlss != Old_backends.dlss || pending.frame_generation != Old_backends.frame_generation;
+}
+
+// OpenRFG: which backend rows can change: from the main menu only, to what this machine can run, KEEP DEBRIS only with
+// PhysX; DLSS where it runs (either renderer, or PATH TRACED alone without the frame's DLSS), in game too.
+static void display_update_backend_rows()
+{
+    if (!openrfg_backends_enabled())
+    {
+        return;
+    }
+    const bool at_main_menu = display_openrfg_at_main_menu();
+    const bool path_tracing = openrfg_backends_renderer_supported(OPENRFG_RENDERER_PATH_TRACED);
+    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_RENDERER, at_main_menu && path_tracing);
+    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_PHYSICS, at_main_menu && openrfg_backends_physics_supported(OPENRFG_PHYSICS_PHYSX));
+    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_KEEP_DEBRIS, at_main_menu && Pending_backends.physics == OPENRFG_PHYSICS_PHYSX);
+    const bool dlss_frame = openrfg_dlss_frame_supported();
+    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_DLSS, dlss_frame || (path_tracing && Pending_backends.renderer == OPENRFG_RENDERER_PATH_TRACED));
+    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_FRAME_GENERATION, path_tracing);
 }
 
 // 0x008AF650 (:382)
@@ -544,7 +654,7 @@ static bool misc_info_changed()
 // 0x008AFAA0 (:999)
 static bool changes_made()
 {
-    return screen_info_changed() || lod_info_changed() || vsync_info_changed() || misc_info_changed();
+    return screen_info_changed() || lod_info_changed() || vsync_info_changed() || misc_info_changed() || display_backends_changed(); // OpenRFG: the backends too
 }
 
 // 0x008AFB20 (:1004)
@@ -642,6 +752,17 @@ static void option_change_occurred_doptions(int choice, void* new_value)
                 return;
             }
             display_info_set_to_default_lod_settings((display_default_settings)value);
+            return;
+        case DOPTIONS_ROW_RENDERER: // OpenRFG: DLSS follows it (without the frame's DLSS, only with PATH TRACED)
+            Pending_backends.renderer = value;
+            display_update_backend_rows();
+            return;
+        case DOPTIONS_ROW_PHYSICS: // OpenRFG: KEEP DEBRIS follows it (only with PhysX)
+            Pending_backends.physics = value;
+            display_update_backend_rows();
+            return;
+        case DOPTIONS_ROW_DLSS: // OpenRFG
+            Pending_backends.dlss = value;
             return;
         default:
             return;
@@ -745,13 +866,19 @@ static void display_hint_callback(hint_type hint)
 {
     if (hint == HT_SELECTION)
     {
+        // OpenRFG: the backends' choice is taken before the save (the ini writer reads it) and runs at once, below.
+        const bool backends_changed = display_backends_changed();
+        if (backends_changed)
+        {
+            openrfg_backends_set_settings(display_pending_backends());
+        }
         if (lod_info_changed())
         {
             rl_render_lib::get_instance()->set_level_of_detail(Pending_lod);
             Current_display_info.m_level_of_detail = Pending_lod;
         }
         camera_view_set_custom_fov(Fov_value, true);
-        if ((lod_info_changed() || vsync_info_changed() || misc_info_changed()) && !screen_info_changed())
+        if ((lod_info_changed() || vsync_info_changed() || misc_info_changed() || backends_changed) && !screen_info_changed())
         {
             if (vsync_info_changed())
             {
@@ -759,6 +886,22 @@ static void display_hint_callback(hint_type hint)
                 Vsync_needs_update = true;
             }
             game_options_save_display_options();
+        }
+        if (backends_changed)
+        {
+            // OpenRFG: RENDERER, PHYSICS and KEEP DEBRIS from the main menu only (greyed out in game); DLSS anywhere.
+            if (display_openrfg_at_main_menu())
+            {
+                openrfg_backends_apply();
+            }
+            else
+            {
+                openrfg_backends_apply_live();
+            }
+            Old_backends = openrfg_backends_get_settings();
+            Pending_backends = Old_backends;
+            Old_keep_debris = Pending_keep_debris;
+            Pending_frame_generation = Old_backends.frame_generation != 0;
         }
         if (gameseq_get_state() == GS_MAINMENU_OPTIONS_DISPLAY)
         {
@@ -818,6 +961,19 @@ static void display_info_update_menu()
     ui_menu_add_int_item(Menu_handle_doptions, "MENU_FOV", &Fov_value, 45, 85, 1, option_change_occurred_doptions, true);
     Selected_default_lod = display_info_get_current_lod_setting();
     ui_menu_add_char_list_item(Menu_handle_doptions, "MENU_DETAILS", cDisplay_default_lod_setting_names, 5, option_change_occurred_doptions, Selected_default_lod, true);
+    // OpenRFG: rows 6-10, the backends. A choice this machine cannot run shows what runs instead (its row is greyed out).
+    if (openrfg_backends_enabled())
+    {
+        display_add_openrfg_backend_labels();
+        const int renderer_shown = openrfg_backends_renderer_supported(Pending_backends.renderer) ? Pending_backends.renderer : OPENRFG_RENDERER_STANDARD;
+        const int physics_shown = openrfg_backends_physics_supported(Pending_backends.physics) ? Pending_backends.physics : OPENRFG_PHYSICS_HAVOK;
+        ui_menu_add_char_list_item(Menu_handle_doptions, kRenderer_caption_key, cDisplay_renderer_names, OPENRFG_RENDERER_COUNT, option_change_occurred_doptions, renderer_shown, true);
+        ui_menu_add_char_list_item(Menu_handle_doptions, kPhysics_caption_key, cDisplay_physics_names, OPENRFG_PHYSICS_COUNT, option_change_occurred_doptions, physics_shown, true);
+        ui_menu_add_bool_item(Menu_handle_doptions, kKeep_debris_caption_key, &Pending_keep_debris, option_change_occurred_doptions, true);
+        ui_menu_add_char_list_item(Menu_handle_doptions, kDlss_caption_key, cDisplay_dlss_names, OPENRFG_DLSS_COUNT, option_change_occurred_doptions, Pending_backends.dlss, true);
+        ui_menu_add_bool_item(Menu_handle_doptions, kFrame_generation_caption_key, &Pending_frame_generation, option_change_occurred_doptions, true);
+        display_update_backend_rows();
+    }
     ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_RESOLUTION, Pending_windowed_setting != keen::graphics::WindowMode_Borderless);
     ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_REFRESH_RATE, Pending_windowed_setting == keen::graphics::WindowMode_Fullscreen);
     if (gameseq_get_state() == GS_MAINMENU_IDLE || Doc_handle_main == -1)
@@ -1253,6 +1409,17 @@ bool display_options_write_to_cache(rfg_game_options* game_options)
 // pending screen's rows are recomputed into Screen_size_index/Refresh_rate_index on the way.
 bool display_options_are_changes_different_from_defaults()
 {
+    // OpenRFG: the backends count too, where they can change (the main menu).
+    if (openrfg_backends_enabled() && display_openrfg_at_main_menu())
+    {
+        const openrfg_backend_settings pending = display_pending_backends();
+        const openrfg_backend_settings backend_defaults = openrfg_backends_default_settings();
+        if (pending.renderer != backend_defaults.renderer || pending.physics != backend_defaults.physics || pending.keep_debris != backend_defaults.keep_debris ||
+            pending.dlss != backend_defaults.dlss || pending.frame_generation != backend_defaults.frame_generation)
+        {
+            return true;
+        }
+    }
     rl_screen_info defaults;
     // Magic numbers: 60 Hz.
     defaults.set_refresh_rate(60, 1);
@@ -1329,6 +1496,10 @@ void display_reset_defaults()
         Pending_screen_info.set_vsync_enabled(false);
         Pending_screen_info.set_window_mode(keen::graphics::WindowMode_Windowed);
         display_info_get_settings_indices(Pending_screen_info, Screen_size_index, Refresh_rate_index);
+        // OpenRFG: the backends' defaults (standard, PhysX, automatic keep debris, DLAA), also only from the main menu.
+        Pending_backends = openrfg_backends_default_settings();
+        Pending_keep_debris = openrfg_backends_keep_debris_resolved(OPENRFG_KEEP_DEBRIS_AUTO);
+        Pending_frame_generation = Pending_backends.frame_generation != 0;
     }
     Pending_lod = Default_lods[DISPLAY_DEFAULT_MED];
     Fov_value = 45;
@@ -1426,6 +1597,12 @@ void display_menu_enter(game_state prev_state)
     Old_lod = rl_render_lib::get_instance()->get_level_of_detail();
     Pending_lod = Old_lod;
     Pending_vsync_setting = rl_render_lib::get_instance()->get_vsync_enabled();
+    // OpenRFG: the backend rows start from the settings (KEEP DEBRIS shown resolved).
+    Old_backends = openrfg_backends_get_settings();
+    Pending_backends = Old_backends;
+    Old_keep_debris = openrfg_backends_keep_debris_resolved(Old_backends.keep_debris);
+    Pending_keep_debris = Old_keep_debris;
+    Pending_frame_generation = Old_backends.frame_generation != 0;
     game_options_load_from_cache();
     display_info_initialize_default_detail_settings();
     display_info_add_supported_resolutions();

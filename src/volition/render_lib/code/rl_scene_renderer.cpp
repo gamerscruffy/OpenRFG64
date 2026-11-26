@@ -59,9 +59,20 @@ extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vKey); // 
 #include <intrin.h>
 #include <math.h>
 #include <string.h>
+#include "backends/seams.h"
+#include "backends/dlss/dlss_frame.h" // OpenRFG (VOM): DLSS for the game's frame
 
 // <rl_scene_renderer::release> 0x004C7510 (:79)
 RL_DYNAMIC_CLASS_IMPLEMENTATION(rl_scene_renderer)
+
+// OpenRFG (VOM): DLSS's input (backends/dlss/dlss_frame.h). While DLSS upscales the game's frame, the post effects' last
+// pass writes the scene's finished picture here (at the scene's size) instead of the back buffer, and render() has DLSS
+// upscale it into the back buffer once the scene's commands ran. The active scene's renderer owns it (its targets are
+// the ones made at DLSS's size); never freed at exit (the graphics system is gone by then).
+static rl_render_texture* s_dlss_input = nullptr;
+static rl_scene_renderer* s_dlss_owner = nullptr;
+// This frame's post effects wrote it (set on the scene's second thread, read by render() after that part ended).
+static bool s_dlss_written = false;
 
 // Capacities of the visible lists (the game sets 12000 renderable instances in game_render_system_init).
 int rl_scene_renderer::ms_visible_renderable_instances_max = 5000; // 0x014FA45C
@@ -325,8 +336,20 @@ void rl_scene_renderer::initialize_deferred()
 // Notes (decompiled behaviour, kept as is): with the framebuffer resolve flag the scene's fog state is overwritten
 // (color green); the camera is copied into a heap rl_camera for part 2; the render offset is written to the main
 // renderer's state twice (directly and through the state manager pointer).
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer attaches its hook here. A virtual method: its original
+// calls rl_scene_renderer's body qualified.
+static void seam_rl_scene_renderer_render(rl_scene_renderer* self, rl_renderer& mainRenderer, rl_renderer& deferredRenderer, rl_scene& scene, rl_camera& camera, const rl_hdr_state& base_hdr_state, const rl_color_correct_state& color_correct_state)
+{
+    openrfg_seam_skip = true;
+    self->rl_scene_renderer::render(mainRenderer, deferredRenderer, scene, camera, base_hdr_state, color_correct_state);
+}
+OPENRFG_SEAM_VIRTUAL(Seam_rl_scene_renderer_render, void (*)(rl_scene_renderer*, rl_renderer&, rl_renderer&, rl_scene&, rl_camera&, const rl_hdr_state&, const rl_color_correct_state&), "rl_scene_renderer::render", &seam_rl_scene_renderer_render);
 void rl_scene_renderer::render(rl_renderer& mainRenderer, rl_renderer& deferredRenderer, rl_scene& scene, rl_camera& camera, const rl_hdr_state& base_hdr_state, const rl_color_correct_state& color_correct_state)
 {
+    OPENRFG_SEAM_ENTER(Seam_rl_scene_renderer_render, this, mainRenderer, deferredRenderer, scene, camera, base_hdr_state, color_correct_state);
+    // OpenRFG (VOM): the back buffer's target, for DLSS (the target the scene's post effects would have ended in).
+    const keen::RenderTarget* dlss_output = nullptr;
+    s_dlss_written = false;
     const rl_rect main_viewport(0, 0, m_main_scene_target_width, m_main_scene_target_height);
     mainRenderer.set_viewport(main_viewport);
     rl_hdr_state hdr_state(base_hdr_state);
@@ -500,6 +523,7 @@ void rl_scene_renderer::render(rl_renderer& mainRenderer, rl_renderer& deferredR
         if (!RL_scene_processing_onlied)
         {
             rl_dev_render_target original_rt = mainRenderer.m_render_target;
+            dlss_output = original_rt.pData; // OpenRFG (VOM)
             rl_dev_depth_stencil_target original_ds = mainRenderer.m_depth_stencil_target;
             rl_rect original_vp;
             mainRenderer.get_viewport(original_vp);
@@ -591,6 +615,14 @@ void rl_scene_renderer::render(rl_renderer& mainRenderer, rl_renderer& deferredR
     mainRenderer.end_pass();
     mainRenderer.m_pCommandWriter = nullptr;
     keen::graphics::callCommandBuffer(pMainWriter->getBuffer(), m_pRecordedCommandBuffer);
+    // OpenRFG (VOM): the scene's commands ran on the immediate context: DLSS upscales its finished picture into the back
+    // buffer, before the HUD is drawn over it (backends/dlss/dlss_frame.h).
+    if (s_dlss_written && dlss_output != nullptr && s_dlss_input != nullptr && this == s_dlss_owner)
+    {
+        const float depth_max = Rl_landmarks_enabled && !Rl_blur_landmarks ? 1.0f - RL_reserved_landmark_depth_range : 1.0f;
+        openrfg_dlss_frame_upscale(s_dlss_input->get_texture_data().pData, (const keen::TextureData*)m_pMainSceneDepthTexture, dlss_output, depth_max);
+    }
+    s_dlss_written = false;
     mainRenderer.begin(pMainWriter);
     part2_camera->release();
 }
@@ -939,7 +971,17 @@ void rl_scene_renderer::render_post_effects(rl_renderer& deferredRenderer, rl_ca
     {
         destination = m_main_scene_temp_target[0].get_dev_render_target();
     }
-    const bool fxaa = g_fxaaEnabled;
+    // OpenRFG (VOM): while DLSS upscales the game's frame, the last pass writes DLSS's input at the scene's size, and FXAA
+    // is left out (DLSS anti-aliases; backends/dlss/dlss_frame.h). Not while the frame buffer is locked (its copy is the
+    // first temp target, as before).
+    const bool dlss = this == s_dlss_owner && s_dlss_input != nullptr && s_dlss_input->get_dev_render_target().pData != nullptr &&
+                      openrfg_dlss_frame_active() && (m_flags & kFramebufferLockInitiated) == 0;
+    if (dlss)
+    {
+        destination = s_dlss_input->get_dev_render_target();
+    }
+    s_dlss_written = dlss;
+    const bool fxaa = g_fxaaEnabled && !dlss;
     const bool distortion = m_level_of_detail.m_distortion_enabled;
     const bool depth_of_field = (camera.m_depth_of_field_enabled || camera.m_frame_override_blur != 0.0f) && m_level_of_detail.m_depth_of_field_enabled;
     const keen::TextureData* pFxaaInput = m_main_scene_temp_target[1].get_texture_data().pData;
@@ -1296,6 +1338,12 @@ void rl_scene_renderer::release_resources()
     }
     keen::graphics::destroyCommandBuffer(Init_params.m_pKeenGraphicsSystem, m_pRecordedCommandBuffer);
     m_pRecordedCommandBuffer = nullptr;
+    // OpenRFG (VOM): DLSS's input (made again with the targets when DLSS still upscales the frame).
+    if (s_dlss_owner == this && s_dlss_input != nullptr)
+    {
+        s_dlss_input->destroy();
+        s_dlss_owner = nullptr;
+    }
     if (m_locked_framebuffer_texture.pData != nullptr)
     {
         keen::graphics::freeTextureData(m_locked_framebuffer_texture.pData, Init_params.m_pKeenGraphicsSystem, g_pFramebufferAllocator);
@@ -1452,6 +1500,16 @@ void rl_scene_renderer::create_render_textures(keen::GraphicsCommandWriter* pCom
         m_pSsaoBlurTarget[i] = keen::graphics::createRenderTarget(Init_params.m_pKeenGraphicsSystem, m_ssao_width, m_ssao_height, &buffer, 1, &main_depth_buffer, keen::TilingMode_None);
     }
     m_pRecordedCommandBuffer = keen::graphics::createCommandBuffer(Init_params.m_pKeenGraphicsSystem, m_commandBufferMemory);
+    // OpenRFG (VOM): DLSS's input, while DLSS upscales the game's frame (backends/dlss/dlss_frame.h).
+    if (openrfg_dlss_frame_active())
+    {
+        if (s_dlss_input == nullptr)
+        {
+            s_dlss_input = new rl_render_texture();
+        }
+        s_dlss_input->init(m_main_scene_target_width, m_main_scene_target_height, RL_FORMAT_LDR, 0, "DlssInput", 0);
+        s_dlss_owner = this;
+    }
 }
 
 // 0x004F5E10 (:1612)
@@ -1559,8 +1617,17 @@ void rl_scene_renderer::render_xray_pass(rl_renderer& renderer, rl_camera& camer
 // 0x004F6010 (:1917)
 // The shadow fade constants and the shadow texture (CLB target in slot 15, or the shadow map in slot 14) when shadows
 // are enabled, and the CLB target in slot 13 always.
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer's global illumination attaches its hook here.
+// rl_scene_renderer's private methods: their seams are members of a friend of it (rl_scene_renderer.h).
+struct openrfg_seams_scene_renderer
+{
+    using set_shadow_states_t = openrfg_seam_t<openrfg_seam_original<&rl_scene_renderer::set_shadow_states>::handler>;
+    static set_shadow_states_t set_shadow_states;
+};
+openrfg_seams_scene_renderer::set_shadow_states_t openrfg_seams_scene_renderer::set_shadow_states("rl_scene_renderer::set_shadow_states", nullptr, &openrfg_seam_original<&rl_scene_renderer::set_shadow_states>::body);
 void rl_scene_renderer::set_shadow_states(rl_shadow_render_parameters& shadow_render_params, rl_renderer& renderer)
 {
+    OPENRFG_SEAM_ENTER(openrfg_seams_scene_renderer::set_shadow_states, this, shadow_render_params, renderer);
     if (shadow_render_params.shadows_enabled != 0)
     {
         const float max_dist = shadow_render_params.shadow_max_dist;

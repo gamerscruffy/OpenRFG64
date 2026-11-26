@@ -87,6 +87,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 // Object names: a fixed pool of 2048 strings with free and used lists (alloc_obj_name / dealloc_obj_name); an object
 // stores the index of its name (set_object_name / get_object_name, "" when it has none).
@@ -1127,6 +1128,40 @@ int world::get_num_objects() const
     return all_objects.size();
 }
 
+// OpenRFG (new, backends' keep debris, after OpenRFG64-memtest): world is a friend of handle_manager, whose bitmap of
+// each zone it counts here.
+const world_zone* world::openrfg_fullest_zone(int* used) const
+{
+    const world_zone* fullest = nullptr;
+    int most = 0;
+    for (int z = 0; all_zones != nullptr && z < num_territory_zones; z++)
+    {
+        const world_zone* zone = all_zones[z];
+        if (zone == nullptr)
+        {
+            continue;
+        }
+        int in_use = 0;
+        for (unsigned char bits : zone->obj_handle_mgr.status)
+        {
+            for (; bits != 0; bits &= (unsigned char)(bits - 1))
+            {
+                in_use++;
+            }
+        }
+        if (in_use > most || fullest == nullptr)
+        {
+            most = in_use;
+            fullest = zone;
+        }
+    }
+    if (used != nullptr)
+    {
+        *used = most;
+    }
+    return fullest;
+}
+
 // 0x00923690 (:1383)
 object* world::get_object(int i) const
 {
@@ -1636,8 +1671,11 @@ bool world::post_load_stream(world_zone* start_zone)
 }
 
 // 0x0092CF70 (:2009)
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_world_object_physically_in_original_zone, &world::object_physically_in_original_zone, "world::object_physically_in_original_zone");
 bool world::object_physically_in_original_zone(object* objp)
 {
+    OPENRFG_SEAM_ENTER(Seam_world_object_physically_in_original_zone, this, objp);
     if (objp->obj_flags.persistent)
     {
         return true;

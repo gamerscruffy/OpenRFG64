@@ -27,6 +27,7 @@
 
 #include <math.h>
 #include <string.h>
+#include "backends/seams.h"
 
 float calculate_horizontal_fov_perspective(float vertical_fov, bool use_pixel_aspect_ratio); // 0x004DFB20 (rl_camera.cpp)
 
@@ -269,8 +270,12 @@ void renderBilateralBlurEffect(SsaoContext* pContext, keen::GraphicsCommandWrite
 // reciprocals.
 //
 // The x87 arithmetic of rfg.exe runs at double precision (MSVC's default control word), hence the doubles.
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer attaches its hook here (its ray-traced ambient
+// occlusion).
+OPENRFG_SEAM(Seam_renderSsaoEffect, &renderSsaoEffect, "renderSsaoEffect");
 void renderSsaoEffect(SsaoContext* pContext, keen::GraphicsCommandWriter* pCommandWriter, const SsaoRenderSettings& settings, rl_camera& camera, const keen::TextureData* pInputDepthTexture, const keen::RenderTarget* pOutputTarget, const keen::RenderTarget* pBlurIntermediateTarget0, const keen::RenderTarget* pBlurIntermediateTarget1)
 {
+    OPENRFG_SEAM_ENTER(Seam_renderSsaoEffect, pContext, pCommandWriter, settings, camera, pInputDepthTexture, pOutputTarget, pBlurIntermediateTarget0, pBlurIntermediateTarget1);
     if (!g_enabled)
     {
         pCommandWriter->writeBeginRenderPassCommand(pOutputTarget, keen::RenderTargetPartFlagMask_None, nullptr);

@@ -1,0 +1,84 @@
+// OpenRFG (VOM, new code): the PhysX backend (physx_backend.h).
+//
+// rfgphys, the PhysX mod's code (external/rfgphys, a git subtree of its repository), is built into the game. Its start
+// is the plugin's own (core/startup.cpp), run from backends\ next to OpenRFG.exe: rfgphys.ini there, and rfgphysx\ with
+// the PhysX core (rfgphysx_core.dll: the PhysX host's code, which steps PhysX on a thread of the game) and PhysX's GPU
+// module (PhysXGpu_64.dll). The plugin's game code reads the game the way it does in OpenRFG64 (names from
+// OpenRFG.pdb), and attaches to it through seams in the game's source (backends/seams.h): rfgphys's hooks::create asks
+// this binding first, and only a function without a seam gets a MinHook detour (the record/replay harness's).
+
+#include "physx_backend.h"
+
+#include <windows.h>
+
+#include <string>
+
+#include "../seams.h"
+#include "core/log.h"
+#include "core/startup.h"
+#include "game/rfg.h"
+#include "hooks/hooks.h"
+#include "openrfg64_column.h"
+#include "physx/bridge.h"
+
+namespace
+{
+    int g_seamed = 0;
+
+    // A detour of another module at the function's entry (the path tracer's MinHook on rfg_do_frame, while it has no
+    // seams): a seam's original enters the function again from the top, through that detour a second time. Two detours
+    // chain instead (a detour's trampoline skips the other's jump).
+    bool entry_patched(uint32_t rva)
+    {
+        const uint8_t* entry = static_cast<const uint8_t*>(rfg::addr(rva));
+        return entry[0] == 0xE9 || (entry[0] == 0xFF && entry[1] == 0x25);
+    }
+
+    // rfgphys's hooks::create: the hook on the seam of the function its names table resolved to `rva`.
+    bool seam_create(uint32_t rva, void* detour, void** original, const char* name)
+    {
+        const openrfg64::Name* symbol = rfg::symbol_of(rva);
+        openrfg_seam* seam = symbol != nullptr ? openrfg_seam_find(symbol->name, symbol->signature) : nullptr;
+        if (seam == nullptr)
+        {
+            return false; // rfgphys's hooks say what it does instead
+        }
+        if (entry_patched(rva))
+        {
+            LOG("hook %s: another module's detour is at the function's entry: a detour of ours too, chained", name);
+            return false;
+        }
+        openrfg_seam_attach(seam, detour, original);
+        ++g_seamed;
+        return true;
+    }
+}
+
+bool openrfg_physx_install(bool launch)
+{
+    hooks::set_binding({&seam_create, &openrfg_seams_enable, &openrfg_seam_call_site});
+    wchar_t exe[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring dir(exe, n);
+    dir = dir.substr(0, dir.find_last_of(L"\\/")) + L"\\backends";
+    startup::run(dir, launch);
+    LOG("OpenRFG64 VOM: %d hooks on seams in the game's source", g_seamed);
+    // With launch the core is starting now (or did not load: openrfg_physx_state says failed); whether PhysX comes up
+    // is told later in rfgphys.log.
+    return pxbridge::installed();
+}
+
+bool openrfg_physx_launch()
+{
+    return pxbridge::start();
+}
+
+void openrfg_physx_stop()
+{
+    pxbridge::stop();
+}
+
+int openrfg_physx_state()
+{
+    return (int)pxbridge::state();
+}

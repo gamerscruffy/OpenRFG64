@@ -72,6 +72,7 @@
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/collide/shape/convex/convextransform/hkpconvextransformshape.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/collide/shape/misc/transform/hkptransformshape.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/entity/hkprigidbody.h"
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 static const int GENERAL_MOVER_POOL_SIZE = OPENRFG_ZONE_POOL(3072); // general_moverpool
 static const int GM_DESTROYABLE_HITPOINTS = 5000; // pieces of destroyable shapes start with these
@@ -1360,8 +1361,17 @@ void general_mover::create_deferred_ri()
 
 // 0x00AB38C0 (:1588)
 // Fades by camera distance: 10 km for props, 35/50 m for resting shards (alternating by piece index).
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+// A virtual method: its original calls general_mover's body qualified (rfg_mover's override calls it as its base).
+static void seam_general_mover_update_render_opacity(general_mover* self)
+{
+    openrfg_seam_skip = true;
+    self->general_mover::update_render_opacity();
+}
+OPENRFG_SEAM_VIRTUAL(Seam_general_mover_update_render_opacity, void (*)(general_mover*), "general_mover::update_render_opacity", &seam_general_mover_update_render_opacity);
 void general_mover::update_render_opacity()
 {
+    OPENRFG_SEAM_ENTER(Seam_general_mover_update_render_opacity, this);
     if (havok_handle == 0xFFFFFFFF)
     {
         return;

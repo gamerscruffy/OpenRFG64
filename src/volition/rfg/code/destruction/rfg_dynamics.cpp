@@ -19,6 +19,7 @@
 //   checking that the object is a mover.
 
 #include "volition/rfg/code/destruction/rfg_dynamics.h"
+#include "backends/keep_debris.h" // OpenRFG (backends: keep debris)
 
 #include "keen/base/trace.hpp"
 #include "volition/rfg/code/camera/camera_shake.h"
@@ -96,6 +97,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 static const int MAX_RFG_DYN_COLLISIONS = 1024; // RFG_dyn_collisions
 static const int MAX_DESTRUCTION_RESULTS = 20; // object_mover_destruction_results arrays
@@ -4732,8 +4734,11 @@ static bool is_multi_walker_arm_collision(const hkpCdBody* walker_body)
 // address). The energy of the contact is the damage. Fixed movers and vehicles push the pieces (0x8); walkers may
 // force links to break (0x10). On bridges, walker feet and vehicle wheels (collision filter info 0x2F) do nothing (flag
 // 0x1). The first contact of the event records the local hit points and normals.
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_rfg_dyn_add_pre_collide_contact, &rfg_dyn_add_pre_collide_contact, "rfg_dyn_add_pre_collide_contact");
 bool rfg_dyn_add_pre_collide_contact(hkpContactPointAddedEvent& add_event, object* obj_a, object* obj_b)
 {
+    OPENRFG_SEAM_ENTER(Seam_rfg_dyn_add_pre_collide_contact, add_event, obj_a, obj_b);
     if (add_event.m_type.m_storage == hkpContactPointAddedEvent::TYPE_TOI)
     {
         return true;
@@ -5712,6 +5717,10 @@ float rfg_dyn_get_impulse_scalar(float mass, unsigned char material_index)
 // A removable (0x4) small (not 0x2) mover pushed harder than max_impulse_mag per kg.
 bool rfg_dyn_maybe_delete(object_mover* obj_mover, const float mass, const vector& impulse, const float max_impulse_mag)
 {
+    if (openrfg_keep_debris_refuse_vaporize()) // OpenRFG (backends): kept debris takes the impulse instead
+    {
+        return false;
+    }
     return (obj_mover->mover_flags & 4) != 0 && (obj_mover->mover_flags & 2) == 0 && mass * max_impulse_mag < sqrtf(impulse.x * impulse.x + impulse.y * impulse.y + impulse.z * impulse.z);
 }
 

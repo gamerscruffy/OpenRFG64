@@ -52,6 +52,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 static const unsigned int CHUNK_SIGNATURE = 0xB0CEEFA5;
 static const unsigned int CHUNK_VERSION = 56; // RFGCHUNK_VERSION
@@ -424,8 +425,11 @@ static bool chunk_base_load_internal(const char* filename, unsigned char* cpu_da
 }
 
 // 0x00928750 (:716)
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_chunk_base_unload_internal, &chunk_base_unload_internal, "chunk_base_unload_internal");
 void chunk_base_unload_internal(c_chunk_base* chunk_base, bool delete_render_data)
 {
+    OPENRFG_SEAM_ENTER(Seam_chunk_base_unload_internal, chunk_base, delete_render_data);
     chunk_base->internal_uid = 0xFFFF;
     chunk_unload_collision_models(chunk_base);
     chunk_unload_destroyables(chunk_base);

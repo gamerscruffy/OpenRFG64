@@ -1,0 +1,104 @@
+#pragma once
+#include <cstdint>
+
+#include "rfgphysx_ipc.h"
+
+struct Config;
+
+// The game side of the PhysX host process (research/docs/06 §3, §13). With Experiment.PhysX=1 (GPU) or 2 (CPU) the
+// plugin creates the shared memory of src/shared/rfgphysx_ipc.h and starts scripts\rfgphysx\rfgphysx_host.exe in a
+// job object, so the host ends with the game. Nothing here ever waits for the host: commands go into a ring (a full
+// ring drops them and counts it), snapshots are taken when one is ready, and a host that fails, exits or stops
+// answering is logged and left alone while the game goes on.
+namespace pxbridge {
+
+// Creates the shared memory and registers the bridge's frame callback; with launch it starts the host too (the plugins
+// always do; a game whose PhysX backend is off at its start does not).
+bool install(const Config& cfg, bool launch = true);
+bool installed();  // the shared memory exists: start() can start a host
+bool active();  // the host was started and has not been lost
+bool ready();   // the host is stepping and applies commands
+
+// Commands, simulation thread. false: not sent (no host, or the ring is full).
+bool reset();
+bool add_static_plane(const rfgphysx::Vec3& normal, float distance);
+bool add_static_box(const rfgphysx::Vec3& pos, const rfgphysx::Quat& rot, const rfgphysx::Vec3& half_extents);
+bool shape_box(uint32_t shape, const rfgphysx::Vec3& half_extents);
+bool shape_convex(uint32_t shape, const rfgphysx::Vec3* vertices, uint32_t count);
+bool create_body(uint32_t slot, uint32_t shape, const rfgphysx::Vec3& pos, const rfgphysx::Quat& rot,
+                 const rfgphysx::Vec3& lin_vel, const rfgphysx::Vec3& ang_vel, float density, uint32_t flags = 0, float break_force_kn = 0.0f);
+bool destroy_body(uint32_t slot, bool quiet = false);
+bool explosion(const rfgphysx::Vec3& center, float radius, float impulse, float up);
+bool test_crash();
+// A complete record built by the caller (header type and size filled in), for modules with their own commands.
+bool send_record(const void* record, uint32_t size);
+uint32_t ring_free();  // bytes the command ring can take now (a record that does not fit is dropped, not queued)
+uint32_t ring_used();  // bytes written that the host has not applied yet
+// Raycasts against the mirrored static world (physx/world_mirror.h). The distances (-1: no hit) are ready once
+// query_done() returns `request`.
+bool raycast_batch(uint32_t request, const rfgphysx::Ray* rays, uint32_t count);
+uint32_t query_done();
+const float* query_results();
+const uint32_t* query_hit_kinds();  // per ray: PhysX geometry type + 1 of what it hit (0: nothing)
+uint32_t host_statics();  // static actors in the host's scene
+// The loose chunks' impacts the host reported since the last call, at most `max` (simulation thread).
+uint32_t take_events(rfgphysx::ContactEvent* out, uint32_t max);
+uint32_t max_bodies();
+uint32_t shared_bytes();  // the shared memory mapped into the game: control, ring, snapshots, events
+// OpenRFG64: the slots grow (64-bit). max_bodies() is the most there can be (the shared memory's reservation
+// and the snapshots' layout); committed_slots() the slots 0 .. n-1 whose snapshot memory is committed, which may be
+// handed out. commit_slots(n) commits up to n (false: the system refused).
+uint32_t committed_slots();
+bool commit_slots(uint32_t n);
+// The GPU's memory in use by every program and its total, MB, as the host last read them (NVML); 0: not known.
+uint32_t vram_used_mb();
+uint32_t vram_total_mb();
+uint32_t gpu_heap_mb();  // PhysX's GPU heap
+bool host_gpu();         // the host runs PhysX on the GPU
+float step_hz();
+// The number of the last Frame record sent. A snapshot's last_frame past the number when a command was sent: the host
+// has applied that command, and the snapshot shows it.
+uint32_t frame();
+// How long the host's steps take now, ms: its period, or longer when it cannot keep up. Moving things go from the last
+// pose to the newest over this.
+float step_period_ms();
+uint64_t host_cpu_100ns();  // CPU time (kernel + user, 100 ns units) the host process has used; 0 without one
+void set_test_flags(uint32_t flags);  // rfgphysx::TestFlags, for tests (Test.StressPieces)
+
+// The newest snapshot, taken at the start of this frame's callbacks (simulation thread); null before the first one.
+// `fresh` is true in the frame it arrived. Valid until the next frame.
+const rfgphysx::SnapshotHeader* snapshot(bool* fresh = nullptr);
+inline const rfgphysx::BodyPose* poses(const rfgphysx::SnapshotHeader* s) {
+    return reinterpret_cast<const rfgphysx::BodyPose*>(s + 1);
+}
+// Each slot's PoseFlags as one byte (slots 0 .. s->slots - 1).
+inline const uint8_t* states(const rfgphysx::SnapshotHeader* s) { return rfgphysx::snapshot_states(s, max_bodies()); }
+
+enum class State : uint8_t { Off = 0, Starting = 1, Ready = 2, Failed = 3, Lost = 4, Stopping = 5 };
+
+// A game's PhysX backend switched at its main menu (simulation thread, no level loaded; a level's end has emptied the
+// host and the game's tables already). start(): a host on the same shared memory, unless one runs; asked while the last
+// one is stopping, it starts once that one has ended. A Failed or Lost host starts again once its thread or process has
+// ended. false: no host can start now. stop(): asks a running host to quit and returns at once; in the game's process
+// the core releases PhysX (its memory, the CUDA context) on its own thread and ends, and the bridge sees it gone a
+// few frames later (Stopping, then Off).
+bool start();
+void stop();
+State state();
+
+struct FrameStats {
+    State state;
+    uint8_t gpu;
+    uint32_t sequence;     // newest snapshot taken
+    uint32_t snapshots;    // snapshots taken since the previous call
+    float age_ms;          // how old the newest snapshot was when the game took it
+    float step_ms;         // its PhysX step time
+    float work_ms;         // the host's work for that step (commands, step, snapshot)
+    uint32_t bodies, awake, frozen;
+    float take_us;         // taking snapshots, since the previous call
+    uint32_t cmd_bytes;    // command bytes written since the previous call
+    uint32_t cmd_dropped;  // commands dropped since the previous call (ring full)
+};
+FrameStats take_frame();  // telemetry, simulation thread
+
+}  // namespace pxbridge

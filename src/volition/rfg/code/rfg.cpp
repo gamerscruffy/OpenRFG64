@@ -197,6 +197,7 @@
 #if !defined(OPENRFG_RFG_PEG_CALLBACKS_ONLY)
 #include <malloc.h>
 #include <new>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 #endif
 
 #if !defined(OPENRFG_RFG_PEG_CALLBACKS_ONLY)
@@ -934,8 +935,11 @@ void rfg_init_stage_2_done_2()
 
 // 0x005D2500 (:5273)
 void openrfg_heartbeat();
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer and rfgphys's PhysX backend attach their hooks here.
+OPENRFG_SEAM(Seam_rfg_do_frame, &rfg_do_frame, "rfg_do_frame");
 bool rfg_do_frame()
 {
+    OPENRFG_SEAM_ENTER0(Seam_rfg_do_frame);
     openrfg_heartbeat();
     // While the window is in the background the controller vibration is off.
     static bool Lost_focus; // 0x01D651F1

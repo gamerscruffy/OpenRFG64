@@ -41,6 +41,8 @@ endif()
 
 add_subdirectory(external)
 add_subdirectory(src)
+# OpenRFG (VOM): the selectable rendering and physics backends (src/backends/backends.h).
+add_subdirectory(src/backends)
 
 # The stand-ins OpenRFG shares with the test programs (src/stubs, new code): the OPENRFG_STUBS_* source lists by
 # scope. Their header (stubs.h) is found from every test directory.
