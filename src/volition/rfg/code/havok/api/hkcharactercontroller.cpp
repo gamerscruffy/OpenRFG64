@@ -640,6 +640,13 @@ void MyCharacterListener::objectInteractionCallback(hkpCharacterProxy* proxy, co
 // the cover normal of a player pressed against a still wall facing the camera, and sets the frictions: none on
 // walkable planes; on too steep planes a player gets extra up friction (a push up the slope) and an NPC an extra
 // vertical plane.
+#if defined(OPENRFG_X64)
+// The wall's object is checked before its sub_type is read (below): rfgphys's Havok stand-ins for its PhysX debris may
+// carry none, and rfgphys patches the same check into rfg.exe. It reads this (GetProcAddress) and patches nothing:
+// heavy debris is then solid to the player.
+extern "C" __declspec(dllexport) const int openrfg_lean_check_guarded = 1;
+#endif
+
 void MyCharacterListener::processConstraintsCallback(const hkpCharacterProxy* proxy, const hkArray<hkpRootCdPoint, hkContainerHeapAllocator>& manifold, hkSimplexSolverInput& input)
 {
     human* hp = nullptr;
@@ -755,7 +762,7 @@ void MyCharacterListener::processConstraintsCallback(const hkpCharacterProxy* pr
                     pp->cover_collision_normal.flatten_normalize_safe();
                     hp->hflags.check_for_cover = 1;
                     // Original bug kept in spirit: the binary reads the wall's sub_type even when no object was found
-                    // (a null read); here a missing object counts as not a vehicle.
+                    // (a null read); here a missing object counts as not a vehicle (openrfg_lean_check_guarded).
                     pp->pflags.cover_against_vehicle = (wall != nullptr && wall->get_sub_type() == 4) ? 1 : 0;
                 }
             }

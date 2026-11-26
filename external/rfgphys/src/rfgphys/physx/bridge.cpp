@@ -1,0 +1,663 @@
+#include "physx/bridge.h"
+
+#include <windows.h>
+
+#include <algorithm>
+#include <cstring>
+#include <new>
+#include <string>
+#include <vector>
+
+#include "core/config.h"
+#include "core/log.h"
+#include "core/session.h"
+
+namespace pxbridge {
+namespace {
+
+namespace ipc = rfgphysx;
+
+constexpr uint32_t kRingSize = 4u << 20;         // a burst of 50,000 body creations fits
+constexpr uint32_t kControlBytes = 4096;
+constexpr uint32_t kQueryBytes = 64u << 10;       // kMaxRays distances
+constexpr uint32_t kEventCount = 4096;            // ContactEvent records (256 KB): loose chunks' impacts
+constexpr DWORD kStallMs = 3000;                  // a Ready host whose heartbeat stops this long is ended
+// The heartbeat comes from a thread of its own in the host: it says the process lives. Progress is a new snapshot
+// (a finished step); cooking a big static world (the open world: 2,000+ bodies) can hold the steps back for seconds.
+constexpr DWORD kNoStepMs = 60000;
+constexpr DWORD kStartTimeoutMs = 30000;          // PhysX and CUDA start-up
+
+bool g_on = false;
+State g_state = State::Off;
+HANDLE g_mapping = nullptr, g_process = nullptr, g_job = nullptr;
+// PhysXInProcess: the host's loop runs on a thread of the game (rfgphysx_core.dll) and g_process is that thread's
+// handle, waited on and read the same way.
+bool g_in_process = false;
+uint8_t* g_base = nullptr;
+ipc::Control* g_ctl = nullptr;
+uint8_t* g_ring = nullptr;
+uint32_t g_head = 0;
+uint32_t g_front = 2;  // the snapshot buffer the game holds (the host starts with 0, latest with 1)
+uint32_t g_frame = 0;
+const ipc::SnapshotHeader* g_snapshot = nullptr;
+bool g_fresh = false;
+uint32_t g_last_heartbeat = 0;
+DWORD g_heartbeat_tick = 0, g_start_tick = 0;
+DWORD g_step_tick = 0;  // when the last fresh snapshot (a finished step) was taken
+int64_t g_period_qpc = 0;       // the last fresh snapshot's publish time
+uint64_t g_period_sequence = 0;  // and its sequence
+float g_period_ms = 0;          // the time a step takes, smoothed
+FrameStats g_stats{};
+
+uint32_t g_committed = 0;  // OpenRFG64: slots whose snapshot memory is committed (commit_slots)
+
+// What each start of a host needs (install keeps it): the shared memory's name, the logs, the kind of host.
+std::wstring g_map_name, g_log_path, g_csv_path;
+bool g_want_in_process = false;
+uint32_t g_launches = 0;
+bool g_start_pending = false;  // start() while the last host was stopping
+DWORD g_stop_tick = 0;
+constexpr DWORD kStopTimeoutMs = 30000;  // a host that has not ended this long after stop() is lost
+// Control::quit: 1 the game is closing (the host leaves at once); 2 a stop (in the game's process the core releases
+// PhysX first, so that it can start again).
+constexpr uint32_t kQuitExit = 1, kQuitStop = 2;
+
+ipc::SnapshotHeader* snapshot_at(uint32_t index) {
+    return reinterpret_cast<ipc::SnapshotHeader*>(g_base + g_ctl->snapshot_offset + size_t(index) * g_ctl->snapshot_stride);
+}
+
+void lose(const char* why) {
+    if (g_state == State::Lost || g_state == State::Failed) return;
+    LOG("PhysX host lost: %s; the game goes on without it", why);
+    g_state = State::Lost;
+    if (g_in_process) {
+        // A thread cannot be ended safely: it is asked to stop (a stuck one stays stuck, the game goes on),
+        // releasing PhysX so that it can start again.
+        if (g_ctl) g_ctl->quit.store(kQuitStop, std::memory_order_release);
+    } else if (g_process) {
+        TerminateProcess(g_process, 1);
+    }
+}
+
+bool write(const void* record, uint32_t size) {
+    if (g_state != State::Starting && g_state != State::Ready) {
+        ++g_stats.cmd_dropped;
+        return false;
+    }
+    const uint32_t padded = (size + 7u) & ~7u;
+    const uint32_t tail = g_ctl->ring_tail.load(std::memory_order_acquire);
+    uint32_t off = g_head & (kRingSize - 1);
+    const uint32_t to_end = kRingSize - off;
+    const uint32_t need = padded <= to_end ? padded : padded + to_end;
+    if (kRingSize - (g_head - tail) < need) {
+        ++g_stats.cmd_dropped;
+        return false;
+    }
+    if (padded > to_end) {
+        const ipc::CmdHeader pad{uint16_t(ipc::Cmd::Pad), 0, to_end};
+        memcpy(g_ring + off, &pad, sizeof(pad));
+        g_head += to_end;
+        off = 0;
+    }
+    memcpy(g_ring + off, record, size);
+    if (padded > size) memset(g_ring + off + size, 0, padded - size);
+    reinterpret_cast<ipc::CmdHeader*>(g_ring + off)->size = padded;
+    g_head += padded;
+    g_ctl->ring_head.store(g_head, std::memory_order_release);
+    g_stats.cmd_bytes += padded;
+    return true;
+}
+
+template <typename T>
+bool send(ipc::Cmd type, T& record) {
+    record.h.type = uint16_t(type);
+    record.h.reserved = 0;
+    record.h.size = sizeof(T);
+    return write(&record, sizeof(T));
+}
+
+void watch_host() {
+    const DWORD now = GetTickCount();
+    if (g_process && WaitForSingleObject(g_process, 0) == WAIT_OBJECT_0) {
+        DWORD code = 0;
+        if (g_in_process)
+            GetExitCodeThread(g_process, &code);
+        else
+            GetExitCodeProcess(g_process, &code);
+        if (g_state == State::Starting || g_state == State::Ready) {
+            char why[96];
+            snprintf(why, sizeof(why), g_in_process ? "the PhysX core's thread ended (code %lu)" : "the host process exited (code %lu)",
+                     code);
+            lose(why);
+        }
+        return;
+    }
+    const auto host_state = ipc::HostState(g_ctl->host_state.load(std::memory_order_acquire));
+    if (g_state == State::Starting) {
+        if (host_state == ipc::HostState::Ready) {
+            g_state = State::Ready;
+            g_stats.gpu = uint8_t(g_ctl->host_gpu.load(std::memory_order_relaxed));
+            LOG("PhysX host ready after %lu ms: %s (pid %u)", now - g_start_tick, g_ctl->host_message,
+                g_ctl->host_pid.load(std::memory_order_relaxed));
+            g_last_heartbeat = g_ctl->host_heartbeat.load(std::memory_order_relaxed);
+            g_heartbeat_tick = now;
+        } else if (host_state == ipc::HostState::Failed) {
+            g_state = State::Failed;
+            LOG("PhysX host failed: %s", g_ctl->host_message);
+        } else if (now - g_start_tick > kStartTimeoutMs) {
+            lose("it did not become ready in 30 s");
+        }
+        return;
+    }
+    if (g_state != State::Ready) return;
+    const uint32_t hb = g_ctl->host_heartbeat.load(std::memory_order_relaxed);
+    if (hb != g_last_heartbeat) {
+        g_last_heartbeat = hb;
+        g_heartbeat_tick = now;
+    } else if (now - g_heartbeat_tick > kStallMs) {
+        lose("its heartbeat stopped for 3 s");
+        return;
+    }
+    if (!g_step_tick) g_step_tick = now;
+    if (now - g_step_tick > kNoStepMs) lose("it finished no step for 60 s");
+}
+
+void take_snapshot() {
+    g_fresh = false;
+    if (g_state != State::Ready) return;
+    const int64_t t0 = session::qpc();
+    if (g_ctl->snapshot_latest.load(std::memory_order_acquire) & ipc::kFresh) {
+        const uint32_t prev = g_ctl->snapshot_latest.exchange(g_front, std::memory_order_acq_rel);
+        g_front = prev & ipc::kIndexMask;
+        const ipc::SnapshotHeader* s = snapshot_at(g_front);
+        g_step_tick = GetTickCount();
+        if (s->sequence) {
+            if (g_period_qpc && s->sequence > g_period_sequence) {
+                const float each = float(session::ticks_to_ms(s->publish_qpc - g_period_qpc)) /
+                                   float(s->sequence - g_period_sequence);
+                g_period_ms = g_period_ms > 0.0f ? g_period_ms + (each - g_period_ms) * 0.2f : each;
+            }
+            g_period_qpc = s->publish_qpc;
+            g_period_sequence = s->sequence;
+            g_snapshot = s;
+            g_fresh = true;
+            ++g_stats.snapshots;
+            g_stats.sequence = s->sequence;
+            g_stats.age_ms = float(session::ticks_to_ms(t0 - s->publish_qpc));
+            g_stats.step_ms = s->step_ms;
+            g_stats.work_ms = s->work_ms;
+            g_stats.bodies = s->bodies;
+            g_stats.awake = s->awake;
+            g_stats.frozen = s->frozen;
+        }
+    }
+    g_stats.take_us += float(session::ticks_to_ms(session::qpc() - t0) * 1000.0);
+}
+
+bool launch();
+
+// A stopping host: gone once its thread or process has ended (in the game's process the core has released PhysX).
+void watch_stop() {
+    const DWORD now = GetTickCount();
+    if (g_process && WaitForSingleObject(g_process, 0) != WAIT_OBJECT_0) {
+        if (now - g_stop_tick > kStopTimeoutMs) {
+            LOG("PhysX host lost: it did not end within %lu s of the stop", kStopTimeoutMs / 1000);
+            g_state = State::Lost;
+            g_start_pending = false;
+        }
+        return;
+    }
+    if (g_process) CloseHandle(g_process);
+    g_process = nullptr;
+    g_state = State::Off;
+    LOG("PhysX host stopped after %lu ms%s", now - g_stop_tick, g_in_process ? " (the core released PhysX)" : "");
+    if (g_start_pending) {
+        g_start_pending = false;
+        launch();
+    }
+}
+
+// Simulation thread, end of frame (before the consumers registered after it).
+void on_frame(int) {
+    if (!g_on) return;
+    g_ctl->game_heartbeat.store(++g_frame, std::memory_order_relaxed);
+    if (g_state == State::Stopping) {
+        watch_stop();
+        return;
+    }
+    watch_host();
+    take_snapshot();
+    if (g_state == State::Ready) {
+        ipc::Frame f{};
+        f.frame = g_frame;
+        f.qpc = session::qpc();
+        send(ipc::Cmd::Frame, f);
+    }
+}
+
+void on_exit(bool) {
+    if (g_ctl) g_ctl->quit.store(kQuitExit, std::memory_order_release);
+}
+
+std::wstring quote(const std::wstring& s) { return L"\"" + s + L"\""; }
+
+// PhysXInProcess (64-bit games): the PhysX core, the host's code built as rfgphysx\rfgphysx_core.dll, runs the host's
+// loop on a thread of the game, on the same shared memory (it opens the region by name, as the process does).
+typedef int(__cdecl* core_main_fn)(const wchar_t* map, const wchar_t* log, const wchar_t* steps_csv);
+struct CoreArgs {
+    std::wstring map, log, csv;
+    core_main_fn main;
+};
+
+DWORD WINAPI core_thread(void* param) {
+    CoreArgs* args = static_cast<CoreArgs*>(param);
+    const int code = args->main(args->map.c_str(), args->log.c_str(), args->csv.empty() ? nullptr : args->csv.c_str());
+    delete args;
+    return DWORD(code);
+}
+
+bool start_in_process(const std::wstring& map, const std::wstring& log, const std::wstring& csv, DWORD& thread_id) {
+    const std::wstring dll = session::plugin_dir() + L"\\rfgphysx\\rfgphysx_core.dll";
+    HMODULE core = LoadLibraryExW(dll.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    const auto main = core ? reinterpret_cast<core_main_fn>(reinterpret_cast<void*>(GetProcAddress(core, "rfgphysx_core_main")))
+                           : nullptr;
+    if (!main) {
+        LOG("experiment PhysX: cannot load the PhysX core %ls (error %lu)", dll.c_str(), GetLastError());
+        return false;
+    }
+    auto* args = new CoreArgs{map, log, csv, main};
+    g_process = CreateThread(nullptr, 0, core_thread, args, 0, &thread_id);
+    if (!g_process) {
+        LOG("experiment PhysX: cannot start the PhysX core's thread (error %lu)", GetLastError());
+        delete args;
+        return false;
+    }
+    g_in_process = true;
+    return true;
+}
+
+}  // namespace
+
+bool install(const Config& cfg, bool launch_now) {
+    if (cfg.exp_physx <= 0) return true;
+#if defined(_WIN64)
+    // OpenRFG64: in a 64-bit game the slots are no longer bounded by the address space (0.4 KB a slot was
+    // what the 32-bit game could not spare past 262,144). The shared memory is reserved for PhysXSlotsMax and
+    // committed from PhysXMaxBodies on, as debris_offload hands the slots out (commit_slots).
+    const uint32_t initial = uint32_t(std::clamp(cfg.exp_physx_max_bodies, 4096, 1 << 23));
+    const uint32_t max_bodies = uint32_t(std::clamp(cfg.exp_physx_slots_max, int(initial), 1 << 23) + 1023) & ~1023u;
+#else
+    const uint32_t max_bodies = uint32_t(cfg.exp_physx_max_bodies < 1024     ? 1024
+                                         : cfg.exp_physx_max_bodies > 262144 ? 262144
+                                                                             : cfg.exp_physx_max_bodies);
+    const uint32_t initial = max_bodies;
+#endif
+    const uint32_t stride = ipc::snapshot_stride(max_bodies);
+    const uint32_t total = kControlBytes + kRingSize + kQueryBytes + 3 * stride + kEventCount * uint32_t(sizeof(ipc::ContactEvent));
+    wchar_t name[96];
+    swprintf_s(name, L"Local\\rfgphysx-%lu-%lu", GetCurrentProcessId(), GetTickCount());
+    g_mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE | SEC_RESERVE, 0, total, name);
+    if (g_mapping) g_base = static_cast<uint8_t*>(MapViewOfFile(g_mapping, FILE_MAP_ALL_ACCESS, 0, 0, total));
+    // The parts of fixed size are committed now: the control block, the ring and the query results; each snapshot's
+    // header; the event ring. The snapshots' poses and state bytes follow the slots (commit_slots).
+    const uint32_t snapshots_at = kControlBytes + kRingSize + kQueryBytes;
+    const uint32_t events_at = snapshots_at + 3 * stride;
+    bool committed = g_base && VirtualAlloc(g_base, snapshots_at, MEM_COMMIT, PAGE_READWRITE) &&
+                     VirtualAlloc(g_base + events_at, total - events_at, MEM_COMMIT, PAGE_READWRITE);
+    for (uint32_t k = 0; committed && k < 3; ++k)
+        committed = VirtualAlloc(g_base + snapshots_at + size_t(k) * stride, sizeof(ipc::SnapshotHeader), MEM_COMMIT,
+                                 PAGE_READWRITE) != nullptr;
+    if (!g_base || !committed) {
+        LOG("experiment PhysX: cannot create %u MB of shared memory (error %lu)", total >> 20, GetLastError());
+        return true;
+    }
+    g_ctl = new (g_base) ipc::Control{};
+    g_ctl->magic = ipc::kMagic;
+    g_ctl->version = ipc::kVersion;
+    g_ctl->total_size = total;
+    g_ctl->ring_offset = kControlBytes;
+    g_ctl->ring_size = kRingSize;
+    g_ctl->query_offset = kControlBytes + kRingSize;
+    g_ctl->snapshot_offset = kControlBytes + kRingSize + kQueryBytes;
+    g_ctl->snapshot_stride = stride;
+    g_ctl->event_offset = kControlBytes + kRingSize + kQueryBytes + 3 * stride;
+    g_ctl->event_count = kEventCount;
+    g_ctl->max_bodies = max_bodies;
+    if (!commit_slots(initial)) {
+        LOG("experiment PhysX: cannot commit the shared memory of %u slots (error %lu)", initial, GetLastError());
+        return true;
+    }
+    g_ctl->game_pid = GetCurrentProcessId();
+    g_ctl->backend = cfg.exp_physx == 2 ? ipc::kBackendCpu : ipc::kBackendGpu;
+    g_ctl->step_hz = float(cfg.exp_physx_rate < 10 ? 10 : cfg.exp_physx_rate > 240 ? 240 : cfg.exp_physx_rate);
+    g_ctl->change_every = uint32_t(std::clamp(cfg.exp_physx_change_every, 1, 8));
+    g_ctl->cpu_threads = uint32_t(std::clamp(cfg.exp_physx_cpu_threads, 0, 16));
+    g_ctl->chunk_rest_strength = float(std::clamp(cfg.exp_physx_chunk_rest_strength, 1, 100));
+    g_ctl->chunk_crush_at_contact = cfg.exp_physx_chunk_crush_at_contact ? 1u : 0u;
+    g_ctl->chunk_wake_ahead = cfg.exp_physx_chunk_wake_ahead ? 1u : 0u;
+    g_ctl->snapshot_latest.store(1, std::memory_order_relaxed);
+    g_ring = g_base + kControlBytes;
+
+    g_map_name = name;
+    g_log_path = session::run_dir() + L"\\physx_host.log";
+    g_csv_path = cfg.telemetry ? session::run_dir() + L"\\physx_steps.csv" : std::wstring();  // ~10 MB an hour
+    g_want_in_process = cfg.exp_physx_in_process != 0 && sizeof(void*) == 8;
+    if (cfg.exp_physx_in_process && !g_want_in_process)
+        LOG("experiment PhysX: PhysXInProcess needs a 64-bit game (PhysX is 64-bit only): the host process instead");
+    if (!g_want_in_process) {
+        // The job ends the host when the game's last handle to it closes, that is when the game process ends however
+        // it ends. Job objects nest, so this works when the game itself runs in one (launchers, the test queue).
+        g_job = CreateJobObjectW(nullptr, nullptr);
+        if (g_job) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(g_job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+        }
+    }
+    if (launch_now) launch();  // a failure leaves it Failed: the game may start one again later
+    g_on = true;
+    session::add_frame_callback(&on_frame);
+    session::add_flush_handler(&on_exit);
+    if (!launch_now)
+        LOG("experiment PhysX: shared memory ready (%u MB), no host yet: it starts when the game asks for PhysX",
+            total >> 20);
+    if (max_bodies > initial)
+        LOG("experiment PhysX: the slots grow from %u up to %u while the GPU has room (OpenRFG64); %u MB of "
+            "shared memory reserved, committed as the slots are handed out", initial, max_bodies, total >> 20);
+    return true;
+}
+
+namespace {
+
+// Before each start: the control block's host-side and per-run fields as a new host expects them (install wrote the
+// layout and the settings once), and the bridge's view of the last host.
+void reset_control() {
+    g_ctl->host_state.store(uint32_t(ipc::HostState::Starting), std::memory_order_relaxed);
+    g_ctl->host_heartbeat.store(0, std::memory_order_relaxed);
+    g_ctl->host_pid.store(0, std::memory_order_relaxed);
+    g_ctl->host_gpu.store(0, std::memory_order_relaxed);
+    g_ctl->snapshot_latest.store(1, std::memory_order_relaxed);
+    g_ctl->query_done.store(0, std::memory_order_relaxed);
+    g_ctl->statics.store(0, std::memory_order_relaxed);
+    g_ctl->event_head.store(0, std::memory_order_relaxed);
+    g_ctl->event_tail.store(0, std::memory_order_relaxed);
+    g_ctl->vram_used_mb.store(0, std::memory_order_relaxed);
+    g_ctl->vram_total_mb.store(0, std::memory_order_relaxed);
+    g_ctl->gpu_heap_mb.store(0, std::memory_order_relaxed);
+    g_ctl->slots_capacity.store(0, std::memory_order_relaxed);
+    g_ctl->host_message[0] = '\0';
+    g_ctl->ring_head.store(0, std::memory_order_relaxed);
+    g_ctl->ring_tail.store(0, std::memory_order_relaxed);
+    g_ctl->quit.store(0, std::memory_order_release);
+    g_head = 0;
+    g_front = 2;
+    g_snapshot = nullptr;
+    g_fresh = false;
+    g_last_heartbeat = 0;
+    g_heartbeat_tick = 0;
+    g_step_tick = 0;
+    g_period_qpc = 0;
+    g_period_sequence = 0;
+    g_period_ms = 0;
+}
+
+// A host on the shared memory: the core's thread in the game's process, or the host process.
+bool launch() {
+    reset_control();
+    DWORD host_id = 0;
+    if (g_want_in_process) {
+        if (!start_in_process(g_map_name, g_log_path, g_csv_path, host_id)) {
+            g_state = State::Failed;
+            return false;
+        }
+    } else {
+        const std::wstring exe = session::plugin_dir() + L"\\rfgphysx\\rfgphysx_host.exe";
+        std::wstring cmd = quote(exe) + L" --map " + g_map_name + L" --log " + quote(g_log_path);
+        if (!g_csv_path.empty()) cmd += L" --steps-csv " + quote(g_csv_path);
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED | CREATE_NO_WINDOW,
+                            nullptr, (session::plugin_dir() + L"\\rfgphysx").c_str(), &si, &pi)) {
+            LOG("experiment PhysX: cannot start %ls (error %lu)", exe.c_str(), GetLastError());
+            g_state = State::Failed;
+            return false;
+        }
+        if (g_job && !AssignProcessToJobObject(g_job, pi.hProcess))
+            LOG("experiment PhysX: the host is not in a job object (error %lu); it ends when it sees the game gone",
+                GetLastError());
+        ResumeThread(pi.hThread);
+        CloseHandle(pi.hThread);
+        g_process = pi.hProcess;
+        g_in_process = false;
+        host_id = pi.dwProcessId;
+    }
+    g_state = State::Starting;
+    g_start_tick = GetTickCount();
+    ++g_launches;
+    LOG("experiment PhysX: %s%s (%s %lu, %s backend requested, %.0f Hz, %u body slots committed, %u MB shared memory)",
+        g_want_in_process ? "core started in the game's process" : "host started", g_launches > 1 ? " again" : "",
+        g_want_in_process ? "thread" : "pid", host_id, g_ctl->backend == ipc::kBackendCpu ? "CPU" : "GPU",
+        double(g_ctl->step_hz), g_committed, g_ctl->total_size >> 20);
+    return true;
+}
+
+}  // namespace
+
+bool installed() { return g_ctl != nullptr && g_on; }
+
+bool start() {
+    if (!installed()) return false;
+    if (g_state == State::Starting || g_state == State::Ready) return true;
+    if (g_state == State::Stopping) {
+        g_start_pending = true;
+        return true;
+    }
+    // Off, Failed or Lost: the last host must have ended (a stuck one still holds the shared memory).
+    if (g_process) {
+        if (WaitForSingleObject(g_process, 0) != WAIT_OBJECT_0) {
+            LOG("PhysX host: the last one has not ended; no new one starts");
+            return false;
+        }
+        CloseHandle(g_process);
+        g_process = nullptr;
+    }
+    return launch();
+}
+
+void stop() {
+    g_start_pending = false;
+    if (g_state != State::Starting && g_state != State::Ready) return;
+    g_ctl->quit.store(kQuitStop, std::memory_order_release);
+    g_state = State::Stopping;
+    g_stop_tick = GetTickCount();
+    LOG("PhysX host asked to stop");
+}
+
+State state() { return g_state; }
+
+bool active() { return g_state == State::Starting || g_state == State::Ready; }
+bool ready() { return g_state == State::Ready; }
+uint32_t max_bodies() { return g_ctl ? g_ctl->max_bodies : 0; }
+uint32_t committed_slots() { return g_committed; }
+
+bool commit_slots(uint32_t n) {
+    if (!g_ctl) return false;
+    n = std::min(n, g_ctl->max_bodies);
+    if (n <= g_committed) return true;
+    // Each snapshot: the poses of slots 0 .. n-1 after its header, and their state bytes (with 64 to spare: the game
+    // reads them 16 at a time) after max_bodies poses. Committing is per page and harmless when done already.
+    for (uint32_t k = 0; k < 3; ++k) {
+        uint8_t* s = g_base + g_ctl->snapshot_offset + size_t(k) * g_ctl->snapshot_stride;
+        uint8_t* states = s + sizeof(ipc::SnapshotHeader) + size_t(g_ctl->max_bodies) * sizeof(ipc::BodyPose);
+        const size_t state_bytes = std::min<size_t>(size_t(n) + 64, size_t(g_ctl->max_bodies));
+        if (!VirtualAlloc(s, sizeof(ipc::SnapshotHeader) + size_t(n) * sizeof(ipc::BodyPose), MEM_COMMIT, PAGE_READWRITE) ||
+            !VirtualAlloc(states, state_bytes, MEM_COMMIT, PAGE_READWRITE))
+            return false;
+    }
+    g_committed = n;
+    return true;
+}
+
+uint32_t vram_used_mb() { return g_ctl ? g_ctl->vram_used_mb.load(std::memory_order_relaxed) : 0; }
+uint32_t vram_total_mb() { return g_ctl ? g_ctl->vram_total_mb.load(std::memory_order_relaxed) : 0; }
+uint32_t gpu_heap_mb() { return g_ctl ? g_ctl->gpu_heap_mb.load(std::memory_order_relaxed) : 0; }
+bool host_gpu() { return g_ctl && g_ctl->host_gpu.load(std::memory_order_relaxed) != 0; }
+uint32_t shared_bytes() { return g_ctl ? g_ctl->total_size : 0; }
+float step_hz() { return g_ctl ? g_ctl->step_hz : 60.0f; }
+uint32_t frame() { return g_frame; }
+
+void set_test_flags(uint32_t flags) {
+    if (g_ctl) g_ctl->test_flags.store(flags, std::memory_order_relaxed);
+}
+
+uint64_t host_cpu_100ns() {
+    FILETIME created, exited, kernel, user;
+    // In the game's process: the core's own thread (PhysX's workers are the game's threads too).
+    if (!g_process || !(g_in_process ? GetThreadTimes(g_process, &created, &exited, &kernel, &user)
+                                     : GetProcessTimes(g_process, &created, &exited, &kernel, &user)))
+        return 0;
+    return ((uint64_t(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime) +
+           ((uint64_t(user.dwHighDateTime) << 32) | user.dwLowDateTime);
+}
+
+bool reset() {
+    ipc::CmdHeader h{uint16_t(ipc::Cmd::Reset), 0, sizeof(ipc::CmdHeader)};
+    return write(&h, sizeof(h));
+}
+
+bool add_static_plane(const ipc::Vec3& normal, float distance) {
+    ipc::StaticPlane c{};
+    c.normal = normal;
+    c.distance = distance;
+    return send(ipc::Cmd::AddStaticPlane, c);
+}
+
+bool add_static_box(const ipc::Vec3& pos, const ipc::Quat& rot, const ipc::Vec3& half_extents) {
+    ipc::StaticBox c{};
+    c.pos = pos;
+    c.rot = rot;
+    c.half_extents = half_extents;
+    return send(ipc::Cmd::AddStaticBox, c);
+}
+
+bool shape_box(uint32_t shape, const ipc::Vec3& half_extents) {
+    ipc::ShapeBox c{};
+    c.shape = shape;
+    c.half_extents = half_extents;
+    return send(ipc::Cmd::ShapeBox, c);
+}
+
+bool shape_convex(uint32_t shape, const ipc::Vec3* vertices, uint32_t count) {
+    if (count < 4 || count > 255) return false;
+    std::vector<uint8_t> buf(sizeof(ipc::ShapeConvex) + count * sizeof(ipc::Vec3));
+    auto* c = reinterpret_cast<ipc::ShapeConvex*>(buf.data());
+    c->h = {uint16_t(ipc::Cmd::ShapeConvex), 0, uint32_t(buf.size())};
+    c->shape = shape;
+    c->vertex_count = count;
+    memcpy(c + 1, vertices, count * sizeof(ipc::Vec3));
+    return write(buf.data(), uint32_t(buf.size()));
+}
+
+bool create_body(uint32_t slot, uint32_t shape, const ipc::Vec3& pos, const ipc::Quat& rot, const ipc::Vec3& lin_vel,
+                 const ipc::Vec3& ang_vel, float density, uint32_t flags, float break_force_kn) {
+    ipc::CreateBody c{};
+    c.slot = slot;
+    c.shape = shape;
+    c.pos = pos;
+    c.rot = rot;
+    c.lin_vel = lin_vel;
+    c.ang_vel = ang_vel;
+    c.density = density;
+    c.flags = flags;
+    c.break_force_kn = break_force_kn;
+    c.made_qpc = session::qpc();
+    return send(ipc::Cmd::CreateBody, c);
+}
+
+bool destroy_body(uint32_t slot, bool quiet) {
+    ipc::DestroyBody c{};
+    c.slot = slot;
+    c.quiet = quiet ? 1u : 0u;
+    return send(ipc::Cmd::DestroyBody, c);
+}
+
+bool explosion(const ipc::Vec3& center, float radius, float impulse, float up) {
+    ipc::Explosion c{};
+    c.center = center;
+    c.radius = radius;
+    c.impulse = impulse;
+    c.up = up;
+    return send(ipc::Cmd::Explosion, c);
+}
+
+bool test_crash() {
+    ipc::CmdHeader h{uint16_t(ipc::Cmd::TestCrash), 0, sizeof(ipc::CmdHeader)};
+    return write(&h, sizeof(h));
+}
+
+bool send_record(const void* record, uint32_t size) { return write(record, size); }
+
+uint32_t ring_used() {
+    if (!g_ctl || (g_state != State::Starting && g_state != State::Ready)) return 0;
+    return g_head - g_ctl->ring_tail.load(std::memory_order_acquire);
+}
+
+uint32_t ring_free() {
+    if (!g_ctl || (g_state != State::Starting && g_state != State::Ready)) return 0;
+    const uint32_t used = g_head - g_ctl->ring_tail.load(std::memory_order_acquire);
+    const uint32_t to_end = kRingSize - (g_head & (kRingSize - 1));
+    const uint32_t free = kRingSize - used;
+    // The largest record that fits: records never straddle the end of the ring (a pad record fills it first).
+    const uint32_t here = free < to_end ? free : to_end;
+    const uint32_t wrapped = free > to_end ? free - to_end : 0;
+    return here > wrapped ? here : wrapped;
+}
+
+bool raycast_batch(uint32_t request, const ipc::Ray* rays, uint32_t count) {
+    if (count > ipc::kMaxRays) count = ipc::kMaxRays;
+    std::vector<uint8_t> buf(sizeof(ipc::RaycastBatch) + size_t(count) * sizeof(ipc::Ray));
+    auto* c = reinterpret_cast<ipc::RaycastBatch*>(buf.data());
+    c->h = {uint16_t(ipc::Cmd::RaycastBatch), 0, uint32_t(buf.size())};
+    c->request = request;
+    c->count = count;
+    memcpy(c + 1, rays, size_t(count) * sizeof(ipc::Ray));
+    return write(buf.data(), uint32_t(buf.size()));
+}
+
+uint32_t query_done() { return g_ctl ? g_ctl->query_done.load(std::memory_order_acquire) : 0; }
+const float* query_results() { return g_ctl ? reinterpret_cast<const float*>(g_base + g_ctl->query_offset) : nullptr; }
+const uint32_t* query_hit_kinds() {
+    return g_ctl ? reinterpret_cast<const uint32_t*>(g_base + g_ctl->query_offset + ipc::kMaxRays * sizeof(float)) : nullptr;
+}
+uint32_t host_statics() { return g_ctl ? g_ctl->statics.load(std::memory_order_relaxed) : 0; }
+
+uint32_t take_events(ipc::ContactEvent* out, uint32_t max) {
+    if (!g_ctl || !g_ctl->event_count) return 0;
+    const uint32_t head = g_ctl->event_head.load(std::memory_order_acquire);
+    uint32_t tail = g_ctl->event_tail.load(std::memory_order_relaxed);
+    const auto* ring = reinterpret_cast<const ipc::ContactEvent*>(g_base + g_ctl->event_offset);
+    uint32_t n = 0;
+    for (; tail != head && n < max; ++tail, ++n) out[n] = ring[tail & (g_ctl->event_count - 1)];
+    g_ctl->event_tail.store(tail, std::memory_order_release);
+    return n;
+}
+
+float step_period_ms() { return std::clamp(g_period_ms, 1000.0f / step_hz(), 250.0f); }
+
+const ipc::SnapshotHeader* snapshot(bool* fresh) {
+    if (fresh) *fresh = g_fresh;
+    return g_state == State::Ready ? g_snapshot : nullptr;
+}
+
+FrameStats take_frame() {
+    FrameStats f = g_stats;
+    f.state = g_state;
+    g_stats.snapshots = 0;
+    g_stats.take_us = 0;
+    g_stats.cmd_bytes = 0;
+    g_stats.cmd_dropped = 0;
+    return f;
+}
+
+}  // namespace pxbridge

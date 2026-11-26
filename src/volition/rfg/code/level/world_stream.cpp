@@ -43,6 +43,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 // ---- file-static globals
 static float Stream_debug_cull_dist = 1277.5f; // 0x01668AF4
@@ -770,8 +771,17 @@ bool world::stream_zone(world_zone* wz)
 }
 
 // 0x0091D790 (:1061)
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+// world's private methods: their seams are members of a friend of world (world.h).
+struct openrfg_seams_world
+{
+    using destream_zone_t = openrfg_seam_t<openrfg_seam_original<&world::destream_zone>::handler>;
+    static destream_zone_t destream_zone;
+};
+openrfg_seams_world::destream_zone_t openrfg_seams_world::destream_zone("world::destream_zone", nullptr, &openrfg_seam_original<&world::destream_zone>::body);
 void world::destream_zone(world_zone* wz)
 {
+    OPENRFG_SEAM_ENTER(openrfg_seams_world::destream_zone, this, wz);
     if (wz == nullptr)
     {
         return;

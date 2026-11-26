@@ -19,6 +19,7 @@
 // - script_point_finish_death calls script_point_destroy even when the effect was not stopped.
 
 #include "volition/rfg/code/objects/movers/object_mover.h"
+#include "backends/keep_debris.h" // OpenRFG (backends: keep debris)
 
 #include "volition/rfg/code/code_effects/explosion.h"
 #include "volition/rfg/code/code_effects/explosion_shared.h"
@@ -1652,6 +1653,10 @@ bool object_mover_is_fading_for_delete(const object_mover* mover)
 // Starts the delete fade after time_until_fade ms (once).
 void object_mover_mark_for_fade(object_mover* mover, int time_until_fade)
 {
+    if (!openrfg_keep_debris_fade_allowed()) // OpenRFG (backends): kept debris does not fade
+    {
+        return;
+    }
     if (mover != nullptr && mover->fade_out_timer.valid())
     {
         return;

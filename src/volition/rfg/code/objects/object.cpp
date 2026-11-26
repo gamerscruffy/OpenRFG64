@@ -52,6 +52,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 // ---- globals
 float Shard_fade_dist0_sqr = 1225.0f; // 0x0169453C, 35 m: shards with an odd subpiece index fade beyond this
@@ -962,8 +963,17 @@ bool object::attach_index_is_valid(int index)
 }
 
 // 0x00710C90 (.h:371)
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+// A virtual method: its original calls object's body qualified. rfgphys acts on obj_zone's objects only.
+static void seam_object_process_bullet_hit(object* self, human* attacker, float damage, const weapon_fire_info& fire_info)
+{
+    openrfg_seam_skip = true;
+    self->object::process_bullet_hit(attacker, damage, fire_info);
+}
+OPENRFG_SEAM_VIRTUAL(Seam_object_process_bullet_hit, void (*)(object*, human*, float, const weapon_fire_info&), "object::process_bullet_hit", &seam_object_process_bullet_hit);
 void object::process_bullet_hit(human* attacker, float damage, const weapon_fire_info& fire_info)
 {
+    OPENRFG_SEAM_ENTER(Seam_object_process_bullet_hit, this, attacker, damage, fire_info);
 }
 
 // 0x00710CA0 (.h:374)
@@ -1169,8 +1179,11 @@ void object_level_init_post()
 
 // 0x00AB3A50 (:1241)
 // object_item_level_shutdown (the items and their high-res textures) is inlined in rfg.exe.
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_object_level_shutdown, &object_level_shutdown, "object_level_shutdown");
 void object_level_shutdown()
 {
+    OPENRFG_SEAM_ENTER0(Seam_object_level_shutdown);
     projectile_destroy_all();
     player_level_shutdown_all();
     npc_free_all();

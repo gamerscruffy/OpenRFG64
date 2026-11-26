@@ -87,6 +87,7 @@
 
 #include <new>
 #include <stdio.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 // ---- globals and file statics compiled since P3
 unsigned char Riot_shield_melee_group = 0xFF; // 0x01694365, invalid melee group
@@ -1172,8 +1173,11 @@ static bool process_combat_hit_callback(object* hit_objp, void* info)
 // Sweeps a sphere of the move's cast radius along ray_in and hits each object once: the hit closest along the cast for
 // every object, humans only near the first hit. Every hit object takes the melee hit; the first one per swing plays the
 // melee material effect, and a hit shakes the camera.
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_human_combat_process_hits, &human_combat_process_hits, "human_combat_process_hits");
 void human_combat_process_hits(human* hp, raycast_input& ray_in, bool ignore_ground)
 {
+    OPENRFG_SEAM_ENTER(Seam_human_combat_process_hits, hp, ray_in, ignore_ground);
     const weapon_info* w_info = human_weapons_get_weapon_info(hp);
     if (w_info == nullptr || hp->combat.cur_melee_combat_move == nullptr)
     {

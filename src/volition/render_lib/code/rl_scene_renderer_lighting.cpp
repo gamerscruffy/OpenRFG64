@@ -16,6 +16,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include "backends/seams.h"
 
 void openrfg_log(const char* text); // crash_early.cpp
 extern bool g_spotShadowVisEnabled; // rl_scene_shadows.cpp
@@ -152,8 +153,12 @@ bool sort_lights_by_distance(rl_light* const& l1, rl_light* const& l2)
 // Per light (sorted by distance to the camera): the shadow map cleared to white (when there is one), the light set as
 // a secondary light, the additive light pass state (begin_lighting_pass, inlined), the terrain and the batch of the
 // light's visibility pass (all passes when it has none), then the macro state back.
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer's light shadows and global illumination attach their
+// hook here.
+OPENRFG_SEAM(Seam_rl_scene_renderer_render_lighting_passes, &rl_scene_renderer::render_lighting_passes, "rl_scene_renderer::render_lighting_passes");
 void rl_scene_renderer::render_lighting_passes(rl_renderer& renderer, rl_camera& camera, rl_light& primary_light, rl_batched_pass& batch_to_use, rl_renderable_instance** transparent_casters, unsigned int num_transparent_casters, const bool msaa_enabled)
 {
+    OPENRFG_SEAM_ENTER(Seam_rl_scene_renderer_render_lighting_passes, this, renderer, camera, primary_light, batch_to_use, transparent_casters, num_transparent_casters, msaa_enabled);
     Reference_pos = camera.get_position();
     m_visible_lights.sort(sort_lights_by_distance);
     // OpenRFG: stage 1 of the dynamic light shadows, the nearest spot light's shadow map (the Ctrl+Shift+K debug view).

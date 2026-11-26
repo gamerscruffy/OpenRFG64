@@ -1,0 +1,248 @@
+#pragma once
+#include <cstdint>
+#include <string>
+
+// Settings come from rfgphys.ini next to the plugin. Every key can be overridden by an environment variable
+// named RFGPHYS_<SECTION>_<KEY> (upper case), which is how queue jobs configure a run.
+struct Config {
+    bool enabled = true;
+    std::wstring output_dir;          // parent folder for per-session run folders
+    int keep_sessions = 0;            // > 0: only the newest this many session folders are kept (General.KeepSessions)
+    // A gameplay frame that has not ended after this many seconds while a game thread spins (in unattended runs:
+    // whatever the threads do) ends the process with a hang report in the log (core/hang_watch.h); 0: off.
+    int hang_s = 30;
+
+    bool telemetry = true;
+    bool contact_counters = true;     // count contact-point callbacks per frame
+    int draw_stacks = 0;              // > 0: while a test asks (the viewpoints), one draw in N records the game code on
+                                      // its stack (draw_stacks.csv; telemetry/telemetry.cpp)
+    bool render_census = false;       // count constant-buffer uploads and occlusion queries (telemetry/render_census.h;
+                                      // costs the render thread ~0.2 ms in heavy frames)
+    bool cb_redundancy = false;       // diagnostic: detect repeated constant-buffer uploads (costs render-thread time)
+    bool render_routing = false;      // diagnostic: how destroyable models (debris) are drawn (physx/render_routing.h)
+
+    bool profiler = false;            // sampling profiler (needs telemetry)
+    int profiler_interval_us = 1000;
+    bool profiler_gameplay_only = true;
+
+    int exit_after_main_menu_s = 0;   // > 0: quit this many seconds after the main menu first appears
+    int exit_after_gameplay_s = 0;    // > 0: quit this many seconds after gameplay first starts
+    int exit_after_s = 0;             // > 0: watchdog, quit this many seconds after start-up
+    int test_hang_after_s = 0;        // > 0: diagnostic, the sim thread spins forever this many seconds into
+                                      // gameplay (tests the hang watch, core/hang_watch.h)
+    bool test_zone_cycle = false;     // blow up buildings near the player, teleport away until their zone streams
+                                      // out, and back (test/zone_cycle.h)
+    int test_zone_tour = 0;           // > 0: that many hops across the open world instead, one every 15 s, blowing
+                                      // up buildings after each landing (test/zone_cycle.h)
+    bool test_fly_camera = false;     // a scripted fly camera flight with screenshots (dev/fly_camera.h)
+    bool test_stand_in_drives_zone = false;  // stand-ins without property 7, as before 0.3.3: they move the zone
+                                             // object they carry (physx/debris_offload.cpp; comparisons only)
+    bool test_stand_in_probe = false; // every 2 s: a ray through a piece's stand-in and a blow on it, checked
+                                      // (physx/debris_offload.cpp)
+    bool test_vehicle_push = false;   // a vehicle moved through rubble in PhysX, checked (test/vehicle_push.h)
+    int test_chunk_fall = 0;          // one building's collapse filmed, the loose chunks logged (test/chunk_fall.h)
+    bool test_chunk_fall_no_stress = false;  // and with the game's stress evaluation off
+    int test_restore_building = 0;    // > 0: that many times, a building blown up and restored by the game takes
+                                      // its debris along, checked (test/restore_building.h)
+    int test_stress_pieces = 0;       // > 0: the buildings near the player blown up and restored over and over, their
+                                      // rubble kept, up to that many pieces, measured (test/stress_pieces.h)
+    int test_stress_radius_m = 120;   // StressPieces: the buildings within this distance of the player
+    int test_stress_start_s = 15;     // StressPieces: seconds of gameplay before the first cycle
+    int test_view_shots = 0;          // 1: a screenshot a second for 40 s while the camera turns, and the frame
+                                      // times; > 1: that many seconds, in bursts (test/view_shots.h)
+    int test_viewpoints = 0;          // replays: after the last frame the view holds at viewpoints around the debris,
+                                      // frame times and screenshots (test/viewpoints.h); 2-4: the same with all
+                                      // debris, the piles or the pieces of their own put out of sight first
+    bool test_solver_guard = false;   // at start-up, atom lists Havok's solver setup would loop on go through it,
+                                      // checked (experiments/debris_collision.cpp)
+    int test_havok_audit = 0;         // 1: Havok's island totals checked against their constraints around every
+                                      // step and before every solve, 2: also repaired (experiments/havok_audit.h)
+    bool test_havok_audit_jobs = false;  // with HavokAudit: also after each post-collide job and island split (slower:
+                                         // it changes the jobs' timing)
+    bool test_havok_jobs_on_sim_thread = false;  // with HavokThreads: every job of the multithreaded step on the sim
+                                                 // thread (the multithreaded pipeline in one fixed order, no races)
+    std::wstring test_visit;          // x,z,tx,tz: the player goes to (x, z) facing (tx, tz) (test/visit.h)
+    int test_stream_report = 0;       // > 0: that many seconds into gameplay, the failed stream containers and the
+                                      // building types' ones are logged (test/stream_report.h)
+    std::wstring test_inspect_frames; // replay frames (comma-separated) at which what the camera looks at is logged
+                                      // (physx/debris_offload.cpp)
+    bool auto_load_save = false;      // main menu -> Load Game -> most recent save, without input
+    bool block_save_writes = false;   // never write or erase save data (always on for unattended runs)
+    bool test_god_mode = false;       // the player takes no damage (run_game.ps1 runs; test/automation.cpp)
+    bool test_reset_destruction = false;  // AutoLoadSave loads with the world's destruction reset (buildings back up)
+    bool test_auto_new_game = false;  // main menu -> New Game (normal, no golden hammer), intro skipped, without input
+
+    // Experiments (change game behaviour; off by default, never applied in multiplayer).
+    // Debris collides with debris (experiments/debris_collision.h): 0 off, 1 collisions only (the game's impact
+    // logic is skipped for debris-debris contacts, so pieces never damage each other), 2 collisions and the game's
+    // impact logic (debris damages debris and breaks it up).
+    int exp_debris_collide = 0;
+    // With DebrisCollide: size of Havok's island solver buffer in MB (the game uses 1 MB and deletes the debris of
+    // islands that need more; colliding debris merges into such islands). 1 or less keeps the game's buffer. Either
+    // way it grows, up to 96 MB, for an island that needs more.
+    int exp_solver_buffer_mb = 16;
+    // GPU occlusion queries (RL_gpu_vis_enabled): 1 the game's default, 0 off (every object counts as visible to
+    // the occlusion pass; frustum and distance culling stay).
+    int exp_gpu_occlusion = 1;
+    // Shadow cascades: objects whose bounding sphere radius is below this (cm) cast no shadow into the far / mid /
+    // near cascade (0: the game's behaviour). Small objects there are a few shadow-map texels at most.
+    int exp_shadow_min_radius_far_cm = 0;
+    int exp_shadow_min_radius_mid_cm = 0;
+    int exp_shadow_min_radius_near_cm = 0;
+    // A batched render pass draws at most 4,096 instances one by one (rl_batched_pass::m_unbatched_renderables, a
+    // static array); past that, instances are not drawn that frame. > 4,096: room for this many (up to 65,536).
+    int exp_unbatched_cap = 0;
+    // A frame draws at most 24,576 instances batched (instanced; past that, partition_batched_instances drops whole
+    // material batches), from a per-frame stream of 30,247 instances and a 1.5 MB GPU instancing buffer. > 24,576:
+    // room for this many (up to 262,144).
+    int exp_batched_cap = 0;
+    // Havok steps the world with its multithreaded simulation on the sim thread plus this many worker threads
+    // (experiments/havok_mt.h); 0 keeps the game's single-threaded step. At most 11. -1: by the processor, one worker
+    // per core beyond the game's sim and render threads, 1 to 5 (5 on 8 cores / 16 threads).
+    int exp_havok_threads = 0;
+    bool exp_havok_threads_auto = false;  // set from HavokThreads=-1
+    // With HavokThreads: hkpWorldCinfo::m_minDesiredIslandSize of the multithreaded world. Havok merges islands
+    // smaller than this into "sparse" islands (fewer, larger jobs), which sleep only when all their bodies rest;
+    // 0 (default) keeps islands as small as the single-threaded game has them, -1 keeps Havok's 64.
+    int exp_havok_min_island_size = 0;
+    // The game stops removing debris (experiments/keep_debris.h): no shatter-time deletions, fade-outs or load
+    // governor deletions, in single player.
+    int exp_keep_debris = 0;
+    // general_mover pool size (debris pieces); 0 keeps the game's 3,072. Up to 65,000.
+    int exp_debris_pool = 0;
+    // Render instances for building chunks and debris pieces (rl_destroyable_model_instance); 0 keeps the game's
+    // 2,100. Shattering stops creating pieces when they run out.
+    int exp_render_instances = 0;
+    // Havok's heap in MB; 0 (or up to 75) keeps the game's 75 MB. Colliding piles need about 15 KB per piece.
+    int exp_havok_heap_mb = 0;
+    // With KeepDebris: object handles kept free in each world zone (a zone has 7,280); below it the debris farthest
+    // from the camera is recycled. 200 to 5,000.
+    int exp_zone_reserve = 1200;
+    // PhysX host process (physx/bridge.h): 0 off, 1 GPU (CPU when CUDA is unavailable), 2 CPU.
+    int exp_physx = 0;
+    int exp_physx_rate = 60;            // fixed steps per second
+    // Bodies freeze, thaw, come and go every so many steps: a step in which none does sorts the broad phase once
+    // instead of twice (research/docs/08 §14). 1: every step.
+    int exp_physx_change_every = 3;
+    int exp_physx_cpu_threads = 0;      // PhysX's CPU threads in the host; 0: 4 with GPU dynamics, 6 without
+    int exp_physx_in_process = 0;       // 64-bit games: 1 runs the host's loop on a thread of the game (rfgphysx_core.dll)
+    int exp_physx_max_bodies = 65536;   // body slots (shared memory: 192 bytes per slot); 64-bit: the slots at start
+    // OpenRFG64 (64-bit only): the slots grow from PhysXMaxBodies while the GPU has room, up to PhysXSlotsMax;
+    // room: every program's graphics memory in use stays under the GPU's total less PhysXVramReserveMB (0: an eighth
+    // of it, at least 2 GB). PhysXRecycleMinAgeS: pieces this young are given up last (the farthest go when the slots
+    // cannot grow or the render instances run short).
+    int exp_physx_slots_max = 4194304;
+    int exp_physx_vram_reserve_mb = 0;
+    int exp_physx_recycle_min_age_s = 60;
+    // X0 test scene (physx/test_scene.h): bodies dropped once gameplay starts, and the seconds after which the host
+    // is told to crash (0: never).
+    int exp_physx_test = 0;
+    int exp_physx_test_crash_after_s = 0;
+    // X1 groundwork (physx/collision_survey.h): walk the static world's Havok shapes 5 s into each level and log them.
+    int exp_collision_survey = 0;
+    // X1 (physx/world_mirror.h): mirror Havok's static world into the PhysX host; and check it with raycasts.
+    int exp_physx_world = 0;
+    int exp_physx_world_check = 0;
+    int exp_physx_world_hf = 0;  // diagnostic: bit 0 x-major heights, bit 1 flipped height-field split
+    // OpenRFG64 (big maps): a level whose static world makes more statics in the host than PhysXWorldStatics is
+    // mirrored in part: what is within PhysXWorldNearM of the player, and of the other buildings the pieces near the
+    // debris in PhysX and near where pieces wait to come over (0: always the whole static world, rfg.exe's default).
+    // A map of 48 tall buildings makes about 383,000 statics; one of 480, 4.1 million, which never got there.
+#if defined(_WIN64)
+    int exp_physx_world_statics = 400000;
+#else
+    int exp_physx_world_statics = 0;
+#endif
+    int exp_physx_world_near_m = 60;
+    // X2 (physx/debris_offload.h): debris pieces leave the game for the PhysX host (needs PhysX and PhysXWorld).
+    int exp_physx_debris = 0;
+    int exp_physx_debris_batch = 1;  // their render instances stay batchable (drawn instanced; 0: one by one)
+    // With it: the compiled meshes the game builds for every piece (unused when drawn batched) are given back.
+    int exp_physx_debris_drop_meshes = 1;
+    // With it: still pieces of one building lying in one cell are drawn as one compiled instance (a pile), as a
+    // standing building is; a piece PhysX wakes leaves its pile again (physx/debris_offload.cpp, piles).
+    int exp_physx_debris_piles = 0;
+    int exp_physx_debris_pile_cell_m = 16;  // the cells piles are made in (m): larger, fewer piles and draws
+    // A cell's few still pieces (too few for a pile of their own) join their building's pile in a cell next to it
+    // once the first of them has been still this long (s; 0: never), so a cell first gets the chance of its own pile.
+    int exp_physx_debris_pile_next_door_s = 10;
+    // A pile takes pieces up to this many (0: no limit); then its cell starts another. Every change recompiles a
+    // pile's whole mesh, and it draws piece by piece until the new one is made.
+    int exp_physx_debris_pile_max_pieces = 512;
+    // Heavy pieces (Character_collision_push_away_mass or more) near the player get Havok stand-ins, so the player
+    // stands on rubble; the player's capsule in PhysX pushes only the light ones.
+    int exp_physx_solid_debris = 0;
+    int exp_physx_solid_mass_kg = 0;  // with it: pieces this heavy or more are solid (0: the game's push-away mass)
+    // A new piece stays in Havok this long (game ms) before it goes to PhysX: what it hits and lies on the game feels.
+    int exp_physx_adopt_delay_ms = 2000;
+    // World-only pieces (RFG_WORLD_ONLY: every small one in Wrecking Crew) do not wait: in Havok they went through
+    // buildings meanwhile, the avenue map's ground among them (research/docs/07, B5a).
+    bool exp_physx_world_only_at_once = true;
+    // Loose building chunks are simulated in PhysX, their Havok bodies keyframed to it (research/docs/08, C1); off: they
+    // stay in Havok with kinematic pushers in PhysX.
+    bool exp_physx_chunks = false;
+    // Their impacts there become the game's destruction contacts at this share of their energy (C2; 100: as Havok's).
+    // What a part breaking off takes from a driven chunk's kinetic energy (research/docs/08 §12), J per kg of the part:
+    // how far a block crushes before it stops. 0: no part breaks on impact.
+    int exp_physx_chunk_crush_j_per_kg = 250;
+    // chunk_trace.csv in the run's folder: how each loose chunk came and went; 1: also each one, each frame and host step.
+    int exp_physx_chunk_trace = 0;
+    // How strong a driven chunk's parts are (research/docs/08 §12): a part carrying more kN than this breaks off, so a
+    // big block coming down keeps going, crushing from the bottom up, instead of stopping dead; a small chunk's weight
+    // is well under it. 0: no part breaks on impact.
+    int exp_physx_chunk_break_kn = 50;
+    // How much of the energy a driven chunk loses as its parts break goes to cracking it (research/docs/08 §17), in percent:
+    // a chunk that has banked enough to break the links across a section near the hit splits there. 0: no cracks.
+    int exp_physx_chunk_crack_percent = 3;
+    // A part's strength and the energy it takes follow its material in the game's table, against normal concrete: glass goes
+    // first, steel holds. Off: every part alike.
+    bool exp_physx_chunk_materials = true;
+    // What a building loses where a driven chunk breaks against it, in percent of the mass the chunk loses there. 0: only what
+    // the game's own contact breaks.
+    int exp_physx_chunk_stump_percent = 100;
+    // A driven chunk snaps under its own weight where the load past a section would bend it this far before the links across
+    // it take more than that gives (milliradians, research/docs/08 §17). More: sooner. 0: it does not snap.
+    int exp_physx_chunk_snap_mrad = 20;
+    int exp_physx_chunk_rest_strength = 6;  // times its strength when hit, a part under a load lying still
+    bool exp_physx_chunk_crush_at_contact = true;  // what crushing takes comes off where the parts broke, so it can tip the chunk
+    bool exp_physx_chunk_wake_ahead = true;        // a chunk wakes only the rubble ahead of it and on it, not all round it
+
+    // Fly camera for screenshots (dev/fly_camera.h; development, off in the release settings).
+    bool fly_camera = false;
+    int fly_camera_key = 0x79;        // virtual-key code of the toggle (F10)
+    int fly_camera_speed = 10;        // m/s
+    int fly_camera_look_speed = 100;  // mouse and arrow-key turning, percent
+    bool fly_camera_hide_hud = true;  // the HUD is hidden while flying
+
+    // Record/replay harness (harness/harness.h).
+    int harness_mode = 0;                 // 0 off, 1 record, 2 replay
+    std::wstring harness_recordings_dir;  // record: new recordings go here
+    std::wstring harness_recording;       // replay: the recording folder to play back
+    std::wstring harness_save_dir;        // the game's save folder (recordings copy the loaded save from here)
+    uint32_t harness_seed = 0x5EED2026;   // seeds both random generators at the start of a recording
+    int harness_checkpoint_interval = 30; // frames between state checkpoints
+    bool harness_virtual_clock = true;    // wall-clock reads on the sim thread follow recorded frame times
+    std::wstring harness_auto_start;      // record: "wc" starts a Wrecking Crew match without input (self-tests)
+    std::wstring harness_auto_start_from; // record: with AutoStart=wc, use this recording's Wrecking Crew setup
+    std::wstring harness_auto_start_options;  // record: with AutoStart=wc, this setup (wrecking_crew_options as hex)
+    std::wstring harness_input_script;    // record: scripted input instead of keyboard and mouse (self-tests)
+    std::wstring harness_input_from;      // record: another recording's input frames instead of keyboard and mouse
+    int harness_max_frames = 0;           // record: end the recording after this many frames (0: no limit)
+    bool harness_trace_rng = false;       // diagnostic: log every random draw on the sim thread (rng_trace.csv)
+    std::wstring harness_screenshot_frames;  // comma-separated frame numbers to capture (shot_<frame>.png)
+    int harness_screenshot_every = 0;     // also capture every N frames (0: off)
+    int harness_shots_after_blow = 0;     // a shot on each of the next N frames after a wide melee blow or a burst
+    int harness_leave_level_at_end = 0;   // replay: leave the level after the last frame, then end (tests level end)
+    int harness_replay_passes = 1;        // replay: a replay that ends at the main menu plays again, this many times in
+                                          // all, in the same process (a second session after a level end)
+    bool harness_replay_real_time = false;  // replay: frames take as long as they did when recorded (live pacing)
+    std::wstring harness_dump_objects_frames;  // comma-separated frame numbers: objects_<frame>.csv (diagnostic)
+    bool harness_track = true;            // record and replay the player track (harness/track.h); 0: no track hooks
+    bool harness_lock_track = true;       // replay: lock camera, player and shots to the recording's track.bin
+    int harness_track_tolerance_cm = 25;  // replay: put the player back when this far off the recorded path
+
+    std::wstring ini_path;
+};
+
+Config load_config(const std::wstring& ini_path);
+std::string describe(const Config& c);

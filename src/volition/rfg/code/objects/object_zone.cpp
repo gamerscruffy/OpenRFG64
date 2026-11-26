@@ -37,6 +37,7 @@
 #include <float.h>
 #include <math.h>
 #include <string.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 // ---- file-static globals
 static object_pool<obj_zone,OPENRFG_MAX_ZONES,1> obj_zonepool; // 0x03042670
@@ -552,8 +553,17 @@ const object_type obj_zone::get_type_static()
 }
 
 // 0x00A71600 (.h:47)
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+// A virtual method: its original calls obj_zone's body qualified.
+static bool seam_obj_zone_process_melee_hit(obj_zone* self, object* attacker, float damage, const vector& impulse, const vector& hit_pos, const vector& hit_normal, unsigned int shape_key, const weapon_info& w_info)
+{
+    openrfg_seam_skip = true;
+    return self->obj_zone::process_melee_hit(attacker, damage, impulse, hit_pos, hit_normal, shape_key, w_info);
+}
+OPENRFG_SEAM_VIRTUAL(Seam_obj_zone_process_melee_hit, bool (*)(obj_zone*, object*, float, const vector&, const vector&, const vector&, unsigned int, const weapon_info&), "obj_zone::process_melee_hit", &seam_obj_zone_process_melee_hit);
 bool obj_zone::process_melee_hit(object* attacker, float damage, const vector& impulse, const vector& hit_pos, const vector& hit_normal, unsigned int shape_key, const weapon_info& w_info)
 {
+    OPENRFG_SEAM_ENTER(Seam_obj_zone_process_melee_hit, this, attacker, damage, impulse, hit_pos, hit_normal, shape_key, w_info);
     return false;
 }
 

@@ -71,6 +71,7 @@
 #include "volition/vlib/code/time/timestamp.h"
 
 #include <string.h>
+#include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
 static const int MAX_EXPLOSION_TARGETS = 256;
 static const int MAX_PENDING_EXPLOSIONS = 20;
@@ -411,8 +412,11 @@ bool explosion_clear_all_pending()
 // 0x006EC720 (:605)
 // Queues an explosion (multiplayer clients only from the server). With more than 5 pending, gauss rifle hits only
 // play their effect. When the queue is full, the movers hear that their source exploded.
+// OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
+OPENRFG_SEAM(Seam_explosion_create, &explosion_create, "explosion_create");
 void explosion_create(const explosion_info* p_explosion_info, object* source, object* owner, const vector& position, const matrix& orientation, const vector* dir, const weapon_info* w_info, bool from_server)
 {
+    OPENRFG_SEAM_ENTER(Seam_explosion_create, p_explosion_info, source, owner, position, orientation, dir, w_info, from_server);
     static unsigned int gauss_rifle_info_handle; // $S6 guards its lookup
     static bool gauss_rifle_info_handle_set;
     if (Multiplayer && !multi_is_server() && !from_server)

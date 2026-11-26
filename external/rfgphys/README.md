@@ -1,0 +1,155 @@
+# rfgphys: GPU physics for Red Faction Guerrilla Re-Mars-tered
+
+<div align="center">
+  <a href="https://discord.gg/EmmwryzskU">
+        <img src="https://img.shields.io/discord/1324804381610213407?color=blue&labelColor=555555&label=&logo=discord&style=for-the-badge"
+            alt="Chat on Discord"></a>
+</div>
+
+> [!WARNING]
+> This patch has been pretty much entirely been generated using AI; 
+> I won't and will never claim to have enough knowledge or expertise to do this 
+> kind of reverse-engineering by myself; I've tested multiple wrecking crew levels (almost all of them)
+> and a couple hours of the singleplayer campaign (reached out of Parker)
+> and so far spotted no major issues (on my machine ofc, if you have issues feel free to open an Issue)
+> this patch currently probably only works for the latest GOG and Steam versions of the game.
+> If you're interested and want more (human generated) info, I have a blog post [here](https://slop-blog.enkhayzomachines.net/posts/red-faction-guerrilla-physx-integration) :)
+
+A mod for *Red Faction Guerrilla Re-Mars-tered* (GOG and Steam) that keeps every piece of debris and keeps heavy
+destruction fast. The debris is simulated by NVIDIA PhysX 5 on the graphics card, in a 64-bit process of its own, while
+the game (a 32-bit program) keeps drawing it.
+
+- Debris is never removed: buildings you bring down stay as rubble.
+- Debris collides with debris and breaks it up, explosions throw piles around, and you can stand on heavy rubble while
+  lighter pieces get pushed aside.
+- Loose parts of buildings (the top of a building shot out from under itself, the sections it breaks into) are PhysX
+  bodies too: they tip and roll, crack into sections along their weakest links, crush what they land on, and break by
+  what they are made of.
+- The game's own physics (Havok) runs on several CPU cores, and heavy scenes get two rendering tweaks.
+- Works in the campaign and in Wrecking Crew; never applied in multiplayer.
+
+Tested with over 39,000 debris pieces in a single Wrecking Crew match, at about 90 FPS (1% lows about 47 FPS) on an
+NVIDIA RTX 4090 with an 8-core CPU. The unmodded game has room for only about 2,000-3,000 pieces and deletes the rest.
+
+## Install
+
+Download a release and extract it into the game folder, the one with `rfg.exe`. The bundled `rfgphys_README.txt`
+([tools/release/README.txt](tools/release/README.txt)) covers requirements, settings, uninstalling and known
+limitations.
+
+- **GOG or Steam version.** With any other `rfg.exe` the mod stays inactive and the game runs unmodded.
+- **64-bit Windows 10 or 11.** GPU physics needs an NVIDIA GTX 16 / RTX 20 series card or newer; with other graphics
+  cards the debris runs on the CPU.
+
+## How it works
+
+- `scripts\rfgphys.asi` (32-bit, loaded by [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader))
+  hooks the game's functions with [MinHook](https://github.com/TsudaKageyu/minhook), at addresses taken from the debug
+  symbols (`rfg.pdb`) that ship with the GOG version. The Steam version's `rfg.exe` is a separate compile of the same
+  source without symbols; `tools/match_builds.py` found every one of those functions and globals in its code, so each
+  address has a Steam value too. At start-up the plugin recognizes the build by its debug-symbols ID and uses that
+  build's addresses; with any other build it stays inactive.
+- At start-up it launches `scripts\rfgphysx\rfgphysx_host.exe`, a 64-bit process running NVIDIA PhysX 5.12 with GPU
+  rigid-body dynamics (on the CPU without a suitable GPU), at 45 steps per second. It is a separate process because the
+  game is 32-bit and PhysX 5 is 64-bit only. The two share memory (a command ring and pose snapshots), and the host
+  runs in a job object, so it ends with the game.
+- The game's static world (terrain and buildings) is mirrored into PhysX. Debris pieces are handed over two seconds
+  after they appear (until then the game's physics has them, so they break what they hit and weigh on what they land
+  on, as the game's own debris does): their Havok bodies and game objects go, their render instances stay and follow
+  the poses PhysX computes. Pieces at rest, or only rocking in place, are frozen until something touches them, and
+  explosions are passed on. Collision hulls are grown by Havok's convex radius, as the game's own shapes are.
+- Vehicles and walkers stay in Havok; each of their bodies has a kinematic copy in PhysX that pushes the pieces out of
+  its way (a piece pressed through the ground is put back on top).
+- Loose chunks of buildings are dynamic bodies in PhysX, with their Havok bodies keyframed to follow them, so the game
+  still draws them and the player stands on them. A part that carries more than its strength breaks off in PhysX, and
+  the game breaks the same subpiece through its own destruction, so the two never disagree about what is left. A hit
+  also cracks a chunk along its weakest links, and breaks what it lands on.
+- Where the game needs to see the pieces, they get Havok stand-ins with their own collision shapes: near the player
+  (heavy pieces are solid, so the player stands on rubble; melee blows and bullets that hit a piece push it), ahead of
+  rockets and other projectiles, which then strike the pile, and along the player's line of fire. A melee blow wider
+  than the game's own (a mod's, such as Sledge's Sledgehammer Shockwave) goes to PhysX whole: every piece its swept
+  sphere reaches gets the push the game gives the objects it hits, once per blow.
+- The game's debris removal is switched off and its limits raised: pools for debris objects and render instances,
+  Havok's heap, and the renderer's instancing capacity.
+
+## Building from source
+
+Requirements:
+
+- Windows 10 or 11, 64-bit
+- Visual Studio 2026 (18) Community with the *Desktop development with C++* workload and the *MSVC v143 - VS 2022
+  C++ x64/x86 build tools (v14.44)* component. The scripts use the CMake that comes with Visual Studio, at its default
+  install path.
+- CUDA Toolkit 12.8, at its default path. PhysX's GPU module needs it, and its compiler accepts the v14.44 toolset at
+  most.
+- Python 3 and Git
+
+```powershell
+git clone --recurse-submodules https://github.com/slopkhayzo/RedFactionGuerrillaRemarstered-PhysX rfgphys
+cd rfgphys
+tools\build_physx.cmd                                                    # PhysX 5.12 with its GPU module (CUDA kernels: takes a while)
+powershell -ExecutionPolicy Bypass -File tools\build_host.ps1            # build-host\Release\rfgphysx_host.exe, PhysXGpu_64.dll
+powershell -ExecutionPolicy Bypass -File tools\build.ps1 -Config Release # build\Release\rfgphys.asi
+python tools\package.py                                                  # dist\rfgphys-<version>-*.zip
+```
+
+`package.py` also needs Ultimate ASI Loader 9.7.4: put `dinput8.dll` from the official
+[`Ultimate-ASI-Loader.zip`](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/tag/v9.7.4) into
+`third_party\ultimate-asi-loader\`; it checks the file's SHA-256. Each release's source is tagged, for example
+`v0.1.0`.
+
+- **PhysX** is a submodule, NVIDIA's repository pinned to one commit. `tools\build_physx.cmd` applies our one change
+  to its build files, `third_party\physx-sdk-rfgphys.patch`, which selects the GPU architectures (GTX 16 / RTX 20 to
+  RTX 50).
+- **The game's addresses** are in `src/rfgphys/game/rfg_symbols.generated.h`, for both builds. `tools/gen_symbols.py`
+  generates it from `tools/symbols.txt`, the GOG game's `rfg.pdb` (read with analysis scripts that aren't part of this
+  repository) and `tools/steam_map.json`, which `tools/match_builds.py` makes from the two builds' `rfg.exe`.
+
+## OpenRFG64 (64-bit)
+
+The `openrfg64` branch also builds the plugin for [OpenRFG64](https://github.com/gamerscruffy/OpenRFG64), a 64-bit
+OpenRFG (the game rebuilt from its decompiled source). The `memtest` branch of
+[slopkhayzo/OpenRFG64](https://github.com/slopkhayzo/OpenRFG64) lifts the game's memory limits, which big maps need.
+The same source still builds the 32-bit plugin for `rfg.exe`.
+
+```powershell
+cmake -S . -B build-x64 -A x64
+cmake --build build-x64 --config RelWithDebInfo   # build-x64\RelWithDebInfo\rfgphys.asi
+```
+
+- OpenRFG64 moves every address with each build, so at start-up the plugin looks the game's functions, globals and
+  struct layouts up by name in the running program's own PDB (`OpenRFG.pdb`, next to its exe). Without it the plugin
+  stays inactive.
+- It uses the same 64-bit PhysX host, built as above.
+- Settings that differ, in `scripts\rfgphys.ini` (section `[Experiment]`):
+  - The body slots start at `PhysXMaxBodies` and grow up to `PhysXSlotsMax` (4,194,304) while the GPU has room:
+    every program's graphics memory in use stays below the total minus `PhysXVramReserveMB` (0: an eighth of it, at
+    least 2 GB). Past that the farthest pieces go, pieces younger than `PhysXRecycleMinAgeS` (60) last.
+  - `PhysXWorldStatics` (400,000 in the 64-bit build, 0 in the 32-bit one): a map whose static world would make more
+    statics than that in PhysX is mirrored in part. The ground and buildings within `PhysXWorldNearM` (60 m) of the
+    player go whole. Of the other buildings only the pieces near the debris in PhysX go, and those where pieces wait
+    to come over. Areas come and go as the player and the debris move, and a piece stays with Havok until the area
+    around it is in PhysX. 0: always the whole static world.
+- Tested on Wrecking Crew maps of generated tall buildings. With 48 buildings (383,000 statics) the whole static world
+  goes to PhysX, as with `rfg.exe`. With 480 (4.1 million statics) PhysX is ready 9 s into the match with the 15
+  buildings around the player, and holds 350,000-720,000 statics during a 4-minute demolition.
+- On x64 the plugin logs where its own frame time goes every 5 s (`debris offload: the last N frames took here`, and
+  the world mirror's scans), since the telemetry module is 32-bit only.
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `src/rfgphys/` | the plugin: `core/` (settings, log, main-loop hook, build check, hang watch), `hooks/`, `game/` (the game's addresses and helpers), `physx/` (the link to the host, the static-world mirror, the debris hand-over), `experiments/` (debris collision, debris limits, render tweaks, multithreaded Havok), `telemetry/`, `harness/` (record and replay for testing), `test/` (unattended-run automation), `dev/` (a fly camera for screenshots) |
+| `src/shared/` | the shared-memory protocol between plugin and host, the version resource |
+| `host/` | the 64-bit PhysX host (`src/host_main.cpp`) and a standalone pile benchmark |
+| `tools/` | build, package and test scripts; `release/` holds the release's settings and README |
+| `third_party/` | MinHook, the PhysX SDK (submodule) and its patch, Ultimate ASI Loader's license ([third_party/README.md](third_party/README.md)) |
+
+Testing and development workflow: [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## License
+
+MIT ([LICENSE](LICENSE)). Third-party components keep their own licenses: MinHook (BSD 2-Clause), Ultimate ASI Loader
+(MIT) and the NVIDIA PhysX SDK (Apache 2.0, with one modified build file); see
+[third_party/README.md](third_party/README.md).

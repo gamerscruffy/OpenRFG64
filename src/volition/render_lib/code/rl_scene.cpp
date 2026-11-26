@@ -22,6 +22,7 @@
 #include "keen/base/memory.hpp"
 
 #include <math.h>
+#include "backends/seams.h"
 
 // <rl_scene::release> 0x004C7480 (:11)
 // <rl_scene::create> 0x00550C90 (:11)
@@ -220,8 +221,23 @@ int rl_scene::get_renderable_instances_max()
 // 0x00537680 (.h:295)
 // Notes (decompiled behaviour, kept as is): the handle stays invalid; while locked, the scene pointer is set at once
 // and the insertion is deferred.
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer's scene mirror attaches its hook here. Its handler has
+// the method's x64 ABI: the handle comes back through a pointer the caller passes after the scene.
+static rl_handle* seam_rl_scene_add_renderable_instance(rl_scene* self, rl_handle* result, rl_renderable_instance* renderable_instance_p)
+{
+    openrfg_seam_skip = true;
+    *result = self->add_renderable_instance(renderable_instance_p);
+    return result;
+}
+OPENRFG_SEAM_EXPLICIT(Seam_rl_scene_add_renderable_instance, rl_handle* (*)(rl_scene*, rl_handle*, rl_renderable_instance*), "rl_scene::add_renderable_instance", &seam_rl_scene_add_renderable_instance);
 rl_handle rl_scene::add_renderable_instance(rl_renderable_instance* renderable_instance_p)
 {
+    if (Seam_rl_scene_add_renderable_instance.enter())
+    {
+        rl_handle seam_result;
+        Seam_rl_scene_add_renderable_instance.call(_ReturnAddress(), this, &seam_result, renderable_instance_p);
+        return seam_result;
+    }
     rl_handle result;
     if (rl_is_locked())
     {
@@ -241,8 +257,11 @@ rl_handle rl_scene::add_renderable_instance(rl_renderable_instance* renderable_i
 }
 
 // 0x00537700 (.h:324)
+// OpenRFG (backends): a seam (backends/seams.h); the path tracer's scene mirror attaches its hook here.
+OPENRFG_SEAM(Seam_rl_scene_remove_renderable_instance, &rl_scene::remove_renderable_instance, "rl_scene::remove_renderable_instance");
 void rl_scene::remove_renderable_instance(rl_renderable_instance* renderable_instance_p)
 {
+    OPENRFG_SEAM_ENTER(Seam_rl_scene_remove_renderable_instance, this, renderable_instance_p);
     if (rl_is_locked())
     {
         rl_add_deferred_op(RLDO_SCENE_REMOVE_RI, renderable_instance_p);

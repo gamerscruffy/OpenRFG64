@@ -12,6 +12,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "backends/seams.h"
 
 namespace keen
 {
@@ -218,8 +219,11 @@ namespace keen
         }
 
         // 0x00C62710 (:182)
+        // OpenRFG (backends): a seam (backends/seams.h); the path tracer's scene mirror attaches its hook here.
+        OPENRFG_SEAM(Seam_initialize_render_geometry, &initializeRenderGeometry, "keen::graphics::initializeRenderGeometry");
         bool initializeRenderGeometry(RenderGeometry* pGeometry, GraphicsSystem* pGraphicsSystem, const RenderGeometryDescription& description, const RenderGeometryInitializationData& initData, const char* pDebugName)
         {
+            OPENRFG_SEAM_ENTER(Seam_initialize_render_geometry, pGeometry, pGraphicsSystem, description, initData, pDebugName);
             ID3D11Device* pDevice = pGraphicsSystem->pDevice;
             pGeometry->pVertexFormat = description.pVertexFormat;
             pGeometry->pSkinGeometry = (const SoftwareSkinGeometry*)initData.pSkinningData;
@@ -278,8 +282,11 @@ namespace keen
         }
 
         // 0x00C5C900 (:300)
+        // OpenRFG (backends): a seam (backends/seams.h); the path tracer's scene mirror attaches its hook here.
+        OPENRFG_SEAM(Seam_free_render_geometry, &freeRenderGeometry, "keen::graphics::freeRenderGeometry");
         void freeRenderGeometry(RenderGeometry* pGeometry, GraphicsSystem* pGraphicsSystem, MemoryAllocator* pDataAllocator)
         {
+            OPENRFG_SEAM_ENTER(Seam_free_render_geometry, pGeometry, pGraphicsSystem, pDataAllocator);
             if (pGeometry->pIndexBuffer != nullptr)
             {
                 pGeometry->pIndexBuffer->Release();

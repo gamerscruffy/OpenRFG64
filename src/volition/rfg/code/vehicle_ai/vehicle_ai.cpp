@@ -5,6 +5,7 @@
 // not a city spline (spline_flags 0x80).
 
 #include "volition/rfg/code/vehicle_ai/vehicle_ai.h"
+#include "backends/keep_debris.h" // OpenRFG (backends: keep debris)
 
 #include <math.h>
 #include <stdlib.h>
@@ -138,6 +139,7 @@ static int get_state_time_to_stuck(const vehicle_ai* vai)
 // 0x00BCD300 (:769): LTCG, vp in ECX. Damages the object_movers and fades the debris under the vehicle.
 static void do_debris_cleanup(vehicle* vp, clear_debris_states clear_debris_state)
 {
+    openrfg_keep_debris_fade_scope fades_go_through; // OpenRFG (backends): an AI vehicle clearing its way fades kept debris too
     vector bmin, bmax;
     vp->get_local_bbox(bmin, bmax);
     bmin.y -= 0.25f;
