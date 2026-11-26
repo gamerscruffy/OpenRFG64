@@ -47,7 +47,8 @@ namespace rtcore {
 namespace {
 
 constexpr int kRing = 3;            // frames in flight: command allocators, readback slots
-constexpr uint32_t kCounts = 512;   // per slot: 5 pixel classes (of 8), 16 depth-ratio buckets, 8 spare, 32 samples x 3
+constexpr uint32_t kCounts = 512;   // per slot: 5 pixel classes (of 8), 16 depth-ratio buckets, 8 spare, 32 samples x 3;
+                                    // with GI, the GI census from uint 100 (gi_trace.hlsl, Telemetry.GiCensus)
 constexpr uint32_t kStamps = 12;    // timestamps per slot: TLAS start and end, pass start and end, GI, lights, reflections,
                                     // the fog's start and end; in the GI's: the rays' start, the glass's, the sun tint's
 // The volumetric fog's grid of froxels (shaders/fog_common.hlsli): columns across the screen (rows by its aspect), slices
@@ -310,7 +311,7 @@ struct GiConstants {
     CompareConstants base;
     float ambient[4], back_ambient[4], sun_color[4];  // the game's, in its shaders' units (frame_scene.h)
     float gi[4];                                        // rays a pixel, their length, the albedo they meet, max frames
-    float gi2[4];                                       // x: the bounced light's scale, y: the sky's
+    float gi2[4];                                       // x: the bounced light's scale, y: the sky's, z: GI.SunBounceAlbedo, w: GI.ShadeBounceAlbedo
     float world[4];                                     // xyz: the render offset; w: 1 with the radiance cache
     float sky_probe[4];  // x: 1 with the drawn sky; y: the cosine of the angle about the sun it leaves out; z: GI.SkyDrawn
     float fog[4];        // the game's fog: its density a, height falloff b, start c (fogDistance's y, x, w); w: 1
@@ -320,6 +321,10 @@ struct GiConstants {
     float glass[4];      // the clear glass's reflections: x its reflectance at normal incidence; y 1 when they are on
     float probe[4];      // xy: where the probe aims, fractions of the screen (Test.ProbePixel)
     float terrain[4];    // rgb: the albedo of a surface whose material is not known, the terrain (GI.TerrainAlbedo)
+    // DLSS (dlss.h) upscaling: xy the render size the GI's rays and Ray Reconstruction's guides run at (0: the frame's),
+    // the top-left part of their textures; zw the sample's offset from each render pixel's centre (render pixels, y down):
+    // each traces from the frame's pixel under that point
+    float upscale[4];
 };
 static_assert(sizeof(GiConstants) <= 512, "a 512-byte slot a ring slot");
 
@@ -337,6 +342,16 @@ void mul44(const float* a, const float* b, float* out) {
         for (int c = 0; c < 4; ++c)
             out[r * 4 + c] = a[r * 4 + 0] * b[0 * 4 + c] + a[r * 4 + 1] * b[1 * 4 + c] + a[r * 4 + 2] * b[2 * 4 + c] +
                              a[r * 4 + 3] * b[3 * 4 + c];
+}
+
+// The Halton sequence's i-th point in base `base` (i >= 1), in [0, 1): DLSS's sub-pixel jitter (bases 2 and 3).
+float halton(uint32_t i, uint32_t base) {
+    float f = 1.0f, r = 0.0f;
+    for (; i > 0; i /= base) {
+        f /= float(base);
+        r += f * float(i % base);
+    }
+    return r;
 }
 
 // The descriptor heap: groups of the frame textures, one table each (w: the history written this frame, 0 or 1).
@@ -539,6 +554,11 @@ int run(const RunParams& p) {
     int32_t rrGeneration = -1;  // the frame textures Ray Reconstruction last ran with (new ones: no history)
     LARGE_INTEGER rrLast{}, rrFreq{};
     uint64_t rrFrames = 0;
+    // DLSS (dlss.h, Block::dlss_mode): the mode the frames are queued with (-1 before the first), what the log last said
+    int dlssMode = -1;
+    int dlssLoggedMode = -2;
+    unsigned dlssLoggedWidth = 0, dlssLoggedHeight = 0;
+    bool dlssReset = false;  // Ray Reconstruction's history starts over (a new mode)
     int64_t probeFrame[kRing]{};
     std::vector<uint32_t> probeInstances[kRing];
     int32_t probeSeen = b->probe_request;
@@ -887,6 +907,14 @@ int run(const RunParams& p) {
     CompareConstants lastCamera{};
     GiConstants lastGi{};
     uint64_t giFrames = 0;
+    // Telemetry.GiCensus (RFGRT_TELEMETRY_GICENSUS=1, read here from the environment: a diagnostic): gi_trace.hlsl's census
+    // of the traced light by the kind of surface, five classes of five sums from the frame's counter 100, summed over the
+    // log's period.
+    const bool giCensus = [] {
+        char v[8] = {};
+        return GetEnvironmentVariableA("RFGRT_TELEMETRY_GICENSUS", v, sizeof(v)) > 0 && v[0] == '1';
+    }();
+    uint64_t census[25] = {};
     uint64_t lightFrames = 0, lightsTraced = 0;
     // The game's lit colour (GI's hits read it where the game drew them in the previous frame)
     ID3D12Resource* radiance = nullptr;
@@ -1319,6 +1347,21 @@ int run(const RunParams& p) {
                 }
             }
         }
+        // A new DLSS mode (Block::dlss_mode: DLSS.Mode, or the game's DLSS row while it runs): once every frame queued
+        // with the previous one is done, as Ray Reconstruction is made again for it (the one they used is released).
+        {
+            const int32_t want = b->dlss_mode < dlss::kModeOff ? dlss::kModeOff : b->dlss_mode >= dlss::kModeCount ? dlss::kModeCount - 1 : b->dlss_mode;
+            if (next && want != dlssMode) {
+                if (dlssMode >= 0 && sig > 0 && done < UINT64(sig)) {
+                    waitFor = UINT64(sig);
+                    next = 0;
+                } else {
+                    dlssReset = dlssMode >= 0;
+                    dlssMode = want;
+                    InterlockedExchange(reinterpret_cast<volatile LONG*>(&b->host_dlss_mode), dlssMode);
+                }
+            }
+        }
         if (next && set.generation == 0) {  // no textures yet: nothing to answer this frame with
             if (snapshots) n = next;  // its scene is skipped
             ++skippedNoSet;
@@ -1362,6 +1405,8 @@ int run(const RunParams& p) {
                         memcpy(st.samples, c + 32, sizeof(st.samples));
                     } else if (mode == rfgrt_ipc::kModeSunShadows) {
                         for (int i = 0; i < 9; ++i) st.shadow[i] += c[i];
+                        if (giCensus)
+                            for (int i = 0; i < 25; ++i) census[i] += c[100 + i];
                         st.glass_px += c[60];
                         st.glass_lit += c[61];
                         static uint64_t skyLog = 0;
@@ -1733,7 +1778,7 @@ int run(const RunParams& p) {
                         // already be recorded by now (this list is recorded at the frame scene, often later), hence >=.
                         const bool radianceOk = radiance && historyValid && rfgrt_ipc::load64(&b->radiance_frame) >= next - 1;
                         if (radianceOk) ++radianceFrames;
-                        g.base.flags = depthFlag | historyFlag | (radianceOk ? 16u : 0u) | frostedFlag | tintFlag;
+                        g.base.flags = depthFlag | historyFlag | (radianceOk ? 16u : 0u) | frostedFlag | tintFlag | (giCensus ? 128u : 0u);
                         g.base.shadow[1] = uint32_t(b->gi_filter_radius >= 0 ? b->gi_filter_radius : 0);
                         memcpy(g.ambient, h->ambient, sizeof(g.ambient));
                         memcpy(g.back_ambient, h->back_ambient, sizeof(g.back_ambient));
@@ -1744,6 +1789,8 @@ int run(const RunParams& p) {
                         g.gi[3] = float(b->gi_history > 1 ? b->gi_history : 1);
                         g.gi2[0] = b->gi_bounce;
                         g.gi2[1] = b->gi_sky;
+                        g.gi2[2] = b->gi_sun_bounce_albedo;  // GI.SunBounceAlbedo (trace_common.hlsli bounce_scale)
+                        g.gi2[3] = b->gi_shade_bounce_albedo;  // GI.ShadeBounceAlbedo (the same)
                         memcpy(g.world, h->render_offset, sizeof(float) * 3);
                         g.world[3] = cacheOn ? 1.0f : 0.0f;
                         g.sky_probe[0] = skyOn ? 1.0f : 0.0f;
@@ -1775,9 +1822,44 @@ int run(const RunParams& p) {
                             g.fog3[2] = fogHistory && historyValid ? 1.0f : 0.0f;
                             g.fog3[3] = kFogFrames;
                         }
+                        // DLSS (dlss.h): Ray Reconstruction denoises the GI unless the mode is off; below DLAA the rays
+                        // and its guides run at the mode's render size (the top-left part of their textures), each of
+                        // its pixels tracing from the frame's pixel under a jittered point of it (Halton 2, 3: about 8
+                        // points per frame pixel it covers), and Ray Reconstruction upscales the light to the frame's size.
+                        const bool rrUse = rrOn && set.rr_out && b->gi_denoiser == 2 && dlssMode >= dlss::kModeDlaa;
+                        unsigned rw = set.width, rh = set.height;
+                        if (rrUse) dlss::render_size(set.width, set.height, dlssMode, rw, rh);
+                        const bool upscaling = rw < set.width || rh < set.height;
+                        float jx = 0.0f, jy = 0.0f;
+                        if (upscaling) {
+                            const float sx = float(set.width) / float(rw), sy = float(set.height) / float(rh);
+                            uint32_t phases = uint32_t(std::ceil(8.0f * sx * sy));
+                            if (phases < 8) phases = 8;
+                            const uint32_t i = 1 + uint32_t(uint64_t(next) % phases);
+                            // the point (Halton, in [0, 1) of the render pixel) moved to the centre of the frame's pixel
+                            // under it: exact for every render pixel at a whole scale (performance, ultra performance)
+                            jx = (std::floor(halton(i, 2) * sx) + 0.5f) / sx - 0.5f;
+                            jy = (std::floor(halton(i, 3) * sy) + 0.5f) / sy - 0.5f;
+                            g.upscale[0] = float(rw);
+                            g.upscale[1] = float(rh);
+                            g.upscale[2] = jx;
+                            g.upscale[3] = jy;
+                        }
+                        if (rrUse && (dlssMode != dlssLoggedMode || rw != dlssLoggedWidth || rh != dlssLoggedHeight)) {
+                            dlssLoggedMode = dlssMode;
+                            dlssLoggedWidth = rw;
+                            dlssLoggedHeight = rh;
+                            logf("DLSS %s: the GI's rays at %ux%u of %ux%u (%.0f %%)%s", dlss::mode_name(dlssMode), rw, rh, set.width,
+                                 set.height, 100.0 * double(rw) / double(set.width),
+                                 upscaling ? ", jittered, Ray Reconstruction upscaling them" : "");
+                        } else if (!rrUse && rrOn && set.rr_out && b->gi_denoiser == 2 && dlssLoggedMode != dlss::kModeOff) {
+                            dlssLoggedMode = dlss::kModeOff;
+                            logf("DLSS off: the GI's own filter at %ux%u", set.width, set.height);
+                        }
                         memcpy(giCbCpu + uint64_t(k) * 512, &g, sizeof(g));
                         lastGi = g;
                         const UINT gx = (set.width + 7) / 8, gy = (set.height + 7) / 8;
+                        const UINT rgx = (rw + 7) / 8, rgy = (rh + 7) / 8;  // the GI's rays and the guides
                         cl->SetComputeRootSignature(giRs);
                         cl->SetComputeRootShaderResourceView(1, tlas.address(k));
                         cl->SetComputeRootShaderResourceView(2, tlas.instance_table(k));
@@ -1830,7 +1912,7 @@ int run(const RunParams& p) {
                         cl->EndQuery(qheap, D3D12_QUERY_TYPE_TIMESTAMP, UINT(k * kStamps + 9));
                         cl->SetPipelineState(giTracePso);
                         cl->SetComputeRootDescriptorTable(0, table(kTableGiTrace));
-                        cl->Dispatch(gx, gy, 1);
+                        cl->Dispatch(rgx, rgy, 1);
                         cl->EndQuery(qheap, D3D12_QUERY_TYPE_TIMESTAMP, UINT(k * kStamps + 10));
                         partsStamped = true;
                         if (glassPso && glassFilterPso && set.glass && set.glass_raw) {
@@ -1909,7 +1991,7 @@ int run(const RunParams& p) {
                         cl->EndQuery(qheap, D3D12_QUERY_TYPE_TIMESTAMP, UINT(k * kStamps + 8));
                         fogStamped = true;
                         bool rrDone = false;
-                        if (rrOn && set.rr_out && b->gi_denoiser == 2) {
+                        if (rrUse) {
                             // DLSS Ray Reconstruction (dlss.h) denoises this frame's traced irradiance with its guide
                             // images, in place of the temporal and wavelet passes. The frame it is (re)created at, or a
                             // failure, runs those instead.
@@ -1921,7 +2003,7 @@ int run(const RunParams& p) {
                             cl->SetComputeRootDescriptorTable(0, table(kTableRrGuides));
                             cl->SetComputeRootConstantBufferView(1, giCb->GetGPUVirtualAddress() + uint64_t(k) * 512);
                             cl->SetPipelineState(rrGuidesPso);
-                            cl->Dispatch(gx, gy, 1);
+                            cl->Dispatch(rgx, rgy, 1);
                             const D3D12_RESOURCE_BARRIER r2[4] = {transition(set.rr_depth, uav, srv), transition(set.rr_motion, uav, srv),
                                                                   transition(set.rr_normal, uav, srv), transition(set.rr_albedo, uav, srv)};
                             cl->ResourceBarrier(4, r2);
@@ -1941,11 +2023,17 @@ int run(const RunParams& p) {
                             rri.depth = set.rr_depth;
                             rri.motion = set.rr_motion;
                             rri.output = set.rr_out;
-                            rri.width = set.width;
-                            rri.height = set.height;
+                            rri.width = rw;
+                            rri.height = rh;
+                            rri.out_width = set.width;
+                            rri.out_height = set.height;
+                            rri.mode = dlssMode;
+                            rri.jitter_x = -jx;  // where the geometry moved (dlss.h)
+                            rri.jitter_y = -jy;
                             rri.world_to_view = worldToView;
                             rri.view_to_clip = h->camera.projection;
-                            rri.reset = !historyValid || set.generation != rrGeneration;
+                            rri.reset = !historyValid || set.generation != rrGeneration || dlssReset;
+                            dlssReset = false;
                             rri.frame_ms = float(ms < 1.0 ? 1.0 : ms > 100.0 ? 100.0 : ms);
                             rrGeneration = set.generation;
                             const bool evaluated = dlss::evaluate(cl, rri);
@@ -1984,7 +2072,9 @@ int run(const RunParams& p) {
                                 cl->ResourceBarrier(1, &r6);
                             }
                         }
-                        if (!rrDone) {
+                        // Without Ray Reconstruction's answer the GI's own passes run, at the frame's size; a frame traced
+                        // at a smaller one (its feature made at this frame, for a new mode) keeps the last irradiance.
+                        if (!rrDone && !upscaling) {
                             const D3D12_RESOURCE_BARRIER giToTemporal[2] = {
                                 transition(set.gi_traced, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
                                 transition(set.gi_history[1 - histOut], D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
@@ -2297,6 +2387,20 @@ int run(const RunParams& p) {
                          lastGi.sun_color[1], lastGi.sun_color[2], lastGi.sun_color[3]);
                     giFrames = 0;
                     radianceFrames = 0;
+                }
+                if (giCensus) {
+                    static const char* const kCensusClass[5] = {"up, in the sun", "up, in shade", "sideways, in the sun",
+                                                                "sideways, in shade", "down (ceilings, undersides)"};
+                    for (int cc = 0; cc < 5; ++cc) {
+                        const uint64_t* v = census + cc * 5;
+                        if (!v[0]) continue;
+                        const double nn = double(v[0]) * 256.0;
+                        logf("GI census, %s: %llu pixels; mean luminance in the game's units: the traced irradiance %.3f, the "
+                             "game's lit colour %.3f, the sun's irradiance %.3f, the game's own ambient for that normal %.3f",
+                             kCensusClass[cc], static_cast<unsigned long long>(v[0]), double(v[1]) / nn, double(v[2]) / nn,
+                             double(v[3]) / nn, double(v[4]) / nn);
+                    }
+                    memset(census, 0, sizeof(census));
                 }
                 uint64_t both = 0;
                 for (uint64_t r : st.ratio) both += r;

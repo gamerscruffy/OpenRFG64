@@ -343,8 +343,11 @@ bool called_from(uintptr_t ret, uint32_t rva, uint32_t size) { return ret - rfg:
 int __cdecl d_timer_get(int units) {
     if (g_clock_on && gameloop::on_sim_thread()) {
         const auto ret = reinterpret_cast<uintptr_t>(_ReturnAddress());
-        // gamestate_gp_simulate_frame times the Havok step for the load governor: real time.
-        if (!called_from(ret, rfg::rva::gamestate_gp_simulate_frame, rfg::size::gamestate_gp_simulate_frame)) {
+        // gamestate_gp_simulate_frame times the Havok step for the load governor, and frametime_calculate measures the
+        // frame, which then advances the virtual clock (OpenRFG64's reads timer_get; on the virtual clock its frame
+        // cap would wait for time that never passes): real time.
+        if (!called_from(ret, rfg::rva::gamestate_gp_simulate_frame, rfg::size::gamestate_gp_simulate_frame) &&
+            !called_from(ret, rfg::rva::frametime_calculate, rfg::size::frametime_calculate)) {
             const uint32_t ms = virtual_ms();
             if (units == 1) return int(ms / 1000u);
             if (units == 1000) return int(ms);
@@ -510,6 +513,12 @@ bool build_scripted_input() {
 // ---------------------------------------------------------------------------------------------------------------
 // Recording bundle
 
+// The running program's PE timestamp (OpenRFG64: its OpenRFG.exe, which kBuilds does not list).
+uint32_t running_exe_timestamp() {
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(rfg::base());
+    return reinterpret_cast<const IMAGE_NT_HEADERS*>(rfg::base() + dos->e_lfanew)->FileHeader.TimeDateStamp;
+}
+
 void fill_header_common(uint32_t start_type) {
     memset(&g_header, 0, sizeof(g_header));
     memcpy(g_header.magic, "RFGREC01", 8);
@@ -517,10 +526,11 @@ void fill_header_common(uint32_t start_type) {
     g_header.input_size = rec::kInputSize;
     g_header.seed = g_cfg.harness_seed;
     g_header.start_type = start_type;
-    g_header.flags = g_cfg.harness_virtual_clock ? rec::kFlagVirtualClock : 0;
+    g_header.flags = (g_cfg.harness_virtual_clock ? rec::kFlagVirtualClock : 0) |
+                     (rfg::is_openrfg64() ? rec::kFlagOpenRFG64 : 0);
     g_header.clock_anchor_ms = o_timer_get(1000);
     g_header.checkpoint_interval = uint32_t(g_cfg.harness_checkpoint_interval);
-    g_header.exe_timestamp = rfg::kBuilds[rfg::build()].exe_timestamp;
+    g_header.exe_timestamp = rfg::is_openrfg64() ? running_exe_timestamp() : rfg::kBuilds[rfg::build()].exe_timestamp;
     capture_clock(g_header.clock);
 }
 
@@ -928,17 +938,29 @@ bool load_recording() {
     }
     g_header = g_reader.header();
     // Any known build replays any other's recordings: they were compiled from the same source, and the game code
-    // they run is the same (only platform services differ).
+    // they run is the same (only platform services differ). OpenRFG64's recordings key the random draws by its own
+    // call sites (rfg::site_rva): they replay in OpenRFG64 only, exactly in the build that made them.
     int recorded_on = -1;
-    for (int i = 0; i < rfg::kBuildCount; ++i)
-        if (g_header.exe_timestamp == rfg::kBuilds[i].exe_timestamp) recorded_on = i;
+    if (g_header.flags & rec::kFlagOpenRFG64) {
+        recorded_on = rfg::kBuildOpenRFG64;
+    } else {
+        for (int i = 0; i < rfg::kBuildCount; ++i)
+            if (g_header.exe_timestamp == rfg::kBuilds[i].exe_timestamp) recorded_on = i;
+    }
     if (recorded_on < 0) {
         g_load_error = "recorded with an unknown rfg.exe build";
+        return false;
+    }
+    if (recorded_on == rfg::kBuildOpenRFG64 && !rfg::is_openrfg64()) {
+        g_load_error = "recorded with OpenRFG64: its recordings replay there only";
         return false;
     }
     if (recorded_on != rfg::build())
         LOG("harness: recorded with the %s build, replayed with the %s build", rfg::kBuilds[recorded_on].name,
             rfg::build_name());
+    else if (rfg::is_openrfg64() && g_header.exe_timestamp != running_exe_timestamp())
+        LOG("harness: recorded with another OpenRFG64 build (%08X, this one %08X): random draws may not match",
+            g_header.exe_timestamp, running_exe_timestamp());
     if (!g_header.frame_count) {
         g_load_error = "the recording has no frames (not finished?)";
         return false;

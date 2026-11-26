@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "backends/seams.h"
+#include "backends/dlss/dlss_frame.h" // OpenRFG (VOM): DLSS's mip bias
 
 namespace keen
 {
@@ -633,6 +634,17 @@ namespace keen
             return &pGraphicsSystem->immediateCommandBuffer;
         }
 
+        // OpenRFG (backends): the present of the finished frame, as a seam (backends/seams.h) known by the DXGI method's
+        // name: the path tracer's presenter takes the frame here and presents it through a Direct3D 12 swap chain of its
+        // own (DLSS Frame Generation; in its plugin, a detour on the swap chain's method).
+        static HRESULT openrfg_present(IDXGISwapChain* pSwapChain, UINT syncInterval, UINT flags);
+        OPENRFG_SEAM(Seam_present, &openrfg_present, "IDXGISwapChain::Present");
+        static HRESULT openrfg_present(IDXGISwapChain* pSwapChain, UINT syncInterval, UINT flags)
+        {
+            OPENRFG_SEAM_ENTER(Seam_present, pSwapChain, syncInterval, flags);
+            return pSwapChain->Present(syncInterval, flags);
+        }
+
         // 0x00C70320 (:620)
         bool endFrame(GraphicsSystem* pGraphicsSystem)
         {
@@ -649,7 +661,7 @@ namespace keen
             RenderSwapChain* pSwapChain = pGraphicsSystem->pCurrentSwapChain;
             if (pSwapChain != nullptr)
             {
-                const HRESULT result = pSwapChain->pSwapChain->Present(pSwapChain->presentationInterval, 0);
+                const HRESULT result = openrfg_present(pSwapChain->pSwapChain, pSwapChain->presentationInterval, 0);
                 if (FAILED(result))
                 {
                     handleFatalHResult(pGraphicsSystem, result, "Present");
@@ -1302,6 +1314,7 @@ namespace keen
         void destroySamplerState(GraphicsSystem* pGraphicsSystem, const SamplerState* pSamplerState)
         {
             // Notes (decompiled behaviour, kept as is): no null check, unlike the other destroy functions.
+            openrfg_dlss_frame_sampler_destroyed(pSamplerState->pState); // OpenRFG (VOM): its copy with DLSS's mip bias goes too
             pSamplerState->pState->Release();
             pGraphicsSystem->stateObjectPool.freeSamplerState(pSamplerState);
         }

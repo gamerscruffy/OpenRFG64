@@ -12,6 +12,7 @@
 #include "volition/render_lib/code/rl_render_lib.h"
 #include "volition/render_lib/code/rl_renderer.h"
 #include "volition/render_lib/code/rl_state_manager.h"
+#include "backends/dlss/dlss_frame.h" // OpenRFG (VOM): the camera's jitter for DLSS
 
 #include <math.h>
 
@@ -81,6 +82,15 @@ void rl_camera::setup_perspective(rl_renderer& renderer)
     const float horizontal_fov = calculate_horizontal_fov_perspective(m_fov, m_use_pixel_aspect_ratio);
     const float tan_horizontal = (float)tan((double)(float)((double)horizontal_fov * Deg_to_rad * 0.5));
     m_projection_transform = matrix44(vector4(1.0f / tan_horizontal, 0.0f, 0.0f, 0.0f), vector4(0.0f, 1.0f / tan_vertical, 0.0f, 0.0f), vector4(0.0f, 0.0f, q, 1.0f), vector4(0.0f, 0.0f, -q * near_clip, 0.0f));
+    // OpenRFG (VOM): while the main scene is drawn for DLSS, its projection moves by this frame's sub-pixel jitter
+    // (backends/dlss/dlss_frame.h). The main camera and its copies are the only perspective cameras drawn then.
+    float jitter_x = 0.0f;
+    float jitter_y = 0.0f;
+    if (openrfg_dlss_frame_jitter(&jitter_x, &jitter_y))
+    {
+        m_projection_transform.element(2, 0) += jitter_x;
+        m_projection_transform.element(2, 1) += jitter_y;
+    }
     renderer.set_3d_transforms(m_view_transform, m_projection_transform);
     const matrix43& world = get_world_transform();
     m_frustum.init(world.m_translation, world.m_rotation, m_projection_transform, m_near_clip, m_far_clip);

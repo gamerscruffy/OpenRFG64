@@ -18,20 +18,33 @@
 #include "harness/shader_dump.h"
 #include "hooks/binding.h"
 #include "hooks/hooks.h"
+#include "menu/display_rows.h"
 #include "mirror/geometry.h"
 #include "mirror/instances.h"
 #include "mirror/textures.h"
+#include "present/presenter.h"
 #include "render/gi.h"
 #include "render/lights.h"
 #include "render/seam.h"
+#include "render/sky_particles.h"
 #include "rt/link.h"
 #include "test/automation.h"
+
+// (defined below; the display menu's rows call them as a game with rows of its own does)
+extern "C" __declspec(dllexport) void rfgrt_set_dlss_mode(int mode);
+extern "C" __declspec(dllexport) void rfgrt_set_frame_generation(int on);
 
 namespace {
 
 HMODULE g_module = nullptr;
 // rfgrt_state(): 0 not started, 1 inactive (the log says why), 2 running.
 volatile LONG g_state = 0;
+// DLSS's mode as the game sets it (rfgrt_set_dlss_mode), in place of rfgrt.ini's DLSS.Mode; -1: rfgrt.ini's.
+volatile LONG g_dlss_mode = -1;
+// Frame generation as the game sets it (rfgrt_set_frame_generation), in place of FrameGeneration.Enabled; -1: rfgrt.ini's.
+volatile LONG g_frame_generation = -1;
+
+int clamp_dlss_mode(int mode) { return mode < 0 ? 0 : mode > 5 ? 5 : mode; }
 
 std::wstring module_dir() {
     wchar_t path[MAX_PATH];
@@ -73,6 +86,10 @@ void init() {
         LOG("disabled in config");
         return;
     }
+    // The display menu's rows (menu/display_rows.h), in a game without rows of its own: OpenRFG64 VOM binds its seams
+    // and sets the renderer, DLSS and frame generation itself, before InitializeASI.
+    const bool rows = cfg.menu_rows && !hooks::bound() && !active::switchable() && InterlockedCompareExchange(&g_dlss_mode, 0, 0) < 0 &&
+                      InterlockedCompareExchange(&g_frame_generation, 0, 0) < 0;
     if (!hooks::init()) return;
     if (!gameloop::install()) {
         LOG("main-loop hook failed: plugin stays inactive");
@@ -108,10 +125,21 @@ void init() {
     link.gi_history = cfg.gi_history > 1 ? cfg.gi_history : 1;
     link.gi_filter_radius = cfg.gi_filter_radius >= 0 ? cfg.gi_filter_radius : 0;
     link.gi_bounce = float(cfg.gi_bounce >= 0.0 ? cfg.gi_bounce : 0.0);
+    link.gi_sun_bounce_albedo =
+        float(cfg.gi_sun_bounce_albedo < 0.0 ? 0.0 : cfg.gi_sun_bounce_albedo > 1.0 ? 1.0 : cfg.gi_sun_bounce_albedo);
+    // The shaded surfaces' light feeds back through the next frames' bounces: at most 0.5, so each round passes on at
+    // most half of the last.
+    link.gi_shade_bounce_albedo =
+        float(cfg.gi_shade_bounce_albedo < 0.0 ? 0.0 : cfg.gi_shade_bounce_albedo > 0.5 ? 0.5 : cfg.gi_shade_bounce_albedo);
     link.gi_sky = float(cfg.gi_sky >= 0.0 ? cfg.gi_sky : 0.0);
     link.gi_cache = cfg.gi_cache;
     link.gi_glass = cfg.gi_glass;
     link.gi_denoiser = cfg.gi_denoiser < 0 ? 0 : cfg.gi_denoiser > 2 ? 2 : cfg.gi_denoiser;
+    {
+        const LONG game = InterlockedCompareExchange(&g_dlss_mode, 0, 0);
+        link.dlss_mode = game >= 0 ? int(game) : clamp_dlss_mode(cfg.dlss_mode);
+        if (link.gi_denoiser == 2) LOG("DLSS: mode %d (%s)", link.dlss_mode, game >= 0 ? "the game's setting" : "DLSS.Mode");
+    }
     link.fog = cfg.fog_enabled && cfg.gi_enabled;
     link.fog_sun_share = float(cfg.fog_sun_share < 0.0 ? 0.0 : cfg.fog_sun_share > 1.0 ? 1.0 : cfg.fog_sun_share);
     link.fog_anisotropy = float(cfg.fog_anisotropy < -0.9 ? -0.9 : cfg.fog_anisotropy > 0.9 ? 0.9 : cfg.fog_anisotropy);
@@ -145,6 +173,7 @@ void init() {
                                                                         : "stay the game's (every hit a plain grey)");
     if (!lights::install(cfg)) LOG("lights hooks failed: no shadows for the dynamic lights");
     if (!gi::install(cfg)) LOG("gi hooks failed: no global illumination");
+    sky_particles::install(cfg);  // logs its own outcome
     if (!seam::install(cfg)) {
         LOG("frame seam hooks failed: plugin stays inactive");
         return;
@@ -161,6 +190,21 @@ void init() {
     }
     session::add_flush_handler(&instances::report);
     if (!shader_dump::install(cfg)) LOG("shader dump hooks failed: no shaders saved");
+    {
+        const LONG game = InterlockedCompareExchange(&g_frame_generation, 0, 0);
+        Config fg = cfg;
+        if (game >= 0) fg.fg_enabled = game != 0;  // the game's setting (rfgrt_set_frame_generation) before its start
+        if (!presenter::install(fg, rows)) LOG("presenter hooks failed: no frame generation");
+    }
+    if (rows) {
+#if defined(_WIN64) && defined(RFGRT_STREAMLINE)
+        constexpr bool kFrameGeneration = true;
+#else
+        constexpr bool kFrameGeneration = false;  // (the 32-bit plugin has no presenter; a build without Streamline no DLSS-G)
+#endif
+        const display_rows::Actions actions{&rfgrt_set_dlss_mode, &rfgrt_set_frame_generation};
+        display_rows::install(cfg, dir + L"\\rfgrt.ini", kFrameGeneration, actions);
+    }
     if (!hooks::enable_all()) return;
     if (hooks::seamed() > 0) LOG("hooks: %d on the game's seams", hooks::seamed());
     if (active::switchable())
@@ -237,6 +281,25 @@ extern "C" __declspec(dllexport) int rfgrt_set_active(int on) {
             switch_off();
     }
     return want ? 1 : 0;
+}
+
+// For a game with a DLSS setting of its own (OpenRFG64 VOM's DLSS row): the mode, in place of rfgrt.ini's DLSS.Mode
+// (0 off, 1 DLAA, 2 quality, 3 balanced, 4 performance, 5 ultra performance; rfgrt_ipc::Block::dlss_mode). Before
+// InitializeASI, or any time after: the running core switches at its next frame, and later cores start with it.
+extern "C" __declspec(dllexport) void rfgrt_set_dlss_mode(int mode) {
+    mode = clamp_dlss_mode(mode);
+    const LONG before = InterlockedExchange(&g_dlss_mode, mode);
+    if (g_state == 0) return;  // init() takes it
+    rtlink::core_link().set_dlss_mode(mode);
+    if (before != mode) LOG("DLSS: mode %d (the game's setting)", mode);
+}
+
+// For a game with a frame generation setting of its own (OpenRFG64 VOM's FRAME GENERATION row): DLSS Frame Generation on
+// (1) or off (0), in place of rfgrt.ini's FrameGeneration.Enabled. Before InitializeASI, or any time after: from the next
+// present (present/presenter.h; 64-bit builds).
+extern "C" __declspec(dllexport) void rfgrt_set_frame_generation(int on) {
+    InterlockedExchange(&g_frame_generation, on ? 1 : 0);
+    if (g_state != 0) presenter::set_wanted(on != 0);
 }
 
 // For a game with seams for the plugin's hooks (OpenRFG64 VOM's renderer backend; hooks/binding.h): before

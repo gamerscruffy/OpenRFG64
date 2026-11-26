@@ -42,6 +42,8 @@ struct Options {
     int gi_history = 24;
     int gi_filter_radius = 3;
     float gi_bounce = 1.0f;
+    float gi_sun_bounce_albedo = 0.0f;  // GI.SunBounceAlbedo (rfgrt_ipc::Block::gi_sun_bounce_albedo)
+    float gi_shade_bounce_albedo = 0.0f;  // GI.ShadeBounceAlbedo (rfgrt_ipc::Block::gi_shade_bounce_albedo)
     float gi_sky = 1.0f;
     bool gi_cache = true;  // the world radiance cache (GI.Cache)
     bool gi_glass = true;  // the glass's light (GI.Glass): a texture the core writes, the patched glass shader reads at t17
@@ -53,6 +55,7 @@ struct Options {
     bool dred = true;             // the core's device keeps its removed-device data (Host.Dred)
     float terrain_albedo[3] = {0.032f, 0.010f, 0.002f};  // what the rays take for the terrain's albedo (GI.TerrainAlbedo)
     int gi_denoiser = 2;  // the GI's denoiser (GI.Denoiser: 0 one pass, 1 wavelet, 2 Ray Reconstruction)
+    int dlss_mode = 1;    // Ray Reconstruction's mode (DLSS.Mode; rfgrt_ipc::Block::dlss_mode)
     bool fog = false;     // the volumetric fog (Fog.Enabled, with GI): a texture the core writes, the plugin blends
     float fog_sun_share = 0.65f;
     float fog_anisotropy = 0.25f;
@@ -83,6 +86,10 @@ public:
     // ring's writers uses the link (path tracing off, its frame work finished); those are waited out. True when the
     // core ended within `wait_ms`; otherwise it keeps what it may still read and no core starts again.
     bool stop(uint32_t wait_ms);
+
+    // DLSS's mode (rfgrt_ipc::Block::dlss_mode), for the cores that start from now on and the one running, which switches
+    // at its next frame. Any thread.
+    void set_dlss_mode(int mode);
 
     bool started() const { return started_.load(); }
     // The core has published fence B and reads the ring. Render thread (opens fence B the first time).

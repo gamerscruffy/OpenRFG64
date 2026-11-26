@@ -10,6 +10,7 @@
 #if defined(OPENRFG_BACKEND_RT)
 #include "backends/rt/rt_backend.h"
 #endif
+#include "backends/dlss/dlss_frame.h"
 
 #if defined(OPENRFG_X64)
 #include "volition/vlib/code/util/endian_type.h"
@@ -50,6 +51,8 @@ namespace
     int g_applied_renderer = -1;
     int g_applied_physics = -1;
     int g_applied_keep_debris = -1;
+    int g_applied_dlss = -1; // the DLSS mode the path tracer was given
+    int g_applied_frame_generation = -1; // and frame generation
 
     // Keep debris as chosen (the choice resolved against the hardware): it applies while PhysX runs. Set where waiting
     // for the hardware check is fine (the main menu, the install thread); read by the game's code every frame.
@@ -152,6 +155,24 @@ namespace
         return true;
 #else
         return physics == OPENRFG_PHYSICS_HAVOK;
+#endif
+    }
+
+    const char* dlss_name(int dlss)
+    {
+        static const char* const names[OPENRFG_DLSS_COUNT] = {"off", "DLAA", "quality", "balanced", "performance", "ultra performance"};
+        return dlss >= 0 && dlss < OPENRFG_DLSS_COUNT ? names[dlss] : "?";
+    }
+
+    // The path tracer's DLSS mode for the DLSS row's: with DLSS for the game's frame (dlss/dlss_frame.h) the scene, and
+    // with it the path tracer's light, is already at DLSS's render size: Ray Reconstruction denoises it at that size
+    // (DLAA), and the frame's DLSS upscales the whole picture. OFF stays off (the path tracer's own filter).
+    int rt_dlss_mode(int dlss)
+    {
+#if defined(OPENRFG_DLSS)
+        return dlss == OPENRFG_DLSS_OFF ? OPENRFG_DLSS_OFF : OPENRFG_DLSS_DLAA;
+#else
+        return dlss;
 #endif
     }
 
@@ -276,6 +297,8 @@ void openrfg_backends_set_settings(const openrfg_backend_settings& settings)
     g_settings.renderer = clamp_choice(settings.renderer, OPENRFG_RENDERER_COUNT, OPENRFG_RENDERER_STANDARD);
     g_settings.physics = clamp_choice(settings.physics, OPENRFG_PHYSICS_COUNT, OPENRFG_PHYSICS_PHYSX);
     g_settings.keep_debris = (settings.keep_debris < OPENRFG_KEEP_DEBRIS_AUTO || settings.keep_debris > OPENRFG_KEEP_DEBRIS_ON) ? OPENRFG_KEEP_DEBRIS_AUTO : settings.keep_debris;
+    g_settings.dlss = clamp_choice(settings.dlss, OPENRFG_DLSS_COUNT, OPENRFG_DLSS_DLAA);
+    g_settings.frame_generation = settings.frame_generation ? 1 : 0;
 }
 
 openrfg_backend_settings openrfg_backends_default_settings()
@@ -289,6 +312,8 @@ void openrfg_backends_read_ini(const keen::FilePath& path)
     settings.renderer = keen::readIniFileInt(path, "graphics", "renderer", g_settings.renderer);
     settings.physics = keen::readIniFileInt(path, "graphics", "physics", g_settings.physics);
     settings.keep_debris = keen::readIniFileInt(path, "graphics", "keep_debris", g_settings.keep_debris);
+    settings.dlss = keen::readIniFileInt(path, "graphics", "dlss", g_settings.dlss);
+    settings.frame_generation = keen::readIniFileInt(path, "graphics", "frame_generation", g_settings.frame_generation);
     openrfg_backends_set_settings(settings);
 }
 
@@ -297,6 +322,8 @@ void openrfg_backends_write_ini(const keen::FilePath& path)
     keen::writeIniFileInt(path, "graphics", "renderer", g_settings.renderer);
     keen::writeIniFileInt(path, "graphics", "physics", g_settings.physics);
     keen::writeIniFileInt(path, "graphics", "keep_debris", g_settings.keep_debris);
+    keen::writeIniFileInt(path, "graphics", "dlss", g_settings.dlss);
+    keen::writeIniFileInt(path, "graphics", "frame_generation", g_settings.frame_generation);
 }
 
 bool openrfg_backends_renderer_supported(int renderer, const char** reason)
@@ -388,6 +415,8 @@ void openrfg_backends_start_early()
     {
         return;
     }
+    // DLSS for the game's frame: its mode before the first frame makes the scene's targets.
+    openrfg_dlss_frame_set_mode(g_settings.dlss);
 #if defined(OPENRFG_BACKEND_RT)
     // The path tracer first, on this thread, whenever the machine can run it: it must be there before the game creates
     // its shaders and meshes, for path tracing chosen later too (it keeps what a later start needs). Its start reads
@@ -397,12 +426,18 @@ void openrfg_backends_start_early()
     {
         const bool on = g_settings.renderer == OPENRFG_RENDERER_PATH_TRACED;
         const ULONGLONG t0 = GetTickCount64();
-        g_rt_loaded = openrfg_rt_start(on);
+        g_rt_loaded = openrfg_rt_start(on, rt_dlss_mode(g_settings.dlss), g_settings.frame_generation != 0);
         g_rt_failed = !g_rt_loaded;
         g_rt_on = g_rt_loaded && on;
+        if (g_rt_loaded)
+        {
+            g_applied_dlss = g_settings.dlss;
+            g_applied_frame_generation = g_settings.frame_generation;
+        }
         char msg[192];
-        snprintf(msg, sizeof(msg), g_rt_loaded ? "BACKENDS path tracer started in %llu ms (path tracing %s)" : "BACKENDS path tracer did not start (%llu ms; the log under backends rfgrt says why)%s",
-                 (unsigned long long)(GetTickCount64() - t0), g_rt_loaded ? (on ? "on" : "off") : "");
+        snprintf(msg, sizeof(msg), g_rt_loaded ? "BACKENDS path tracer started in %llu ms (path tracing %s, DLSS %s, frame generation %s)" : "BACKENDS path tracer did not start (%llu ms; the log under backends rfgrt says why)%s%s%s",
+                 (unsigned long long)(GetTickCount64() - t0), g_rt_loaded ? (on ? "on" : "off") : "", g_rt_loaded ? dlss_name(g_settings.dlss) : "",
+                 g_rt_loaded ? (g_settings.frame_generation ? "on" : "off") : "");
         openrfg_log(msg);
     }
 #endif
@@ -416,6 +451,41 @@ void openrfg_backends_start_early()
         physx_begin_install(false);
     }
 #endif
+}
+
+// The settings that change while playing (DLSS, frame generation) to the path tracer (anywhere): kept for its later
+// starts, and switched from its next frame.
+static void rt_apply_live()
+{
+#if defined(OPENRFG_BACKEND_RT)
+    if (!g_rt_loaded)
+    {
+        return;
+    }
+    if (g_settings.dlss != g_applied_dlss)
+    {
+        openrfg_rt_set_dlss_mode(rt_dlss_mode(g_settings.dlss));
+        g_applied_dlss = g_settings.dlss;
+        char msg[96];
+        snprintf(msg, sizeof(msg), "BACKENDS DLSS %s", dlss_name(g_settings.dlss));
+        openrfg_log(msg);
+    }
+    if (g_settings.frame_generation != g_applied_frame_generation)
+    {
+        openrfg_rt_set_frame_generation(g_settings.frame_generation != 0);
+        g_applied_frame_generation = g_settings.frame_generation;
+        openrfg_log(g_settings.frame_generation ? "BACKENDS frame generation on" : "BACKENDS frame generation off");
+    }
+#endif
+}
+
+void openrfg_backends_apply_live()
+{
+    if (openrfg_backends_enabled())
+    {
+        openrfg_dlss_frame_set_mode(g_settings.dlss); // the game's frame: from the next frame (new targets)
+        rt_apply_live();
+    }
 }
 
 // The path tracer on or off as chosen (at the main menu, where no level is loaded: off at once, and on with its core
@@ -460,6 +530,8 @@ void openrfg_backends_apply()
     const char* physx_note = "";
 #endif
     rt_reconcile();
+    openrfg_dlss_frame_set_mode(g_settings.dlss);
+    rt_apply_live();
     const int renderer = openrfg_backends_effective_renderer();
     const int physics = openrfg_backends_effective_physics();
     const int keep_debris = openrfg_backends_effective_keep_debris() ? 1 : 0;
