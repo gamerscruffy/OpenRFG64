@@ -46,5 +46,6 @@ void camera_satellite_return_to_target(); // 0x006C6BA0 (:852)
 void camera_satellite_shutdown(); // 0x006C6C20 (:868)
 void camera_satellite_system_init(); // 0x006C6C30 (:873)
 void camera_satellite_level_init(); // 0x006C6C70 (:885)
+void camera_satellite_cheat_do_frame(); // OpenRFG: the Satellite Mode cheat
 void camera_satellite_get_hud_data(camera_satellite_hud_data& data); // 0x006D6470 (:923)
 bool camera_satellite_get_hud_target(bool& show, vector2& fire_pos); // 0x006C6CB0 (:964)

@@ -1265,6 +1265,7 @@ target_link_libraries(rfg_vehicle PUBLIC rfg rfg_audio)
 add_library(rfg_gameplay STATIC
     ${RFG}/camera/camera_cutscene.cpp
     ${RFG}/camera/camera_satellite.cpp
+    ${RFG}/weapons/grav_tether.cpp
     ${RFG}/cutscene/cutscene.cpp
     ${RFG}/cutscene/cutscene_audio.cpp
     ${RFG}/cutscene/cutscene_load.cpp

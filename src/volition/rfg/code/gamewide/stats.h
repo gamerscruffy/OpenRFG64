@@ -679,7 +679,9 @@ enum cheat_indexes
     CHEATS_MAX_MORALE = 8,
     CHEATS_MAX_TECHNOLOGY = 9,
     CHEATS_ALWAYS_YELLOW_ALERT = 10,
-    NUM_CHEAT_INDEXES = 11,
+    CHEATS_HAMMER_OF_THE_GODS = 11, // OpenRFG: a shockwave on every hammer hit (human_combat_unified_melee_hit)
+    CHEATS_SATELLITE_MODE = 12, // OpenRFG: the satellite artillery view of the Eos missions (camera_satellite_cheat_do_frame)
+    NUM_CHEAT_INDEXES = 13,
     NUM_RESERVED_CHEAT_INDEXES = 64,
 };
 
@@ -817,6 +819,8 @@ struct stat_function_pointers
 };
 
 bool cheats_are_enabled(); // 0x007C6D80 (:1351)
+extern bool Cheats_allow_saving; // OpenRFG: the cheats menu's "Allow saving with cheats" option
+bool stats_saving_blocked_by_cheats(); // OpenRFG: cheats_are_enabled() unless the option above lets the game be saved
 bool stats_achievements_initialized(); // 0x007C6DB0 (:1371)
 void stats_set_achievements_initialized(bool new_val); // 0x007C6DC0 (:1376)
 void stats_spawn_update_achievements_thread(); // 0x007C77D0 (:3045)
