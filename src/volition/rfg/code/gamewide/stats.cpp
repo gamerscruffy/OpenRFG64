@@ -173,6 +173,20 @@ bool cheats_are_enabled()
     return !stats_can_change();
 }
 
+// OpenRFG: the cheats menu's "Allow saving with cheats" option (game_options.cpp keeps it in the ini). Cheats still
+// freeze the stats and achievements (stats_can_change); this only lets the game be saved while they are on.
+bool Cheats_allow_saving = false;
+
+// OpenRFG: whether cheats stop saving. A save the player does not own or modified tables always do.
+bool stats_saving_blocked_by_cheats()
+{
+    if (Cheats_allow_saving && Savegame_owned && !Modified_table_data)
+    {
+        return false;
+    }
+    return cheats_are_enabled();
+}
+
 // 0x007C6DB0 (:1371)
 bool stats_achievements_initialized()
 {
@@ -2979,7 +2993,8 @@ bool stats_cheat_enabled(cheat_indexes cheat_index)
     {
         return false;
     }
-    if ((int)cheat_index > 10)
+    // OpenRFG: was > 10, the original count; Hammer of the Gods is index 11.
+    if ((int)cheat_index >= NUM_CHEAT_INDEXES)
     {
         return false;
     }

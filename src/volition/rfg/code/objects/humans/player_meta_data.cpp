@@ -287,9 +287,23 @@ int player_meta_data::get_upgrade_value(unsigned int upgrade_id)
     return ul == nullptr ? 0 : ul->value;
 }
 
+// OpenRFG: see the declaration (player_meta_data.h).
+bool player_meta_data::is_jetpack_reequip_offered() const
+{
+    return upgrades[0].current_level == 0 && (s_jetpack_upgrade_level == 1 || s_jetpack_upgrade_level == 2);
+}
+
 // 0x00A11B40 (:473)
 bool player_meta_data::is_next_upgrade_available(unsigned int upgrade_id)
 {
+    // OpenRFG fix: a jetpack that is owned (its level is kept in s_jetpack_upgrade_level, which carries over from an
+    // earlier game and survives buying a backpack) but not worn is always offered, like the unlocked backpacks. The
+    // original asked the availability bit of level 1, which a carried over jetpack never got, so the jetpack was
+    // missing from the upgrade table while a backpack was equipped.
+    if (upgrade_id == UPGRADE_DEFINITION_JETPACK && is_jetpack_reequip_offered())
+    {
+        return true;
+    }
     const unsigned char next = (unsigned char)(upgrades[upgrade_id].current_level + 1);
     return next < 16 && ((upgrades[upgrade_id].availability_bitfield >> next) & 1) != 0;
 }
@@ -323,10 +337,12 @@ const upgrade_level* player_meta_data::get_next_upgrade_level(unsigned int upgra
     {
         return nullptr;
     }
-    // Upgrade 0 is the jetpack: with one owned from an earlier save, its next level is the second.
-    if (upgrade_id == 0 && upgrades[0].current_level == 0 && (s_jetpack_upgrade_level == 1 || s_jetpack_upgrade_level == 2))
+    // Upgrade 0 is the jetpack: with one owned (from an earlier save, or before a backpack was worn) the original
+    // offered its second level here, the recharge upgrade, which then showed up in the table under that name. OpenRFG
+    // offers the jetpack itself (level 1), free, and puts the owned level back (purchase_upgrade).
+    if (upgrade_id == 0 && is_jetpack_reequip_offered())
     {
-        return data->get_upgrade_level(2);
+        return data->get_upgrade_level(1);
     }
     return data->get_upgrade_level(upgrades[upgrade_id].current_level + 1);
 }
@@ -456,11 +472,18 @@ int player_meta_data::purchase_upgrade(unsigned int upgrade_id, bool only_if_fre
     {
         return 1;
     }
-    unsigned int next_level;
-    // Original: the jetpack bought as a backpack before counts as level 1 (or 2).
-    if (upgrade_id == UPGRADE_DEFINITION_JETPACK && upgrades[0].current_level == 0 && (s_jetpack_upgrade_level == 1 || s_jetpack_upgrade_level == 2))
+    // OpenRFG: the owned jetpack that is not worn comes back for free at the level owned (the table offers the jetpack
+    // itself, get_next_upgrade_level). The original sold the second level there, the recharge upgrade. Never for the
+    // free-upgrades pass (only_if_free: a script unlocking a jetpack level must not change what the player wears).
+    const bool owned_jetpack = upgrade_id == UPGRADE_DEFINITION_JETPACK && is_jetpack_reequip_offered();
+    if (owned_jetpack && only_if_free)
     {
-        next_level = 2;
+        return 4;
+    }
+    unsigned int next_level;
+    if (owned_jetpack)
+    {
+        next_level = 1;
     }
     else
     {
@@ -472,11 +495,12 @@ int player_meta_data::purchase_upgrade(unsigned int upgrade_id, bool only_if_fre
         return 1;
     }
     const unsigned char bit = (unsigned char)(upgrades[upgrade_id].current_level + 1);
-    if (bit > 15 || ((upgrades[upgrade_id].availability_bitfield >> (bit & 0x1F)) & 1) == 0)
+    // OpenRFG fix: the owned, unworn jetpack is always available (see is_next_upgrade_available).
+    if (!owned_jetpack && (bit > 15 || ((upgrades[upgrade_id].availability_bitfield >> (bit & 0x1F)) & 1) == 0))
     {
         return 2;
     }
-    if (!force_purchase && salvage < (int)ul->get_cost(upgrade_id, false))
+    if (!owned_jetpack && !force_purchase && salvage < (int)ul->get_cost(upgrade_id, false))
     {
         return 3;
     }
@@ -484,13 +508,18 @@ int player_meta_data::purchase_upgrade(unsigned int upgrade_id, bool only_if_fre
     {
         return 4;
     }
-    if (!force_purchase)
+    if (!owned_jetpack && !force_purchase)
     {
         const int left = salvage - (int)ul->get_cost(upgrade_id, false);
         // Magic number: 30000, the salvage limit.
         salvage = left < 30000 ? left : 30000;
     }
-    if (upgrade_id == UPGRADE_DEFINITION_JETPACK)
+    if (owned_jetpack)
+    {
+        // OpenRFG: the level owned comes back as it was.
+        upgrades[0].current_level = s_jetpack_upgrade_level;
+    }
+    else if (upgrade_id == UPGRADE_DEFINITION_JETPACK)
     {
         const unsigned char level = (unsigned char)(s_jetpack_upgrade_level + 1);
         upgrades[0].current_level = level;
@@ -519,7 +548,7 @@ int player_meta_data::purchase_upgrade(unsigned int upgrade_id, bool only_if_fre
             Purchased_nano_rifle = true;
         }
     }
-    if (ul->get_cost(upgrade_id, false) != 0)
+    if (!owned_jetpack && ul->get_cost(upgrade_id, false) != 0)
     {
         const vector log_pos = gamelog_get_human_pos(Player);
         const int duration = gamelog_get_game_duration();

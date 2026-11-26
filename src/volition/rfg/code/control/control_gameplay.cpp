@@ -11,6 +11,7 @@
 // Multiple-op float expressions are computed in double and rounded once, as the SSE2 code does; the camera input
 // curve is x87 (__CIpow).
 
+#include "volition/rfg/code/weapons/grav_tether.h"
 #include "volition/rfg/code/control/control_gameplay.h"
 
 #include "volition/audio_lib/code/audiolib_api.h"
@@ -1300,11 +1301,12 @@ void control_gameplay_process()
                     }
                 }
                 // reload and fire
-                if ((pp->controls_on_foot_allowed & CFA_FIRE) != 0 && controls_is_button_just_pressed(CBA_OFC_RELOAD, Player_controller_index) && wp != nullptr && wp->can_reload())
+                if ((pp->controls_on_foot_allowed & CFA_FIRE) != 0 && controls_is_button_just_pressed(CBA_OFC_RELOAD, Player_controller_index) && wp != nullptr && wp->can_reload() && !grav_tether_owns_weapon(wp))
                 {
                     human_weapons_firearm_reload(pp, true, nullptr);
                 }
-                if (wp != nullptr && (pp->controls_on_foot_allowed & CFA_FIRE) != 0 && pp->sprint_delay_timestamp.elapsed())
+                // OpenRFG: the Gravity Tether's fire and reload are its own (grav_tether_do_frame).
+                if (wp != nullptr && (pp->controls_on_foot_allowed & CFA_FIRE) != 0 && pp->sprint_delay_timestamp.elapsed() && !grav_tether_owns_weapon(wp))
                 {
                     const bool automatic = wp->w_info->trigger_type != WEAPON_TRIGGER_TYPE_SINGLE;
                     bool fire = (automatic && controls_is_button_down(CBA_OFC_ATTACK_PRIMARY, Player_controller_index)) || controls_is_button_just_pressed(CBA_OFC_ATTACK_PRIMARY, Player_controller_index) || wp->flags.delay_fire;
