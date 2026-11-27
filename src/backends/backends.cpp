@@ -453,8 +453,8 @@ void openrfg_backends_start_early()
 #endif
 }
 
-// The settings that change while playing (DLSS, frame generation) to the path tracer (anywhere): kept for its later
-// starts, and switched from its next frame.
+// DLSS and frame generation to the path tracer (openrfg_backends_apply, at the main menu): kept for its later starts,
+// and switched from its next frame.
 static void rt_apply_live()
 {
 #if defined(OPENRFG_BACKEND_RT)
@@ -477,15 +477,6 @@ static void rt_apply_live()
         openrfg_log(g_settings.frame_generation ? "BACKENDS frame generation on" : "BACKENDS frame generation off");
     }
 #endif
-}
-
-void openrfg_backends_apply_live()
-{
-    if (openrfg_backends_enabled())
-    {
-        openrfg_dlss_frame_set_mode(g_settings.dlss); // the game's frame: from the next frame (new targets)
-        rt_apply_live();
-    }
 }
 
 // The path tracer on or off as chosen (at the main menu, where no level is loaded: off at once, and on with its core

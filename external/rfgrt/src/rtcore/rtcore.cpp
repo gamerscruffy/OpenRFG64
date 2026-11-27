@@ -52,9 +52,10 @@ constexpr uint32_t kCounts = 512;   // per slot: 5 pixel classes (of 8), 16 dept
 constexpr uint32_t kStamps = 12;    // timestamps per slot: TLAS start and end, pass start and end, GI, lights, reflections,
                                     // the fog's start and end; in the GI's: the rays' start, the glass's, the sun tint's
 // The volumetric fog's grid of froxels (shaders/fog_common.hlsli): columns across the screen (rows by its aspect), slices
-// in depth from kFogNear metres to the camera's far plane (50 to 2000 m), the most frames its light is averaged over.
+// in depth from kFogNear metres to the camera's far plane (50 to 2000 m). The most frames its light is averaged over,
+// the rays a frame, the smoothing: Fog.History, Fog.Rays, Fog.Filter.
 constexpr uint32_t kFogColumns = 160, kFogSlices = 64;
-constexpr float kFogNear = 0.5f, kFogFrames = 20.0f;
+constexpr float kFogNear = 0.5f;
 constexpr uint32_t kReadback = kStamps * 8 + kCounts;  // per slot: the timestamps, then the counts
 
 const RunParams* g_p = nullptr;
@@ -283,6 +284,7 @@ struct FrameSet {
     ID3D12Resource* glass_raw = nullptr;  // ours: its traced light before the filter (glass_light.hlsl, RGBA32F)
     ID3D12Resource* glass_prev = nullptr;  // ours: glass_raw as the previous frame left it (the history it reprojects)
     ID3D12Resource* glass_refl = nullptr;  // the plugin's: what the clear glass reflects (glass_light.hlsl; null: none)
+    ID3D12Resource* glass_fog = nullptr;   // the plugin's: the fog in front of the clear glass (fog_apply.hlsl; null: none)
     ID3D12Resource* sun_tint = nullptr;    // the plugin's: the sun through clear glass (sun_tint.hlsl; null: none)
     ID3D12Resource* fog = nullptr;        // the plugin's: the volumetric fog in front of each pixel (null: none)
     ID3D12Resource* fog_vis[2] = {};      // ours: the froxels' sun and sky visibility over frames (fog_inject.hlsl), ping-pong
@@ -325,6 +327,11 @@ struct GiConstants {
     // the top-left part of their textures; zw the sample's offset from each render pixel's centre (render pixels, y down):
     // each traces from the frame's pixel under that point
     float upscale[4];
+    float fog4[4];  // the volumetric fog: x the rays from each froxel a frame (Fog.Rays), y 1 with Fog.Filter
+    // the game's cloud shadows (frame_scene.h cloud_*): xy the scale from a point's x and z to the cloud texture's uv,
+    // zw its offset; then the shadow's scale and bias, and the texture's id + 1 (its bits; 0 none)
+    float cloud[4];
+    float cloud2[4];
 };
 static_assert(sizeof(GiConstants) <= 512, "a 512-byte slot a ring slot");
 
@@ -376,15 +383,18 @@ float halton(uint32_t i, uint32_t base) {
 //   212..217      its filter:                depth SRV x3, glass_raw SRV (t3), depth SRV, the glass UAV
 //   218+6w..      the fog's froxels:         depth, depth, previous depth, fog_vis[1-w] SRV (t3), depth; fog_vis[w] UAV
 //   230+6w..      their integration:         depth, depth, previous depth, fog_vis[w] SRV (t3), depth; fog_ratio UAV
-//   242..247      the fog per pixel:         depth, depth, previous depth, fog_ratio SRV (t3), depth; the fog UAV
+//   242..247      the fog per pixel:         depth, depth, previous depth, fog_ratio SRV (t3), glass_raw SRV (t4: the
+//                                            glass's depth; null without the glass's fog); the fog UAV
 //   248           what the clear glass reflects: its UAV (u7)
 //   249           the sun through clear glass: its UAV (u7, sun_tint.hlsl)
-//   250..         the materials' textures (scene.h, kMaxTextures: t0.. in space2), null until each arrives
+//   250           the fog in front of the clear glass: its UAV (u7, fog_apply.hlsl; a null view without it)
+//   251..         the materials' textures (scene.h, kMaxTextures: t0.. in space2), null until each arrives
 constexpr UINT kTableCompare = 0, kTableTrace = 3, kTableTemporal = 6, kTableFilter = 16, kGeoPages = 24, kMaxGeoPages = 64,
                kTableGiTrace = 88, kTableGiTemporal = 94, kTableGiFilter = 106, kTableLights = 118, kTableReflTrace = 135,
                kTableReflTemporal = 141, kTableReflFilter = 153, kTableGiAtrous = 165, kTableRrGuides = 195,
                kTableRrFinalize = 200, kTableGlass = 206, kTableGlassFilter = 212, kTableFogInject = 218,
-               kTableFogIntegrate = 230, kTableFogApply = 242, kTableGlassRefl = 248, kTableSunTint = 249, kTableTextures = 250,
+               kTableFogIntegrate = 230, kTableFogApply = 242, kTableGlassRefl = 248, kTableSunTint = 249, kTableGlassFog = 250,
+               kTableTextures = 251,
                kDescriptors = kTableTextures + rfgrt_scene::kMaxTextures;
 
 // The game's projection (rl_camera::m_projection_transform): row-vector (P23 = 1, P32 at [14]) or column-vector
@@ -668,8 +678,8 @@ int run(const RunParams& p) {
             }
             if (glassPso && b->refl_glass)
                 logf("glass: the clear glass reflects (Reflections.Glass): a mirror ray off it, weighted by Schlick's Fresnel term "
-                     "from %.3f at normal incidence (Reflections.GlassReflectance), faded by the game's fog (the patched glass "
-                     "shader's t19)", b->refl_glass_f0);
+                     "from %.3f at normal incidence (Reflections.GlassReflectance), faded by the game's fog, or with the "
+                     "volumetric fog fogged with the glass (the patched glass shader's t19)", b->refl_glass_f0);
             if (b->fog_enabled && b->gi_rays > 0) {
                 pd.CS = {g_fog_inject_cs, sizeof(g_fog_inject_cs)};
                 if (FAILED(dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&fogInjectPso)))) fogInjectPso = nullptr;
@@ -683,9 +693,17 @@ int run(const RunParams& p) {
                     logf("fog: the game's own (no pipeline for the volumetric fog)");
                 } else {
                     logf("fog: volumetric (Fog.Enabled): the game's fog lit where the sun and the sky reach it, %u froxels across "
-                         "the screen, %u slices from %.1f m to the far plane, averaged over up to %.0f frames; the sun's share %.2f, "
-                         "anisotropy %.2f",
-                         kFogColumns, kFogSlices, kFogNear, kFogFrames, b->fog_sun_share, b->fog_anisotropy);
+                         "the screen, %u slices from %.1f m to the far plane, %d ray(s) from each a frame along low-discrepancy "
+                         "sequences, averaged over up to %d frames%s%s; the sun's share %.2f, anisotropy %.2f; %.0f%% of the "
+                         "fog within the game's start kept (Fog.Near)",
+                         kFogColumns, kFogSlices, kFogNear, b->fog_rays, b->fog_history,
+                         b->fog_filter ? ", smoothed across the screen (Fog.Filter)" : "",
+                         b->fog_walls ? ", their points behind the scene's surfaces left out (Fog.Walls)" : "", b->fog_sun_share,
+                         b->fog_anisotropy, b->fog_near * 100.0);
+                    if (glassPso)
+                        logf("fog: in front of the clear glass too, when the plugin gives it a texture (Fog.Glass): at the "
+                             "glass's depth, the patched glass shader's t21, over the glass and what it reflects in place of the "
+                             "game's fog");
                 if (b->fog_density != 1.0f) logf("fog: its density %g times the game's (Test.FogDensity)", b->fog_density);
                 }
             }
@@ -897,6 +915,7 @@ int run(const RunParams& p) {
     int fogOut = 0;
     bool fogHistory = false;
     uint64_t fogFrames = 0;
+    uint64_t cloudFrames = 0;  // frames with the game's cloud shadows on the GI's, the fog's and the glass's sunlight
     float prevView[16] = {}, prevProj[16] = {}, prevOffset[3] = {}, prevRange = 1.0f;
     int64_t n = 0;               // the last frame taken (queued, or its scene skipped)
     int64_t sig = 0;             // the last frame queued: fence B reaches it when the GPU has run it
@@ -983,6 +1002,7 @@ int run(const RunParams& p) {
                 release(set.glass_raw);
                 release(set.glass_prev);
                 release(set.glass_refl);
+                release(set.glass_fog);
                 release(set.sun_tint);
                 release(set.fog);
                 release(set.fog_vis[0]);
@@ -1012,6 +1032,11 @@ int run(const RunParams& p) {
                     if (SUCCEEDED(hr) && glassPso)
                         hr = dev->OpenSharedHandle(to_handle(b->glass_refl_handle), IID_PPV_ARGS(&set.glass_refl));
                     CloseHandle(to_handle(b->glass_refl_handle));
+                }
+                if (b->glass_fog_handle) {
+                    if (SUCCEEDED(hr) && glassPso && fogApplyPso)
+                        hr = dev->OpenSharedHandle(to_handle(b->glass_fog_handle), IID_PPV_ARGS(&set.glass_fog));
+                    CloseHandle(to_handle(b->glass_fog_handle));
                 }
                 if (b->sun_tint_handle) {
                     if (SUCCEEDED(hr) && sunTintPso)
@@ -1237,6 +1262,12 @@ int run(const RunParams& p) {
                         depths(kTableFogApply);
                         dev->CreateShaderResourceView(set.fog_ratio, &ratioSrv3, at(kTableFogApply + 3));
                         dev->CreateUnorderedAccessView(set.fog, nullptr, &giUav, at(kTableFogApply + 5));
+                        // the fog in front of the clear glass: the glass's depth (glass_light.hlsl's raw light, t4) in, the
+                        // plugin's texture (u7) out; null views without it (no glass read, the writes go nowhere)
+                        const bool glassFog = set.glass_fog && set.glass_raw;
+                        const D3D12_SHADER_RESOURCE_VIEW_DESC rawSrv4 = srv_of(DXGI_FORMAT_R32G32B32A32_FLOAT);
+                        dev->CreateShaderResourceView(glassFog ? set.glass_raw : nullptr, &rawSrv4, at(kTableFogApply + 4));
+                        dev->CreateUnorderedAccessView(glassFog ? set.glass_fog : nullptr, nullptr, &giUav, at(kTableGlassFog));
                     }
                     for (UINT w = 0; w < 2; ++w) {
                         const UINT t = kTableGiTemporal + 6 * w, f = kTableGiFilter + 6 * w;
@@ -1610,6 +1641,8 @@ int run(const RunParams& p) {
             if (set.glass) in[inCount++] = transition(set.glass, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             if (set.glass_refl)
                 in[inCount++] = transition(set.glass_refl, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            if (set.glass_fog)
+                in[inCount++] = transition(set.glass_fog, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             if (set.sun_tint)
                 in[inCount++] = transition(set.sun_tint, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             if (set.fog) in[inCount++] = transition(set.fog, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -1804,8 +1837,19 @@ int run(const RunParams& p) {
                         g.fog[0] = h->fog_distance[1] * (b->fog_density >= 0.0f ? b->fog_density : 1.0f);
                         g.fog[1] = h->fog_distance[0];
                         g.fog[2] = h->fog_distance[3];
-                        g.fog[3] = 1.0f;
+                        g.fog[3] = fogSet ? b->fog_near : 0.0f;  // Fog.Near: the volumetric fog's (the game's keeps its start)
                         g.glass[0] = b->refl_glass_f0;
+                        {  // the game's cloud shadows: on the GI's hits', the fog's and the glass's sunlight (the direct
+                           // sunlight gets them from the game's ClbTexture, into which the sun shadow is multiplied)
+                            const uint32_t tex = h->cloud_texture;
+                            const uint32_t id = tex != 0 && scene.texture_ready(tex - 1) ? tex : 0u;
+                            memcpy(g.cloud, h->cloud_uv, sizeof(g.cloud));
+                            g.cloud2[0] = h->cloud_shadow[0];
+                            g.cloud2[1] = h->cloud_shadow[1];
+                            memcpy(&g.cloud2[2], &id, sizeof(id));
+                            g.cloud2[3] = 0.0f;
+                            if (id) ++cloudFrames;
+                        }
                         g.probe[0] = b->probe_x > 0.0f && b->probe_x < 1.0f ? b->probe_x : 0.5f;
                         g.probe[1] = b->probe_y > 0.0f && b->probe_y < 1.0f ? b->probe_y : 0.5f;
                         g.glass[1] = set.glass_refl && b->refl_glass ? 1.0f : 0.0f;
@@ -1820,7 +1864,13 @@ int run(const RunParams& p) {
                             g.fog3[0] = float(set.fog_x);
                             g.fog3[1] = float(set.fog_y);
                             g.fog3[2] = fogHistory && historyValid ? 1.0f : 0.0f;
-                            g.fog3[3] = kFogFrames;
+                            g.fog3[3] = float(b->fog_history > 0 ? b->fog_history : 20);
+                            g.fog4[0] = float(b->fog_rays > 0 ? b->fog_rays : 1);
+                            g.fog4[1] = b->fog_filter ? 1.0f : 0.0f;
+                            g.fog4[3] = b->fog_walls ? 1.0f : 0.0f;
+                            // the fog in front of the clear glass (fog_apply.hlsl, after the glass's passes): written then,
+                            // and the glass's reflections left unfaded (the patched glass shader fogs them with the glass)
+                            g.fog4[2] = set.glass_fog && set.glass_raw && glassPso && glassFilterPso && set.glass ? 1.0f : 0.0f;
                         }
                         // DLSS (dlss.h): Ray Reconstruction denoises the GI unless the mode is off; below DLAA the rays
                         // and its guides run at the mode's render size (the top-left part of their textures), each of
@@ -1971,14 +2021,20 @@ int run(const RunParams& p) {
                                 cl->SetComputeRootDescriptorTable(0, table(kTableFogIntegrate + 6 * UINT(fogOut)));
                                 cl->Dispatch((set.fog_x + 7) / 8, (set.fog_y + 7) / 8, 1);
                             }
-                            const D3D12_RESOURCE_BARRIER f2 = transition(set.fog_ratio, uav, srv);
-                            cl->ResourceBarrier(1, &f2);
+                            const bool glassFog = g.fog4[2] > 0.0f;  // the fog in front of the clear glass too
+                            const D3D12_RESOURCE_BARRIER f2[2] = {transition(set.fog_ratio, uav, srv), transition(set.glass_raw, uav, srv)};
+                            cl->ResourceBarrier(glassFog ? 2u : 1u, f2);
                             cl->SetPipelineState(fogApplyPso);
                             cl->SetComputeRootDescriptorTable(0, table(kTableFogApply));
+                            cl->SetComputeRootDescriptorTable(12, table(kTableGlassFog));
                             cl->Dispatch(gx, gy, 1);
                             const D3D12_RESOURCE_BARRIER f3[3] = {transition(set.fog_ratio, srv, uav), transition(set.fog_vis[0], srv, uav),
                                                                   transition(set.fog_vis[1], srv, uav)};
                             cl->ResourceBarrier(lit ? 3u : 1u, f3);
+                            if (glassFog) {
+                                const D3D12_RESOURCE_BARRIER f4 = transition(set.glass_raw, srv, uav);
+                                cl->ResourceBarrier(1, &f4);
+                            }
                             cl->SetComputeRootDescriptorTable(0, table(kTableGiTrace));
                             if (lit) {
                                 fogOut = 1 - fogOut;
@@ -2262,6 +2318,8 @@ int run(const RunParams& p) {
             if (set.glass) out[outCount++] = transition(set.glass, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
             if (set.glass_refl)
                 out[outCount++] = transition(set.glass_refl, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+            if (set.glass_fog)
+                out[outCount++] = transition(set.glass_fog, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
             if (set.sun_tint)
                 out[outCount++] = transition(set.sun_tint, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
             if (set.fog) out[outCount++] = transition(set.fog, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
@@ -2315,6 +2373,11 @@ int run(const RunParams& p) {
                          lastGi.fog_color[0], lastGi.fog_color[1], lastGi.fog_color[2], set.fog_x, set.fog_y, kFogSlices, lastGi.fog2[2]);
                     fogFrames = 0;
                 }
+                logf("clouds: the game's cloud shadows on the sunlight of the GI's hits, the fog and the glass in %llu frames "
+                     "(GI.CloudShadows); the last: uv per metre %.6f (x) %.6f (z), scroll %.4f, shadow scale %g, bias %g",
+                     static_cast<unsigned long long>(cloudFrames), lastGi.cloud[0], lastGi.cloud[1], lastGi.cloud[3],
+                     lastGi.cloud2[0], lastGi.cloud2[1]);
+                cloudFrames = 0;
                 if (tlas.stats.frames)
                     logf("TLAS glass (rays go through transparent materials): per frame %.1f instances all of it (non-opaque "
                          "panes; %.1f of them out of the rays' mask: more than 23 geometries), %.1f with some (non-opaque), %.1f "
@@ -2507,6 +2570,7 @@ int run(const RunParams& p) {
     release(set.glass_raw);
     release(set.glass_prev);
     release(set.glass_refl);
+    release(set.glass_fog);
     release(set.sun_tint);
     release(sunTintPso);
     release(glassPso);

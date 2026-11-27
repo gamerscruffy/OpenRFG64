@@ -97,18 +97,30 @@ struct Config {
     std::vector<double> gi_terrain_albedo;  // GI.TerrainAlbedo: r, g, b the rays give the terrain where nothing better is
                                             // known (default 0.032, 0.010, 0.002: the soil as the game draws it)
     bool gi_window_tint = true;   // the clear glass tints the sun's light through it, texel by texel (GI.WindowTint)
+    bool gi_cloud_shadows = true; // the game's cloud shadows on the sunlight of the GI's hits, the fog and the glass (the
+                                  // direct sunlight has them from the game's ClbTexture either way)
+    double gi_rim_light = 0.0;    // the characters' cloth's rim light (a glow along their edges turned from the sun,
+                                  // patch/rim_light.h) where the path tracer lights them: 0 none, 1 the game's
     bool gi_frosted_glass = true; // the patterned glass (rfg-eosglass) diffuses the light through it: no sunlight through
                                   // it, its panes glowing on their other side with it (0: a share of the sun through each)
     double gi_sky = 1.0;           // the sky's light (the game's ambient colour as the sky's radiance): 0 none, 1 the game's
 
     // [Fog] the game's fog made volumetric (with GI): its density, height falloff, start and colour, lit where the sun
     // and the sky reach it (light shafts, shadowed fog, darker indoors), in place of the game's over the lit opaque scene
-    // (patch/fog.h); the transparents keep the game's
+    // (patch/fog.h); the plain glass takes it too, at its own depth (patch/glass.h); the other transparents keep the game's
     bool fog_enabled = true;
     double fog_sun_share = 0.65;   // the share of the fog's colour the sun gives (the rest the sky): fog where both reach
                                    // is the game's colour
     double fog_anisotropy = 0.25;  // how much more of the sun's share the fog scatters toward the sun than away from it
                                    // (Henyey-Greenstein g: 0 even; the shafts stand out more looking toward the sun)
+    double fog_near = 0.5;         // the share kept of the fog the game leaves out near the camera (within its start:
+                                   // 15 to 30 m of its daytime fog): 0 the game's (none), 1 the fog from the camera on
+    int fog_history = 20;          // the most frames each froxel's light is averaged over (more: smoother, slower to follow)
+    int fog_rays = 1;              // rays from each froxel a frame, 1 to 4 (4 anyway while it has no history yet)
+    bool fog_filter = true;        // each froxel's light averaged with its neighbours' across the screen (a 3x3 tent)
+    bool fog_walls = true;         // the froxels' points behind the scene's surfaces left out of their light (a froxel
+                                   // across a wall no longer brings the lit fog beyond it into a dark room)
+    bool fog_glass = true;         // the plain glass fogged by it at its own depth (patch/glass.h); 0: the game's fog on it
 
     // [Tonemap] the game's tone mapping while path tracing (the game's own renderer keeps its look): the bloom's strength
     // (1 the game's, 0 none: the glow it spreads around bright parts made a lit hole or window look like a lamp)
@@ -163,17 +175,15 @@ struct Config {
     std::vector<double> vanilla_at;  // Test.VanillaAt: Test.VanillaKey pressed at these gameplay seconds (tests)
     std::vector<double> glass_refl_at;  // Test.GlassReflectionsAt: the clear glass's reflections hidden, shown again, ...
                                         // at these gameplay seconds (A/B shots of one view)
+    std::vector<double> vehicle_glass_at;  // Test.VehicleGlassAt: the vehicles' windows solid (as before they were
+                                           // glass), glass again, ... at these gameplay seconds (A/B shots)
     int vanilla_key = 0x7A;       // Test.VanillaKey: the key (F11) that switches between the path tracing and the game's
                                   // own lighting and shadows, for comparing (the core keeps running; 0: none)
     std::wstring input_script;    // scripted mouse and keyboard input (test/input_script.h)
     int time_of_day = -1;         // the game clock set to this hour once gameplay starts, and held there (-1: the save's)
-    int test_dlss_cycle_s = 0;    // Test.DlssCycle: every this many gameplay seconds the next DLSS mode (1 to 5, then 0), as
-                                  // a game's DLSS setting changes it while playing (0: never)
     std::string test_display_rows;  // Test.DisplayRows: at the main menu (before AutoLoadSave's load), the display menu opened,
                                     // its general page saved (display_rows.png in the run folder), then these rows chosen and
                                     // accepted: "renderer=0|1,dlss=0..5,fg=0|1" (any of them)
-    int test_fg_cycle_s = 0;      // Test.FrameGenerationCycle: every this many gameplay seconds frame generation switched
-                                  // (on, off, ...), as a game's setting does while playing (0: never)
     std::string wrecking_crew;    // Test.WreckingCrew: main menu -> Wrecking Crew -> this map (its file name, as
                                   // wcdlc4, or its index; "current": the menu's) -> the match, instead of a save
 };
