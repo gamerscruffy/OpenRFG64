@@ -39,6 +39,7 @@
 #include "volition/rfg/code/cutscene/video_cutscene.h"
 #include "volition/rfg/code/video_player/video_player.h"
 #include "volition/rfg/code/gameplay/difficulty.h"
+#include "volition/rfg/code/gameplay/coop.h"
 #include "volition/rfg/code/gamewide/game_clock.h"
 #include "volition/rfg/code/gamewide/game_options.h"
 #include "volition/rfg/code/game_render/fullscreen_effects/fb_accum_blur.h"
@@ -942,6 +943,250 @@ static void delay_selection(menu_option_types option)
     main_menu_show_menu(false);
 }
 
+static void main_menu_handle_selection(int choice);
+
+#ifdef OPENRFG_X64
+// ---- OpenRFG: the Co-op entry (gameplay/coop.h)
+// The entry opens a box with four choices: host or join, then load a save or start a new game. Hosting opens the UDP
+// port at once; joining connects once the game has loaded (the guest is then moved next to the host). The join address
+// comes from config.ini ([coop] join_address, port), shown in the box.
+static wchar_t Coop_text_entry[] = L"CO-OP";
+static wchar_t Coop_text_title[] = L"SINGLE PLAYER CO-OP";
+static wchar_t Coop_text_host_load[] = L"HOST - LOAD GAME";
+static wchar_t Coop_text_host_new[] = L"HOST - NEW GAME";
+static wchar_t Coop_text_join_load[] = L"JOIN - LOAD GAME";
+static wchar_t Coop_text_join_new[] = L"JOIN - NEW GAME";
+static wchar_t Coop_text_set_address[] = L"SET JOIN ADDRESS";
+static wchar_t Coop_text_address_title[] = L"JOIN ADDRESS";
+static wchar_t Coop_text_body[512];
+static wchar_t Coop_text_error_title[] = L"CO-OP";
+static wchar_t Coop_text_error[256];
+
+// The texts are not in the game's localization data: added once (the body and error are rewritten in place).
+static void main_menu_add_coop_text_key(const char* key, wchar_t* text)
+{
+    const unsigned int hash = keen::getCrc32LwrValue(key);
+    wchar_t* existing = nullptr;
+    Localization_hash.get(hash, existing);
+    if (existing == nullptr)
+    {
+        Localization_hash.insert_key_data(hash, text);
+    }
+}
+
+static void main_menu_add_coop_text()
+{
+    main_menu_add_coop_text_key("OPENRFG_COOP", Coop_text_entry);
+    main_menu_add_coop_text_key("OPENRFG_COOP_TITLE", Coop_text_title);
+    main_menu_add_coop_text_key("OPENRFG_COOP_HOST_LOAD", Coop_text_host_load);
+    main_menu_add_coop_text_key("OPENRFG_COOP_HOST_NEW", Coop_text_host_new);
+    main_menu_add_coop_text_key("OPENRFG_COOP_JOIN_LOAD", Coop_text_join_load);
+    main_menu_add_coop_text_key("OPENRFG_COOP_JOIN_NEW", Coop_text_join_new);
+    main_menu_add_coop_text_key("OPENRFG_COOP_SET_ADDRESS", Coop_text_set_address);
+    main_menu_add_coop_text_key("OPENRFG_COOP_ADDRESS_TITLE", Coop_text_address_title);
+    main_menu_add_coop_text_key("OPENRFG_COOP_BODY", Coop_text_body);
+    main_menu_add_coop_text_key("OPENRFG_COOP_ERROR_TITLE", Coop_text_error_title);
+    main_menu_add_coop_text_key("OPENRFG_COOP_ERROR", Coop_text_error);
+}
+
+static void main_menu_coop_error(const char* text)
+{
+    swprintf(Coop_text_error, sizeof(Coop_text_error) / sizeof(Coop_text_error[0]), L"%hs", text);
+    main_menu_add_coop_text();
+    Message_box_handle_main = ui_add_msgbox(MBT_OK, "OPENRFG_COOP_ERROR_TITLE", "OPENRFG_COOP_ERROR", nullptr, false, false, nullptr, nullptr, false);
+    main_menu_show_menu(true);
+}
+
+static void main_menu_open_coop_box();
+
+// ---- The join address box: the address is typed (digits, '.', ':'), Backspace deletes, Ctrl+V pastes. Accept keeps
+// it (saved to config.ini) when it is a valid address; both ways lead back to the Co-op box.
+static const int kCoopAddressMax = 47;
+static const unsigned int kKeenKeyBackspace = 0x0E; // keen key id (vconsole.cpp's CONSOLE_KEY_BACKSPACE)
+static const unsigned int kKeenKeyModCtrl = 0x2000; // key.cpp's KEY_MOD_CTRL bit of a buffered key
+static char Coop_address_edit[kCoopAddressMax + 1];
+static int Coop_address_box_handle = -1;
+static char Coop_address_shown[kCoopAddressMax + 1];
+
+static void main_menu_coop_address_caption(char* encoded, unsigned int encoded_size)
+{
+    wchar_t text[512];
+    swprintf(text, sizeof(text) / sizeof(text[0]),
+        L"Type the host's IP address, with :port if the host changed it.\n"
+        L"Radmin VPN and Hamachi show it next to the host's name (26.x.x.x or 25.x.x.x).\n"
+        L"Ctrl+V pastes, Backspace deletes.\n\n> %hs_%ls",
+        Coop_address_edit, Coop_address_edit[0] == '\0' || coop_is_valid_join_address(Coop_address_edit) ? L"" : L"   (not a valid address yet)");
+    vint_encode_wide_text(encoded, encoded_size, text);
+}
+
+// Keeps the characters an address can have: digits, '.' and one ':'.
+static void main_menu_coop_address_append(const char* text)
+{
+    int length = (int)strlen(Coop_address_edit);
+    for (const char* c = text; *c != '\0' && length < kCoopAddressMax; c++)
+    {
+        const bool digit = *c >= '0' && *c <= '9';
+        const bool colon = *c == ':' && strchr(Coop_address_edit, ':') == nullptr && length > 0;
+        if (digit || *c == '.' || colon)
+        {
+            Coop_address_edit[length++] = *c;
+            Coop_address_edit[length] = '\0';
+        }
+    }
+}
+
+static bool main_menu_coop_address_cb(int mbox_handle, int, msgbox_choice choice)
+{
+    if (Coop_address_box_handle != mbox_handle)
+    {
+        return false;
+    }
+    Coop_address_box_handle = -1;
+    Message_box_handle_main = -1;
+    ui_wait_for_button_ups();
+    if (choice == MBC_OK)
+    {
+        if (coop_is_valid_join_address(Coop_address_edit))
+        {
+            strncpy_s(Coop_join_address, sizeof(Coop_join_address), Coop_address_edit, _TRUNCATE);
+            game_options_save();
+        }
+        else
+        {
+            char text[160];
+            snprintf(text, sizeof(text), "\"%s\" is not an IP address (like 26.12.34.56 or 26.12.34.56:27420). The join address was not changed.", Coop_address_edit);
+            main_menu_coop_error(text);
+            return true;
+        }
+    }
+    main_menu_open_coop_box();
+    return true;
+}
+
+static void main_menu_open_coop_address_box()
+{
+    strncpy_s(Coop_address_edit, sizeof(Coop_address_edit), Coop_join_address, _TRUNCATE);
+    strncpy_s(Coop_address_shown, sizeof(Coop_address_shown), Coop_address_edit, _TRUNCATE);
+    // Keys typed before the box opened are not part of the address.
+    while (key_in() != 0)
+    {
+    }
+    char encoded[768];
+    main_menu_coop_address_caption(encoded, sizeof(encoded));
+    main_menu_add_coop_text();
+    Coop_address_box_handle = ui_add_msgbox(MBT_ACCEPT_CANCEL, "OPENRFG_COOP_ADDRESS_TITLE", encoded, main_menu_coop_address_cb, false, false, nullptr, nullptr, false);
+    Message_box_handle_main = Coop_address_box_handle;
+    main_menu_show_menu(false);
+}
+
+// Each main menu frame while the address box is open: the typed keys edit the address, the box shows it.
+static void main_menu_coop_address_process()
+{
+    if (Coop_address_box_handle == -1)
+    {
+        return;
+    }
+    if (!ui_is_msgbox_active(Coop_address_box_handle))
+    {
+        Coop_address_box_handle = -1;
+        return;
+    }
+    for (unsigned int code = key_in(); code != 0; code = key_in())
+    {
+        if ((code & 0xFF) == kKeenKeyBackspace)
+        {
+            const int length = (int)strlen(Coop_address_edit);
+            if (length > 0)
+            {
+                Coop_address_edit[length - 1] = '\0';
+            }
+            continue;
+        }
+        char text[8];
+        key_to_text(text, sizeof(text), code);
+        if ((code & kKeenKeyModCtrl) != 0)
+        {
+            if (text[0] == 'v' || text[0] == 'V')
+            {
+                char clipboard[128];
+                coop_get_clipboard_text(clipboard, sizeof(clipboard));
+                main_menu_coop_address_append(clipboard);
+            }
+            continue;
+        }
+        main_menu_coop_address_append(text);
+    }
+    if (strcmp(Coop_address_shown, Coop_address_edit) != 0)
+    {
+        strncpy_s(Coop_address_shown, sizeof(Coop_address_shown), Coop_address_edit, _TRUNCATE);
+        char encoded[768];
+        main_menu_coop_address_caption(encoded, sizeof(encoded));
+        ui_update_msgbox_caption(Coop_address_box_handle, encoded, false);
+    }
+}
+
+static bool main_menu_coop_cb(int mbox_handle, int selection_index, msgbox_choice choice)
+{
+    if (Message_box_handle_main != mbox_handle)
+    {
+        return false;
+    }
+    Message_box_handle_main = -1;
+    ui_wait_for_button_ups();
+    if (choice != MBC_OK)
+    {
+        main_menu_show_menu(true);
+        return true;
+    }
+    if (selection_index == 4)
+    {
+        main_menu_open_coop_address_box();
+        return true;
+    }
+    const bool host = selection_index == 0 || selection_index == 1;
+    const bool new_game = selection_index == 1 || selection_index == 3;
+    if (host)
+    {
+        if (!coop_start_host())
+        {
+            char text[160];
+            snprintf(text, sizeof(text), "Could not open UDP port %d for co-op (is another program using it?).", Coop_port);
+            main_menu_coop_error(text);
+            return true;
+        }
+    }
+    else if (!coop_start_join())
+    {
+        char text[160];
+        snprintf(text, sizeof(text), "The co-op join address \"%s\" is not valid. Pick SET JOIN ADDRESS in the Co-op box to type it.", Coop_join_address);
+        main_menu_coop_error(text);
+        return true;
+    }
+    // Then the usual single player start.
+    main_menu_handle_selection(new_game ? MENU_OPTION_NEW_GAME : MENU_OPTION_LOAD_GAME);
+    return true;
+}
+
+static void main_menu_open_coop_box()
+{
+    char target[96];
+    coop_get_join_target_text(target, sizeof(target));
+    char addresses[192];
+    coop_get_local_addresses(addresses, sizeof(addresses));
+    swprintf(Coop_text_body, sizeof(Coop_text_body) / sizeof(Coop_text_body[0]),
+        L"Host: friends join your IP on UDP port %d. Your IPs: %hs\nJoin: connects to %hs.\nGuests can join while the host is in free roam.",
+        Coop_port, addresses[0] != '\0' ? addresses : "(none found)", target);
+    main_menu_add_coop_text();
+    Message_box_handle_main = ui_add_msgbox(MBT_ACCEPT_CANCEL, "OPENRFG_COOP_TITLE", "OPENRFG_COOP_BODY", main_menu_coop_cb, false, false, nullptr, nullptr, false);
+    ui_msgbox_add_caption_item(Message_box_handle_main, "OPENRFG_COOP_HOST_LOAD", false, false);
+    ui_msgbox_add_caption_item(Message_box_handle_main, "OPENRFG_COOP_HOST_NEW", false, false);
+    ui_msgbox_add_caption_item(Message_box_handle_main, "OPENRFG_COOP_JOIN_LOAD", false, false);
+    ui_msgbox_add_caption_item(Message_box_handle_main, "OPENRFG_COOP_JOIN_NEW", false, false);
+    ui_msgbox_add_caption_item(Message_box_handle_main, "OPENRFG_COOP_SET_ADDRESS", false, false);
+    main_menu_show_menu(false);
+}
+#endif
+
 // 0x008F7C30 (:2061)
 // The menu items' selection callback (the item index). Options pushes GS_MAINMENU_OPTIONS (UI6).
 static void main_menu_handle_selection(int choice)
@@ -1014,6 +1259,11 @@ static void main_menu_handle_selection(int choice)
             delay_selection(MENU_OPTION_SYSLINK);
         }
         break;
+#ifdef OPENRFG_X64
+    case MENU_OPTION_COOP:
+        main_menu_open_coop_box();
+        break;
+#endif
     case MENU_OPTION_OPTIONS:
         // UI.md UI6: the option menus are ported (options_main.cpp).
         gameseq_push_state(GS_MAINMENU_OPTIONS, true, false);
@@ -1239,6 +1489,10 @@ static void main_menu_create_menu()
     ui_menu_add_function_item(Menu_handle, "NETWORK_PLATFORM_NAME", main_menu_handle_selection, true, false, true);
     ui_menu_add_function_item(Menu_handle, "MENU_BONUS_CAMPAIGN", main_menu_handle_selection, true, false, true);
     ui_menu_add_function_item(Menu_handle, "NETWORK_LOCAL_NAME", main_menu_handle_selection, true, false, true);
+#ifdef OPENRFG_X64
+    main_menu_add_coop_text();
+    ui_menu_add_function_item(Menu_handle, "OPENRFG_COOP", main_menu_handle_selection, true, false, true);
+#endif
     ui_menu_add_function_item(Menu_handle, "MENU_OPTIONS", main_menu_handle_selection, false, false, false);
     ui_menu_add_function_item(Menu_handle, "MENU_BACK", main_menu_handle_selection, true, false, false);
     ui_menu_add_function_item(Menu_handle, "MENU_EXIT", main_menu_handle_selection, true, false, false);
@@ -1330,6 +1584,10 @@ void main_menu_enter(game_state)
 {
     // OpenRFG: no level is loaded here, so the chosen backends start (and the others stop) now (backends/backends.h).
     openrfg_backends_apply();
+#ifdef OPENRFG_X64
+    // OpenRFG: back at the main menu, a co-op session ends (the Co-op entry starts a new one).
+    coop_stop();
+#endif
     Idle_time = 0.0f;
     Was_in_attract = false;
     Assets_loaded_main = false;
@@ -1515,6 +1773,9 @@ static bool main_menu_wait_for_options()
 void main_menu_process()
 {
     openrfg_backends_main_menu_frame(); // OpenRFG: settles a backend change that could not be made at once
+#ifdef OPENRFG_X64
+    main_menu_coop_address_process(); // OpenRFG: the co-op join address box's typing
+#endif
     vint_data_item* select = vint_data_item::find(Main_menu_controller_select_handle);
     if (select != nullptr)
     {

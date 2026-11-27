@@ -34,6 +34,10 @@
 
 int Ambient_range_pct = 100; // OpenRFG: ambient spawn/despawn range option, percent (ambient_spawn_manager.cpp)
 int Ambient_spawn_mult = 1; // OpenRFG: ambient pedestrian and traffic count multiplier, 1-10 (ambient_spawn_manager.cpp)
+// OpenRFG: single player co-op (gameplay/coop.cpp): the host to join ("a.b.c.d" or "a.b.c.d:port") and the port to
+// host on, the ini's [coop] section. Defined here so the libraries without rfg_gameplay still link.
+char Coop_join_address[64] = "127.0.0.1";
+int Coop_port = 27420;
 extern bool Cheats_allow_saving; // OpenRFG: the cheats menu's "Allow saving with cheats" (stats.cpp), kept in the ini below
 #include "volition/rfg/code/control/control_map.h"
 #include "volition/rfg/code/interface/option_menus/option_menu_system.h"
@@ -321,6 +325,17 @@ void game_options_ini_file_read_writer<0>::read_or_write_ini_file(keen::FilePath
     {
         Ambient_spawn_mult = 1;
     }
+    // OpenRFG: co-op's join address and host port.
+    {
+        char default_address[sizeof(Coop_join_address)];
+        strncpy_s(default_address, Coop_join_address, _TRUNCATE);
+        keen::readIniFileString(path, "coop", "join_address", Coop_join_address, sizeof(Coop_join_address), default_address);
+    }
+    Coop_port = keen::readIniFileInt(path, "coop", "port", Coop_port);
+    if (Coop_port < 1 || Coop_port > 65535)
+    {
+        Coop_port = 27420;
+    }
     o.preferred_text_language = (signed char)keen::readIniFileInt(path, "game", "preferred_text_base", o.preferred_text_language);
     o.preferred_audio_language = (signed char)keen::readIniFileInt(path, "game", "preferred_audio_base", o.preferred_audio_language);
     for (unsigned int setting = 0; setting < NUM_CONTROL_CONFIG_SETTINGS; setting++)
@@ -354,6 +369,8 @@ void game_options_load_ini_file_into_cache()
 
 extern int Ambient_range_pct; // OpenRFG: defined in the non-audio half above (read from the ini there, written below)
 extern int Ambient_spawn_mult; // OpenRFG: likewise
+extern char Coop_join_address[64]; // OpenRFG: likewise (co-op)
+extern int Coop_port; // OpenRFG: likewise (co-op)
 
 #include "volition/rfg/code/gamewide/game_options.h"
 #include "volition/audio_lib/code/audiolib_api.h"
@@ -1062,6 +1079,8 @@ void game_options_ini_file_read_writer<1>::read_or_write_ini_file(keen::FilePath
     n.camera_shake = n.camera_shake == 0;
     keen::writeIniFileInt(path, "game", "ambient_range_pct", Ambient_range_pct);
     keen::writeIniFileInt(path, "game", "ambient_spawn_mult", Ambient_spawn_mult); // OpenRFG
+    keen::writeIniFileString(path, "coop", "join_address", Coop_join_address); // OpenRFG: co-op
+    keen::writeIniFileInt(path, "coop", "port", Coop_port); // OpenRFG: co-op
     keen::writeIniFileBool(path, "game", "allow_save_with_cheats", Cheats_allow_saving); // OpenRFG
     keen::writeIniFileInt(path, "game", "preferred_text_base", o.preferred_text_language);
     keen::writeIniFileInt(path, "game", "preferred_audio_base", o.preferred_audio_language);
