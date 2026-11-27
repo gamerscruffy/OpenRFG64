@@ -55,6 +55,7 @@
 #include "volition/rfg/code/vehicle/vehicle_subinfo.h"
 #include "volition/rfg/code/vehicle/vehicle_system.h"
 #include "volition/rfg/code/vehicle_ai/vehicle_ai.h"
+#include "volition/rfg/code/spawn/ambient_spawn_manager.h" // OpenRFG: OPENRFG_AUTOMOBILE_POOL_SIZE
 #include "volition/render_lib/code/rl_mesh.h"
 #include "volition/vlib/code/math/floating.h"
 #include "volition/vlib/code/math/ix.h"
@@ -114,8 +115,8 @@ static tweak_table_item Tweak_table_item_Automobile_landing_friction_min_airborn
 static tweak_table_item Tweak_table_item_Automobile_landing_friction_full_damp_time("Automobile_landing_friction_full_damp_time", &Automobile_landing_friction_full_damp_time);
 static tweak_table_item Tweak_table_item_Automobile_landing_friction_ramp_damp_time("Automobile_landing_friction_ramp_damp_time", &Automobile_landing_friction_ramp_damp_time);
 
-static object_pool<automobile,32,1> automobilepool; // 0x0377CC40
-static obj_class_instantiator automobile_instantiator("automobile", alloc_automobile, types_automobile, bpo_index_automobile, classname_automobile, automobile::pool_remaining, 0x9D8E0, 32); // 0x0381A538
+static object_pool<automobile,OPENRFG_AUTOMOBILE_POOL_SIZE,1> automobilepool; // 0x0377CC40 (32; OpenRFG: larger on x64 for the ambient spawn multiplier)
+static obj_class_instantiator automobile_instantiator("automobile", alloc_automobile, types_automobile, bpo_index_automobile, classname_automobile, automobile::pool_remaining, 0x9D8E0 / 32 * OPENRFG_AUTOMOBILE_POOL_SIZE, OPENRFG_AUTOMOBILE_POOL_SIZE); // 0x0381A538
 
 static const unsigned int NO_HANDLE = 0xFFFFFFFF;
 static const float GRAVITY_MS2 = 9.8f;

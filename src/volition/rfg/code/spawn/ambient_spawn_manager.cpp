@@ -282,16 +282,40 @@ ped_node_network::ped_node_network()
 // ---- small helpers
 // 0x00B47160 (:769)
 // Magic number: 90 NPCs is the top of what the despawning lets stand.
+// OpenRFG: the world population thresholds (spawn caps, despawn triggers) grow with the ambient spawn multiplier, all
+// by one factor so they keep their order, as far as the (x64-raised) pools allow: the top NPC threshold (90) stays 10
+// under the npc pool, the top automobile one (30) 2 under the automobile pool. Unscaled on x86 (factor 1).
+extern int Ambient_spawn_mult; // game_options.cpp
+static float amb_population_factor(int top_threshold, int pool_size, int headroom)
+{
+    const float mult = (float)(Ambient_spawn_mult >= 1 && Ambient_spawn_mult <= 10 ? Ambient_spawn_mult : 1);
+    const float room = (float)(pool_size - headroom) / (float)top_threshold;
+    const float factor = mult < room ? mult : room;
+    return factor > 1.0f ? factor : 1.0f;
+}
+
+// An NPC count threshold (rfg.exe's 75 or 90), scaled.
+static int npc_threshold(int base)
+{
+    return (int)((float)base * amb_population_factor(90, OPENRFG_NPC_POOL_SIZE, 10));
+}
+
+// An automobile count threshold (rfg.exe's 24, 28 or 30), scaled.
+static int auto_threshold(int base)
+{
+    return (int)((float)base * amb_population_factor(30, OPENRFG_AUTOMOBILE_POOL_SIZE, 2));
+}
+
 static bool near_npc_population_cap()
 {
-    return World.get_num_objects<npc>() > 90;
+    return World.get_num_objects<npc>() > npc_threshold(90);
 }
 
 // 0x00B47170 (:777)
 // Magic number: 28 automobiles.
 static bool near_auto_population_cap()
 {
-    return World.get_num_objects<automobile>() > 28;
+    return World.get_num_objects<automobile>() > auto_threshold(28);
 }
 
 // 0x00B41080 (:1282)
@@ -349,7 +373,30 @@ static float distance_above_ground(const vector& pos)
 
 // 0x00B41110 (:1620)
 // LTCG: amb_spawn_info in EDI.
+// OpenRFG: the "Ambient spawn multiplier" option (Game Options, 1-10x) scales the ambient pedestrian and traffic caps,
+// kept within what the spawn manager's lists can track.
+extern int Ambient_spawn_mult; // game_options.cpp
+static int amb_apply_spawn_mult(int count, int capacity)
+{
+    const int mult = Ambient_spawn_mult >= 1 && Ambient_spawn_mult <= 10 ? Ambient_spawn_mult : 1;
+    const int scaled = count * mult;
+    return scaled < capacity ? scaled : capacity;
+}
+
+static int max_vehicle_count_base(const ambient_spawn_info* amb_spawn_info);
+static int max_ped_count_base(const ambient_spawn_info* amb_spawn_info);
+
 static int max_vehicle_count(const ambient_spawn_info* amb_spawn_info)
+{
+    return amb_apply_spawn_mult(max_vehicle_count_base(amb_spawn_info), AMB_VEHICLE_LIST_CAPACITY);
+}
+
+static int max_ped_count(const ambient_spawn_info* amb_spawn_info)
+{
+    return amb_apply_spawn_mult(max_ped_count_base(amb_spawn_info), AMB_NPC_LIST_CAPACITY - 2);
+}
+
+static int max_vehicle_count_base(const ambient_spawn_info* amb_spawn_info)
 {
     if (mission_is_active() && (unsigned int)Amb_veh_alert_level_lock < NUM_ALERT_LEVELS && (unsigned int)Amb_veh_density_level_lock < NUM_AMB_SPAWN_DENSITY)
     {
@@ -367,7 +414,7 @@ static int max_vehicle_count(const ambient_spawn_info* amb_spawn_info)
 
 // 0x00B41180 (:1671)
 // LTCG: amb_spawn_info in EDI.
-static int max_ped_count(const ambient_spawn_info* amb_spawn_info)
+static int max_ped_count_base(const ambient_spawn_info* amb_spawn_info)
 {
     if (mission_is_active() && (unsigned int)Amb_ped_alert_level_lock < NUM_ALERT_LEVELS && (unsigned int)Amb_ped_density_level_lock < NUM_AMB_SPAWN_DENSITY)
     {
@@ -1269,7 +1316,7 @@ static void do_frame_despawn_npcs()
 // Automobiles left behind by squads, once there are 24 or more.
 static void do_frame_despawn_squad_auto()
 {
-    if (World.get_num_objects<automobile>() < 24)
+    if (World.get_num_objects<automobile>() < auto_threshold(24))
     {
         return;
     }
@@ -1485,16 +1532,16 @@ static void do_frame_despawn()
         do_frame_despawn_vehicle();
         do_frame_despawn_squad_auto();
     }
-    if (World.get_num_objects<automobile>() >= 30)
+    if (World.get_num_objects<automobile>() >= auto_threshold(30))
     {
         do_frame_despawn_auto_aggressive();
     }
-    if (World.get_num_objects<npc>() >= 90)
+    if (World.get_num_objects<npc>() >= npc_threshold(90))
     {
         do_frame_despawn_delete();
         do_frame_despawn_npc_critical();
     }
-    else if (World.get_num_objects<npc>() >= 75)
+    else if (World.get_num_objects<npc>() >= npc_threshold(75))
     {
         do_frame_despawn_delete();
         do_frame_despawn_npc_high();
@@ -1980,7 +2027,14 @@ static bool can_spawn_at_navp(const navpoint* navp, ambient_ped_spawn_info& spaw
     {
         return false;
     }
+#ifdef OPENRFG_X64
+    // OpenRFG: pedestrians spawn all around the player, not only within 45 degrees of the picked spawn direction (the
+    // way the camera faces, turns or moves). The spawn region still keeps them farther out in front of the camera.
+    (void)spawn_info;
+    return true;
+#else
     return is_in_direction(spawn_info.camera_pos, spawn_info.spawn_direction, navp->pos, FRONT_OF_CAMERA_DOT);
+#endif
 }
 
 // 0x00B552F0 (:1942)
@@ -2171,6 +2225,10 @@ static void collect_all_ambient_npcs(ambient_ped_spawn_info& spawn_info)
         const npc* np = World.get_object<npc>(i);
         if (np->npc_flags.ambient_spawn)
         {
+            if (spawn_info.npc_list.full())
+            {
+                return; // OpenRFG: a full list counts as the cap reached (rfg.exe overran it)
+            }
             spawn_info.npc_list.add(np);
         }
     }
@@ -2271,7 +2329,7 @@ static void do_frame_spawn_npc()
     {
         return;
     }
-    if (World.get_num_objects<npc>() < 75)
+    if (World.get_num_objects<npc>() < npc_threshold(75))
     {
         Npc_spawn_period.set_rand(250, 500);
     }
@@ -2279,7 +2337,7 @@ static void do_frame_spawn_npc()
     {
         Npc_spawn_period.set_rand(500, 1000);
     }
-    if (World.get_num_objects<npc>() >= 90 || activity_disable_ambient_ped_spawn() || near_npc_population_cap())
+    if (World.get_num_objects<npc>() >= npc_threshold(90) || activity_disable_ambient_ped_spawn() || near_npc_population_cap())
     {
         return;
     }
@@ -2314,12 +2372,15 @@ static void do_frame_spawn_npc()
         return;
     }
     build_camera_props(spawn_info);
+#ifndef OPENRFG_X64
+    // OpenRFG: the x64 build spawns pedestrians in every direction (can_spawn_at_navp), so there is no per-direction cap.
     pick_spawn_direction(spawn_info.spawn_direction, spawn_info);
     count_npcs_in_spawn_direction(spawn_info);
     if (spawn_info.npcs_in_spawn_direction >= max_ped_count_quad(spawn_info.amb_spawn_info))
     {
         return;
     }
+#endif
     build_spawn_node_list(spawn_info);
     // Original: needs two nodes to spawn at one.
     if (spawn_info.spawn_node_list.size() > 1)
@@ -2473,7 +2534,16 @@ static bool pick_vehicle_spawn_loc_list(const farray<road_spawn_info, 16>& splin
             }
         }
     }
+#ifdef OPENRFG_X64
+    // OpenRFG: traffic spawns on any reachable road point, not only ahead of the player's movement when there is one.
+    for (int i = 0; i < ahead.size(); i++)
+    {
+        others.add(ahead[i]);
+    }
+    const farray<road_spawn_selection_info, 128>& picks = others;
+#else
     const farray<road_spawn_selection_info, 128>& picks = ahead.size() > 0 ? ahead : others;
+#endif
     if (picks.size() < 1)
     {
         return false;
@@ -2601,7 +2671,7 @@ static void spawn_single_vehicle(ambient_veh_spawn_info& spawn_info)
         { AMBV("L2574"); return; } // DBGAMBV
     }
     int num_people = 1;
-    if (World.get_num_objects<npc>() < 75)
+    if (World.get_num_objects<npc>() < npc_threshold(75))
     {
         num_people = int_rand_range(1, num_seats);
         if (num_people > 3)
@@ -2731,7 +2801,7 @@ static void do_frame_spawn_vehicle()
     }
     find_all_ambinet_vehicles(spawn_info);
     spawn_info.minimap_radius = Cartographer.get_zoom_radius();
-    if (spawn_info.ambient_vehicle_list.size() >= 10)
+    if (spawn_info.ambient_vehicle_list.size() >= amb_apply_spawn_mult(10, AMB_VEHICLE_LIST_CAPACITY)) // OpenRFG: scaled (rfg.exe: 10)
     {
         agressive_delete_ambient_vehicle(spawn_info);
         { AMBV("L2709"); return; } // DBGAMBV
