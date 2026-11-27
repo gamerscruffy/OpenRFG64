@@ -165,8 +165,9 @@ static const char* cDisplay_renderer_names[OPENRFG_RENDERER_COUNT] = {"OPENRFG_R
 static const char* cDisplay_physics_names[OPENRFG_PHYSICS_COUNT] = {"OPENRFG_PHYSICS_HAVOK", "OPENRFG_PHYSICS_PHYSX"};
 // OpenRFG: row 9, DLSS (backends.h openrfg_dlss): DLSS Super Resolution for the game's frame, with either renderer
 // (backends/dlss/dlss_frame.h; greyed out where it cannot run); with PATH TRACED the path tracer's light follows the
-// frame's size. Without the frame's DLSS built, only with PATH TRACED (its light alone). It changes in game too: Accept
-// hands it to openrfg_backends_apply_live, and the next frame renders at the new size.
+// frame's size. Without the frame's DLSS built, only with PATH TRACED (its light alone). From the main menu only, as the
+// rows above (greyed out in game): switched in a level, the scene's new size left frame generation reading its motion
+// wrongly until a load, and making frame generation again there froze the GPU (2026-11-27).
 static const int DOPTIONS_ROW_DLSS = 9;
 static const char* kDlss_caption_key = "OPENRFG_DLSS";
 static wchar_t kDlss_caption[] = L"DLSS";
@@ -182,7 +183,8 @@ static display_dlss_label cDisplay_dlss_labels[OPENRFG_DLSS_COUNT] = {
 static const char* cDisplay_dlss_names[OPENRFG_DLSS_COUNT] = {"OPENRFG_DLSS_OFF", "OPENRFG_DLSS_DLAA", "OPENRFG_DLSS_QUALITY",
                                                               "OPENRFG_DLSS_BALANCED", "OPENRFG_DLSS_PERFORMANCE", "OPENRFG_DLSS_ULTRA_PERFORMANCE"};
 // OpenRFG: row 10, FRAME GENERATION (backends.h): DLSS Frame Generation through the path tracer's presenter, with either
-// renderer, where the path tracer is loaded (an RTX card); it changes in game too, from the next frame.
+// renderer, where the path tracer is loaded (an RTX card); from the main menu only, as DLSS. A level's load pauses it,
+// and it goes on again made for the level's size.
 static const int DOPTIONS_ROW_FRAME_GENERATION = 10;
 static const char* kFrame_generation_caption_key = "OPENRFG_FRAME_GENERATION";
 static wchar_t kFrame_generation_caption[] = L"FRAME GENERATION";
@@ -356,7 +358,7 @@ static bool display_backends_changed()
 }
 
 // OpenRFG: which backend rows can change: from the main menu only, to what this machine can run, KEEP DEBRIS only with
-// PhysX; DLSS where it runs (either renderer, or PATH TRACED alone without the frame's DLSS), in game too.
+// PhysX; DLSS where it runs (either renderer, or PATH TRACED alone without the frame's DLSS).
 static void display_update_backend_rows()
 {
     if (!openrfg_backends_enabled())
@@ -369,8 +371,8 @@ static void display_update_backend_rows()
     ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_PHYSICS, at_main_menu && openrfg_backends_physics_supported(OPENRFG_PHYSICS_PHYSX));
     ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_KEEP_DEBRIS, at_main_menu && Pending_backends.physics == OPENRFG_PHYSICS_PHYSX);
     const bool dlss_frame = openrfg_dlss_frame_supported();
-    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_DLSS, dlss_frame || (path_tracing && Pending_backends.renderer == OPENRFG_RENDERER_PATH_TRACED));
-    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_FRAME_GENERATION, path_tracing);
+    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_DLSS, at_main_menu && (dlss_frame || (path_tracing && Pending_backends.renderer == OPENRFG_RENDERER_PATH_TRACED)));
+    ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ROW_FRAME_GENERATION, at_main_menu && path_tracing);
 }
 
 // 0x008AF650 (:382)
@@ -889,14 +891,11 @@ static void display_hint_callback(hint_type hint)
         }
         if (backends_changed)
         {
-            // OpenRFG: RENDERER, PHYSICS and KEEP DEBRIS from the main menu only (greyed out in game); DLSS anywhere.
+            // OpenRFG: every backend row changes from the main menu only (greyed out in game). Nothing is switched in a
+            // level: a change made there anyway would wait for the main menu (main_menu_enter applies the settings).
             if (display_openrfg_at_main_menu())
             {
                 openrfg_backends_apply();
-            }
-            else
-            {
-                openrfg_backends_apply_live();
             }
             Old_backends = openrfg_backends_get_settings();
             Pending_backends = Old_backends;
