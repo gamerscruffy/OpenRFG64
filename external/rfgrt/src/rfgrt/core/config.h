@@ -97,6 +97,10 @@ struct Config {
     std::vector<double> gi_terrain_albedo;  // GI.TerrainAlbedo: r, g, b the rays give the terrain where nothing better is
                                             // known (default 0.032, 0.010, 0.002: the soil as the game draws it)
     bool gi_window_tint = true;   // the clear glass tints the sun's light through it, texel by texel (GI.WindowTint)
+    bool gi_cloud_shadows = true; // the game's cloud shadows on the sunlight of the GI's hits, the fog and the glass (the
+                                  // direct sunlight has them from the game's ClbTexture either way)
+    double gi_rim_light = 0.0;    // the characters' cloth's rim light (a glow along their edges turned from the sun,
+                                  // patch/rim_light.h) where the path tracer lights them: 0 none, 1 the game's
     bool gi_frosted_glass = true; // the patterned glass (rfg-eosglass) diffuses the light through it: no sunlight through
                                   // it, its panes glowing on their other side with it (0: a share of the sun through each)
     double gi_sky = 1.0;           // the sky's light (the game's ambient colour as the sky's radiance): 0 none, 1 the game's
@@ -177,13 +181,9 @@ struct Config {
                                   // own lighting and shadows, for comparing (the core keeps running; 0: none)
     std::wstring input_script;    // scripted mouse and keyboard input (test/input_script.h)
     int time_of_day = -1;         // the game clock set to this hour once gameplay starts, and held there (-1: the save's)
-    int test_dlss_cycle_s = 0;    // Test.DlssCycle: every this many gameplay seconds the next DLSS mode (1 to 5, then 0), as
-                                  // a game's DLSS setting changes it while playing (0: never)
     std::string test_display_rows;  // Test.DisplayRows: at the main menu (before AutoLoadSave's load), the display menu opened,
                                     // its general page saved (display_rows.png in the run folder), then these rows chosen and
                                     // accepted: "renderer=0|1,dlss=0..5,fg=0|1" (any of them)
-    int test_fg_cycle_s = 0;      // Test.FrameGenerationCycle: every this many gameplay seconds frame generation switched
-                                  // (on, off, ...), as a game's setting does while playing (0: never)
     std::string wrecking_crew;    // Test.WreckingCrew: main menu -> Wrecking Crew -> this map (its file name, as
                                   // wcdlc4, or its index; "current": the menu's) -> the match, instead of a save
 };

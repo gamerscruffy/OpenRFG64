@@ -62,6 +62,11 @@ uint64_t g_glass_reads = 0;  // maps read this scene
 uint64_t g_glass_faders = 0;  // maps all transparent, taken for objects that fade (all along; the vehicles' not counted)
 uint64_t g_glass_vehicle_maps = 0, g_glass_by_shader = 0;  // vehicles' maps read; those and the faders' with glass by shader
 bool g_glass_on = true;      // Mirror.Glass
+bool g_cloud_shadows = true;  // GI.CloudShadows
+const void* g_cloud_tex = nullptr;  // the cloud texture whose size is known (snapshot thread)
+uint32_t g_cloud_w = 0, g_cloud_h = 0;
+uint64_t g_cloud_scenes = 0, g_cloud_sent = 0;  // scenes with the game's cloud shadows on; of them, the core with the texture
+float g_cloud_last[4] = {};  // the last ones' scale, scroll, shadow scale and bias (for the log)
 std::vector<double> g_vehicle_glass_at;  // Test.VehicleGlassAt
 size_t g_vehicle_glass_next = 0;
 bool g_vehicle_glass = true;  // the vehicles' windows glass (Test.VehicleGlassAt switches them solid and back)
@@ -105,13 +110,16 @@ const char* const kShaderNames[] = {
     "rfg-vfx-mask-scroll-b", "rfg-vfx-shield", "rfg-vfx-volfog", "rfg-gps_chevron", "rfg-decal-glasscrack",
     "rfg-decal-bloodsplat", "rfg-stitchpiece", "rfg-metal", "rfg-brdf", "rfg-edf-vhc", "rfg-ed-oasisroof", "rfg-radiance",
     "rfg-heat-map", "rfg-orbital", "rfg-mp-nodecal_rimlight", "rfg-nodecal_rimlight", "rfg-blend-std-metal", "rfg-e-metal",
-    "rfg-ed-metal", "rfg-brdf-env", "rfg-skin", "rfg-terrainblend"};
+    "rfg-ed-metal", "rfg-brdf-env", "rfg-skin", "rfg-terrainblend", "rfg-brdf-cloth_rimlight", "rfg-brdf-cloth",
+    "rfg-skinshader"};
 constexpr size_t kShaderNameCount = sizeof(kShaderNames) / sizeof(kShaderNames[0]);
 uint32_t g_shader_handles[kShaderNameCount];  // [0] rfg-glass, [1] rfg-glass-etched: also the faders' glass (glass_of)
 constexpr uint32_t kShaderUnread = 0xFFFFFFFDu;  // an entry whose material was not read (no handle is)
 std::mutex g_glass_shader_mutex;
 std::unordered_map<uint32_t, uint64_t> g_glass_shaders;  // shader handle -> transparent or translucent entries read
 std::unordered_map<uint32_t, uint64_t> g_fader_shaders;  // shader handle -> the vehicles' and the faders' entries read
+std::unordered_map<uint32_t, uint64_t> g_skinned_shaders;  // shader handle -> the skinned meshes' (characters') entries
+std::unordered_map<const uint8_t*, const void*> g_skinned_maps;  // their maps read (-> their entries' array)
 
 void lookup_eosglass() {
     if (g_eosglass_looked) return;
@@ -181,6 +189,75 @@ std::string shaders_described(const std::unordered_map<uint32_t, uint64_t>& coun
         s += item;
     }
     return s.empty() ? "none" : s;
+}
+
+// The game's cloud shadows for the core (frame_scene.h; GI.CloudShadows), as the skybox's update left them this frame
+// (object_skybox.cpp: the overhead clouds' first texture, scrolled with their first layer) and as
+// buildShadowParamsProjectionTexture lays them down: one texture across its size / g_cloudShadowScale / 2 metres,
+// wrapping (its snap to whole tiles around the camera drops out), u = x 2 s / width - 2 s scroll.y, v = z 2 s / height +
+// 2 s scroll.x. None while the core has not got the texture.
+void fill_clouds(rfgrt_frame::SlotHeader* h) {
+    memset(h->cloud_uv, 0, sizeof(h->cloud_uv));
+    memset(h->cloud_shadow, 0, sizeof(h->cloud_shadow));
+    h->cloud_texture = 0;
+    h->pad5 = 0;
+    if (!g_cloud_shadows) return;
+    const uint8_t* tex = nullptr;
+    float s = 0.0f, percent = 0.0f, bias = 0.0f, scroll[2] = {};
+    __try {
+        if (!rfg::global<bool>(rfg::rva::CloudShadowEnabled)) return;
+        tex = rfg::global<const uint8_t*>(rfg::rva::CloudTexture);
+        s = rfg::global<float>(rfg::rva::CloudShadowScale);
+        percent = rfg::global<float>(rfg::rva::CloudShadowIntensityScale);
+        bias = rfg::global<float>(rfg::rva::CloudShadowIntensityBias);
+        const float* uv = &rfg::global<float>(rfg::rva::CloudUVScroll);
+        scroll[0] = uv[0];
+        scroll[1] = uv[1];
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+    if (!tex || !(s > 0.0f)) return;
+    if (tex != g_cloud_tex) {  // its full size (the projection's), once a texture
+        uint32_t w = 0, hh = 0;
+        if (!textures::data_size(tex, &w, &hh)) return;
+        g_cloud_tex = tex;
+        g_cloud_w = w;
+        g_cloud_h = hh;
+    }
+    ++g_cloud_scenes;
+    h->cloud_uv[0] = 2.0f * s / float(g_cloud_w);
+    h->cloud_uv[1] = 2.0f * s / float(g_cloud_h);
+    h->cloud_uv[2] = -2.0f * s * scroll[1];
+    h->cloud_uv[3] = 2.0f * s * scroll[0];
+    h->cloud_shadow[0] = percent;
+    h->cloud_shadow[1] = bias;
+    g_cloud_last[0] = s;
+    g_cloud_last[1] = scroll[0];
+    g_cloud_last[2] = percent;
+    g_cloud_last[3] = bias;
+    const uint32_t id = textures::id_of_data(tex);
+    if (id != textures::kNone && textures::state(id) == textures::kSent) {
+        h->cloud_texture = id + 1;
+        ++g_cloud_sent;
+    }
+}
+
+// Telemetry: the shaders a skinned mesh's (a character's) material map draws with, each map's entries once.
+void count_skinned_shaders(const uint8_t* map) {
+    const uint32_t* materials = nullptr;
+    uint32_t num = 0;
+    if (!map || !map_entries(map, &materials, &num) || !materials || !num || num > 4096) return;
+    if (g_skinned_maps.size() > 4096) g_skinned_maps.clear();
+    const void*& seen = g_skinned_maps[map];
+    if (seen == materials) return;
+    seen = materials;
+    lookup_eosglass();
+    uint32_t translucent = 0, shaders[31];
+    for (uint32_t& h : shaders) h = kShaderUnread;
+    transparent_entries(materials, num, &translucent, shaders);
+    std::lock_guard<std::mutex> lock(g_glass_shader_mutex);
+    for (uint32_t i = 0; i < 31; ++i)
+        if (shaders[i] != kShaderUnread) ++g_skinned_shaders[shaders[i]];
 }
 
 // `vehicle`: a vehicle's map (rl_deformable_mesh_instance), every entry flagged transparent however many it has.
@@ -656,6 +733,15 @@ void log_stats(Stats st) {
         shaders_described(g_glass_shaders).c_str());
     LOG("instances: the vehicles' and the fading objects' materials' shaders (material map entries read): %s",
         shaders_described(g_fader_shaders).c_str());
+    LOG("instances: the skinned meshes' (the characters') materials' shaders (each map's entries once): %s",
+        shaders_described(g_skinned_shaders).c_str());
+    if (g_cloud_shadows)
+        LOG("instances: the game's cloud shadows (GI.CloudShadows) on in %llu scenes so far, the core with their texture in "
+            "%llu of them; the texture %ux%u, laid over %.0f x %.0f m, scroll %.4f, shadow saturate(saturate(alpha %+g) x %g)",
+            static_cast<unsigned long long>(g_cloud_scenes), static_cast<unsigned long long>(g_cloud_sent), g_cloud_w, g_cloud_h,
+            g_cloud_last[0] > 0.0f ? double(g_cloud_w) / (2.0 * g_cloud_last[0]) : 0.0,
+            g_cloud_last[0] > 0.0f ? double(g_cloud_h) / (2.0 * g_cloud_last[0]) : 0.0, double(g_cloud_last[1]),
+            double(g_cloud_last[3]), double(g_cloud_last[2]));
     LOG("instances: meshes' materials sent to the core: %llu records (%llu of them before all their textures were there), "
         "%zu meshes waiting for theirs; %llu material map entries read (%llu naming a diffuse map, %llu unreadable)",
         static_cast<unsigned long long>(g_materials_records), static_cast<unsigned long long>(g_materials_partial),
@@ -757,6 +843,7 @@ void on_frame(int) {
 bool install(const Config& cfg) {
     if (!cfg.host_enabled || !cfg.mirror_enabled) return true;
     g_glass_on = cfg.glass;
+    g_cloud_shadows = cfg.gi_cloud_shadows;
     g_vehicle_glass_at = cfg.vehicle_glass_at;
     g_probe_key = cfg.probe_key;
     g_probe_at = cfg.probe_at_s;
@@ -963,6 +1050,7 @@ void snapshot(uint8_t* renderer, uint8_t* scene, uint8_t* camera, int64_t frame)
                 uint32_t mclear = 0, mtranslucent = 0;
                 uint8_t* const mmap = rfg::field<uint8_t*>(inst, rfg::off::MeshInstance_matMap);
                 const uint32_t gw = glass_of(mmap, &mclear, &mtranslucent);
+                if (cls == g_class.skin_instance) count_skinned_shaders(mmap);
                 send_mesh_materials(mesh, mmap, mclear, mtranslucent);
                 emit(world, mesh, rfg::field<uint32_t>(inst, rfg::off::MeshInstance_submeshIndex),
                      cls == g_class.skin_instance ? rfgrt_frame::kKindSkinned : rfgrt_frame::kKindMesh, pass, gw);
@@ -1116,6 +1204,7 @@ void snapshot(uint8_t* renderer, uint8_t* scene, uint8_t* camera, int64_t frame)
         for (int k = 0; k < 3; ++k) h->light_color[k] = h->sun.color[k] * scale;
         h->light_color[3] = scale;
     }
+    fill_clouds(h);
     h->skin_count = skin_n;
     h->bone_count = bone_n;
     h->skins_dropped = skins_dropped;
