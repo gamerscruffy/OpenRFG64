@@ -132,6 +132,35 @@ elseif(OPENRFG_X64)
     message(STATUS "OpenRFG: no PhysX backend (OPENRFG_PHYSX_INSTALL is not a PhysX SDK build)")
 endif()
 
+# ---- NVIDIA's SDKs, kept out of git by their licences: the DLSS SDK in external/rfgrt/third_party/dlss (DLSS Ray
+# Reconstruction for the path tracer, DLSS for the game's frame) and Streamline in external/rfgrt/third_party/streamline
+# (DLSS Frame Generation). When they are missing, the path tracer's own scripts fetch them here (pinned releases, their
+# hashes and NVIDIA's signatures checked). OPENRFG_FETCH_SDKS=OFF, or a fetch that fails (offline), builds without them:
+# the checks below and in the path tracer then leave those features out and say so.
+option(OPENRFG_FETCH_SDKS "Download NVIDIA's DLSS SDK and Streamline into external/rfgrt/third_party when missing" ON)
+if(OPENRFG_X64 AND OPENRFG_FETCH_SDKS)
+    set(_openrfg_sdks ${CMAKE_SOURCE_DIR}/external/rfgrt/third_party)
+    set(_openrfg_sdk_files_dlss include/nvsdk_ngx.h lib/Windows_x86_64/x64/nvsdk_ngx_s.lib lib/Windows_x86_64/x64/nvsdk_ngx_d.lib
+        lib/Windows_x86_64/rel/nvngx_dlssd.dll lib/Windows_x86_64/rel/nvngx_dlss.dll)
+    set(_openrfg_sdk_files_streamline include/sl.h bin/x64/sl.interposer.dll bin/x64/nvngx_dlssg.dll)
+    foreach(_sdk dlss streamline)
+        set(_missing FALSE)
+        foreach(_file IN LISTS _openrfg_sdk_files_${_sdk})
+            if(NOT EXISTS ${_openrfg_sdks}/${_sdk}/${_file})
+                set(_missing TRUE)
+            endif()
+        endforeach()
+        set(_fetch ${CMAKE_SOURCE_DIR}/external/rfgrt/tools/fetch_${_sdk}.ps1)
+        if(_missing AND EXISTS ${_fetch})
+            message(STATUS "OpenRFG: fetching NVIDIA's ${_sdk} SDK into external/rfgrt/third_party/${_sdk} (external/rfgrt/tools/fetch_${_sdk}.ps1)")
+            execute_process(COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${_fetch} RESULT_VARIABLE _rc)
+            if(NOT _rc EQUAL 0)
+                message(WARNING "OpenRFG: fetch_${_sdk}.ps1 failed (${_rc}): building without the ${_sdk} SDK")
+            endif()
+        endif()
+    endforeach()
+endif()
+
 # ---- DLSS for the game's frame (dlss/dlss_frame.h), with either renderer: NVIDIA's DLSS SDK (NGX on Direct3D 11, the
 # dynamic-runtime library) in external/rfgrt/third_party/dlss (out of git: the mod's tools/fetch_dlss.ps1), its runtime
 # nvngx_dlss.dll in backends\dlss next to OpenRFG.exe; its motion pass compiled by the Windows SDK's fxc. Without them
