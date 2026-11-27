@@ -126,6 +126,11 @@ static const int kAmbientRangePct[9] = {100, 125, 150, 200, 250, 300, 400, 500, 
 static const char* cAmbientRangeChoices[9] = {"OPENRFG_AMB_100", "OPENRFG_AMB_125", "OPENRFG_AMB_150", "OPENRFG_AMB_200", "OPENRFG_AMB_250", "OPENRFG_AMB_300", "OPENRFG_AMB_400", "OPENRFG_AMB_500", "OPENRFG_AMB_600"};
 static const wchar_t* kAmbientRangeText[9] = {L"100%", L"125%", L"150%", L"200%", L"250%", L"300%", L"400%", L"500%", L"600%"};
 static wchar_t kAmbientRangeCaption[] = L"AMBIENT RANGE (EXPERIMENTAL)";
+// OpenRFG: the "Ambient spawn multiplier" row (how many ambient pedestrians and road vehicles, 1-10x).
+extern int Ambient_spawn_mult; // game_options.cpp
+static const char* cAmbientMultChoices[10] = {"OPENRFG_AMBM_1", "OPENRFG_AMBM_2", "OPENRFG_AMBM_3", "OPENRFG_AMBM_4", "OPENRFG_AMBM_5", "OPENRFG_AMBM_6", "OPENRFG_AMBM_7", "OPENRFG_AMBM_8", "OPENRFG_AMBM_9", "OPENRFG_AMBM_10"};
+static const wchar_t* kAmbientMultText[10] = {L"1x", L"2x", L"3x", L"4x", L"5x", L"6x", L"7x", L"8x", L"9x", L"10x"};
+static wchar_t kAmbientMultCaption[] = L"AMBIENT SPAWN MULTIPLIER (TEST)";
 
 // The row's text is not in the game's localization data: add it (once).
 static void game_options_add_ambient_text(const char* key, const wchar_t* text)
@@ -217,6 +222,13 @@ static void option_change_occurred_goptions(int choice, void* new_value)
         if (value < 9)
         {
             Ambient_range_pct = kAmbientRangePct[value];
+            Change_made_goptions = true;
+        }
+        return;
+    case 10:
+        if (value < 10)
+        {
+            Ambient_spawn_mult = (int)value + 1;
             Change_made_goptions = true;
         }
         return;
@@ -403,6 +415,13 @@ static void game_options_menu_create()
         game_options_add_ambient_text(cAmbientRangeChoices[i], kAmbientRangeText[i]);
     }
     ui_menu_add_char_list_item(Menu_handle_goptions, "OPENRFG_AMB_CAPTION", cAmbientRangeChoices, 9, option_change_occurred_goptions, game_options_ambient_index(), true);
+    game_options_add_ambient_text("OPENRFG_AMBM_CAPTION", kAmbientMultCaption);
+    for (int i = 0; i < 10; i++)
+    {
+        game_options_add_ambient_text(cAmbientMultChoices[i], kAmbientMultText[i]);
+    }
+    const int mult_index = Ambient_spawn_mult >= 1 && Ambient_spawn_mult <= 10 ? Ambient_spawn_mult - 1 : 0;
+    ui_menu_add_char_list_item(Menu_handle_goptions, "OPENRFG_AMBM_CAPTION", cAmbientMultChoices, 10, option_change_occurred_goptions, mult_index, true);
     game_options_set_menu_selections();
     ui_menu_show_menu_item(Menu_handle_goptions, GOPTIONS_ROW_DISABLE_COVER, false);
     ui_menu_enable_menu_item(Menu_handle_goptions, GOPTIONS_ROW_DISABLE_COVER, false);

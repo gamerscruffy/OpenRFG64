@@ -121,6 +121,22 @@ public:
     } camera_movement_props; // 0x30
 };
 
+// OpenRFG: the x64 build's lists hold the ambient spawn multiplier's 10x caps (30 pedestrians, 10 vehicles at most
+// unscaled); the x86 reference build keeps rfg.exe's sizes.
+// The npc and automobile object pools (npc.cpp, automobile.cpp) are raised with them, or the world runs out of
+// objects first.
+#ifdef OPENRFG_X64
+static const int AMB_NPC_LIST_CAPACITY = 320;
+static const int AMB_VEHICLE_LIST_CAPACITY = 120;
+static const int OPENRFG_NPC_POOL_SIZE = 300;
+static const int OPENRFG_AUTOMOBILE_POOL_SIZE = 96;
+#else
+static const int AMB_NPC_LIST_CAPACITY = 100;
+static const int AMB_VEHICLE_LIST_CAPACITY = 20;
+static const int OPENRFG_NPC_POOL_SIZE = 100;
+static const int OPENRFG_AUTOMOBILE_POOL_SIZE = 32;
+#endif
+
 // size 0x142C
 class ambient_ped_spawn_info : public ambient_spawn_camera_info
 {
@@ -137,7 +153,7 @@ public:
     farray<navpoint*,512> node_list; // 0x268
     farray<navpoint*,512> spawn_node_list; // 0xA78
     navpoint* nearest_navp; // 0x1288
-    farray<npc const*,100> npc_list; // 0x128C
+    farray<npc const*,AMB_NPC_LIST_CAPACITY> npc_list; // 0x128C
 };
 
 // size 0x24
@@ -170,7 +186,7 @@ public:
     const object_path_road* nearest_road; // 0x4C
     vector nearest_pos_on_road; // 0x50
     float dist_on_road; // 0x5C
-    farray<vehicle const*,20> ambient_vehicle_list; // 0x60
+    farray<vehicle const*,AMB_VEHICLE_LIST_CAPACITY> ambient_vehicle_list; // 0x60
     int vehicles_in_region; // 0xC0
     int vehicle_density; // 0xC4
     int quadrant_count[4]; // 0xC8
