@@ -20,10 +20,19 @@ enum menu_option_types
     MENU_OPTION_XBOX_LIVE = 3,
     MENU_OPTION_DOWNLOAD_CONTENT = 4,
     MENU_OPTION_SYSLINK = 5,
+#ifdef OPENRFG_X64
+    // OpenRFG: single player co-op (gameplay/coop.h), after system link; the entries below it move down one.
+    MENU_OPTION_COOP = 6,
+    MENU_OPTION_OPTIONS = 7,
+    MENU_OPTION_TITLE_SCREEN = 8,
+    MENU_OPTION_EXIT = 9,
+    NUM_MENU_OPTIONS = 10,
+#else
     MENU_OPTION_OPTIONS = 6,
     MENU_OPTION_TITLE_SCREEN = 7,
     MENU_OPTION_EXIT = 8,
     NUM_MENU_OPTIONS = 9,
+#endif
 };
 
 class mempool_base;
