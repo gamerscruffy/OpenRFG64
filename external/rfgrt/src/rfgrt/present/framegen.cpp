@@ -171,6 +171,11 @@ void apply_reflex() {
     if (r != sl::Result::eOk) LOG("frame generation: slReflexSetOptions failed (result %d)", int(r));
 }
 
+// DLSS-G makes its buffers for the size of the frame and of the depth and motion it goes on with (no dynamic resolution
+// flag) and keeps them while it runs. Those sizes change only where it is paused: DLSS and frame generation change from
+// the main menu only (both menus: a DLSS mode changed in a level left it reading the new size's motion wrongly), and a
+// level's load pauses it (no inputs), after which it goes on made for the level's size. Making it again mid-level when
+// the size changed (5350e1d, then 74a8eca) was taken out for that rule: 5350e1d's froze the GPU (2026-11-27).
 void apply_mode() {
     const bool on = s.wanted.load() && s.supported && s.presents_without_inputs < kIdlePresents;
     if (s.applied_once && on == s.applied) return;

@@ -241,7 +241,7 @@ bool wait_for(UINT64 value) {
 bool wait_idle() { return wait_for(s.fence_value); }
 
 // Frame generation switched off: our window hidden and DLSS-G off, the game's chain presents; our chain is kept for the
-// next switch on (DLSS-G does not generate again on a new chain once it has on one: Test.FrameGenerationCycle, take 3).
+// next switch on (DLSS-G does not generate again on a new chain once it has on one: found switching it while playing).
 void pause_ours() {
     if (!s.shown) return;
     PostMessageW(s.child.load(), kHideMessage, 0, 0);
@@ -1049,7 +1049,8 @@ bool install(const Config& cfg, bool switchable) {
     s.presenter_only = cfg.fg_presenter;
     s.wanted.store(cfg.fg_enabled);
     framegen::set_wanted(cfg.fg_enabled);
-    // OpenRFG64 VOM: the seams of its present and of its scene's end, always (its row switches while playing).
+    // OpenRFG64 VOM: the seams of its present and of its scene's end, always (its row switches after the start, at the
+    // main menu).
     if (hooks::seam("IDXGISwapChain::Present", reinterpret_cast<void*>(&d_present), reinterpret_cast<void**>(&s.original))) {
         s.on_seam = true;
         const bool scene = hooks::seam("openrfg_scene_drawn", reinterpret_cast<void*>(&d_scene_drawn),
