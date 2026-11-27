@@ -113,7 +113,8 @@ if(RFGRT_X64)
     # The shader patcher's offline check on the game's extracted shaders (tools/shaderpatch/main.cpp).
     add_executable(shaderpatch tools/shaderpatch/main.cpp src/rfgrt/patch/dxbc.cpp src/rfgrt/patch/ambient.cpp
         src/rfgrt/patch/light_pass.cpp src/rfgrt/patch/shadow_floor.cpp src/rfgrt/patch/glass.cpp
-        src/rfgrt/patch/spec_occlusion.cpp src/rfgrt/patch/fog.cpp src/rfgrt/patch/sun_tint.cpp)
+        src/rfgrt/patch/spec_occlusion.cpp src/rfgrt/patch/fog.cpp src/rfgrt/patch/sun_tint.cpp
+        src/rfgrt/patch/rim_light.cpp)
     target_include_directories(shaderpatch PRIVATE src/rfgrt)
     target_compile_definitions(shaderpatch PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     target_compile_options(shaderpatch PRIVATE /W4 /permissive- /utf-8 /Zi)
@@ -171,9 +172,11 @@ add_library(rfgrt SHARED
     src/rfgrt/patch/glass.cpp
     src/rfgrt/patch/sun_tint.cpp
     src/rfgrt/patch/spec_occlusion.cpp
+    src/rfgrt/patch/rim_light.cpp
     src/rfgrt/patch/fog.cpp
     src/rfgrt/patch/eye_adaption.cpp
     src/rfgrt/present/presenter.cpp
+    src/rfgrt/present/remote.cpp
     src/rfgrt/present/framegen.cpp
     ${PLUGIN_SHADERS})
 set_target_properties(rfgrt PROPERTIES SUFFIX ".asi")
@@ -210,6 +213,16 @@ if(RFGRT_STREAMLINE_FOUND)
     dxc_shader(PRESENT_SHADERS fg_motion_cs cs_6_0 ${CMAKE_CURRENT_SOURCE_DIR}/src/rfgrt/present/fg_motion.hlsl)
     dxc_shader(PRESENT_SHADERS fg_ui_cs cs_6_0 ${CMAKE_CURRENT_SOURCE_DIR}/src/rfgrt/present/fg_ui.hlsl)
     target_sources(rfgrt PRIVATE ${PRESENT_SHADERS})
+    # rfgrt_present.exe: the 32-bit plugin's presenter (present/remote.cpp, src/present_host), next to rfgrt_host.exe with
+    # Streamline's runtime DLLs: it presents the 32-bit game's frames through Streamline
+    add_executable(rfgrt_present src/present_host/main.cpp src/rfgrt/present/framegen.cpp src/rfgrt/core/log.cpp ${PRESENT_SHADERS})
+    target_include_directories(rfgrt_present PRIVATE src/rfgrt src/shared ${SHADER_OUT})
+    target_include_directories(rfgrt_present SYSTEM PRIVATE "${RFGRT_STREAMLINE_DIR}/include")
+    target_compile_definitions(rfgrt_present PRIVATE RFGRT_STREAMLINE=1 WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE
+                                                     RFGRT_VERSION="${PROJECT_VERSION}")
+    target_compile_options(rfgrt_present PRIVATE /W4 /permissive- /utf-8 /Zi)
+    target_link_options(rfgrt_present PRIVATE /DEBUG:FULL /OPT:REF /OPT:ICF /INCREMENTAL:NO)
+    target_link_libraries(rfgrt_present PRIVATE d3d12 dxgi minhook)
     foreach(runtime IN LISTS RFGRT_STREAMLINE_RUNTIMES)
         add_custom_command(TARGET rfgrt POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${RFGRT_STREAMLINE_DIR}/bin/x64/${runtime}"

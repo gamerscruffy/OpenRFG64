@@ -144,6 +144,12 @@ void init() {
     link.fog_sun_share = float(cfg.fog_sun_share < 0.0 ? 0.0 : cfg.fog_sun_share > 1.0 ? 1.0 : cfg.fog_sun_share);
     link.fog_anisotropy = float(cfg.fog_anisotropy < -0.9 ? -0.9 : cfg.fog_anisotropy > 0.9 ? 0.9 : cfg.fog_anisotropy);
     link.fog_density = float(cfg.test_fog_density < 0.0 ? 0.0 : cfg.test_fog_density > 100.0 ? 100.0 : cfg.test_fog_density);
+    link.fog_near = float(cfg.fog_near < 0.0 ? 0.0 : cfg.fog_near > 1.0 ? 1.0 : cfg.fog_near);
+    link.fog_history = cfg.fog_history < 1 ? 1 : cfg.fog_history > 200 ? 200 : cfg.fog_history;
+    link.fog_rays = cfg.fog_rays < 1 ? 1 : cfg.fog_rays > 4 ? 4 : cfg.fog_rays;
+    link.fog_filter = cfg.fog_filter;
+    link.fog_walls = cfg.fog_walls;
+    link.fog_glass = cfg.fog_glass;
     link.gi_sky_drawn = float(cfg.gi_sky_drawn < 0.0 ? 0.0 : cfg.gi_sky_drawn > 2.0 ? 2.0 : cfg.gi_sky_drawn);
     link.refl_enabled = cfg.refl_enabled && cfg.host_enabled && cfg.host_mode == rfgrt_ipc::kModeSunShadows;
     link.refl_length = float(cfg.refl_length > 1.0 ? cfg.refl_length : 1.0);
@@ -197,11 +203,8 @@ void init() {
         if (!presenter::install(fg, rows)) LOG("presenter hooks failed: no frame generation");
     }
     if (rows) {
-#if defined(_WIN64) && defined(RFGRT_STREAMLINE)
-        constexpr bool kFrameGeneration = true;
-#else
-        constexpr bool kFrameGeneration = false;  // (the 32-bit plugin has no presenter; a build without Streamline no DLSS-G)
-#endif
+        // (64-bit: built with Streamline; 32-bit: rfgrt_present.exe next to rfgrt_host.exe)
+        const bool kFrameGeneration = presenter::available();
         const display_rows::Actions actions{&rfgrt_set_dlss_mode, &rfgrt_set_frame_generation};
         display_rows::install(cfg, dir + L"\\rfgrt.ini", kFrameGeneration, actions);
     }
