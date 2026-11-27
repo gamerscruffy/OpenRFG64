@@ -12,6 +12,7 @@
 // curve is x87 (__CIpow).
 
 #include "volition/rfg/code/weapons/grav_tether.h"
+#include "volition/rfg/code/gameplay/coop.h"
 #include "volition/rfg/code/control/control_gameplay.h"
 
 #include "volition/audio_lib/code/audiolib_api.h"
@@ -1146,10 +1147,12 @@ void control_gameplay_process()
                     if (controls_is_button_just_pressed(CBA_OFC_ATTACK_PRIMARY, Player_controller_index))
                     {
                         human_melee_attack(pp, MELEE_ATTACK_PRIMARY, false, false);
+                        coop_note_local_action(1); // OpenRFG: co-op shows the swing
                     }
                     else if (controls_is_button_just_pressed(CBA_OFC_ATTACK_MELEE, Player_controller_index))
                     {
                         human_melee_attack(pp, MELEE_ATTACK_TERTIARY, false, false);
+                        coop_note_local_action(3); // OpenRFG: co-op
                     }
                 }
                 if (!human_in_vehicle_interaction(pp, nullptr) && (pp->controls_on_foot_allowed & CFA_MELEE) != 0 && controls_process_button_just_pressed(CBA_OFC_ATTACK_MELEE, Player_controller_index))
@@ -1158,6 +1161,7 @@ void control_gameplay_process()
                     if (pp->cur_state != HS_COVER)
                     {
                         human_melee_attack(pp, MELEE_ATTACK_FIREARM, false, false);
+                        coop_note_local_action(4); // OpenRFG: co-op
                     }
                 }
                 else if ((pp->controls_on_foot_allowed & CFA_ZOOM) != 0)
@@ -1238,6 +1242,7 @@ void control_gameplay_process()
                         {
                             pp->pflags.crouching_state = 0;
                             human_jump(pp, false, false, false);
+                            coop_note_local_action(0); // OpenRFG: co-op shows the jump
                         }
                     }
                     if ((pp->controls_on_foot_allowed & CFA_JUMP) != 0 && controls_is_button_just_pressed(CBA_OFC_COVER, Player_controller_index) && pp->entering_cover.elapsed())
