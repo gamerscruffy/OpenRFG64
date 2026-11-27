@@ -75,6 +75,7 @@
 #include "volition/rfg/code/vehicle_ai/vehicle_ai.h"
 #include "volition/rfg/code/camera/camera_satellite.h"
 #include "volition/rfg/code/weapons/grav_tether.h"
+#include "volition/rfg/code/gameplay/coop.h"
 #include "volition/vlib/code/util/varray.h"
 
 // ---- internal functions of alert_level_manager.cpp and marauder_raid.cpp, which rfg.pdb lists as local
@@ -314,6 +315,7 @@ void gameplay_do_frame()
 #endif
     camera_satellite_cheat_do_frame(); // OpenRFG: the Satellite Mode cheat
     grav_tether_do_frame(); // OpenRFG: the Gravity Tether (F4)
+    coop_do_frame(); // OpenRFG: single player co-op (coop.h)
     object_spawn_node_do_frame();
     srm_do_frame();
     gsm_do_frame();

@@ -44,11 +44,9 @@ static const unsigned int Grav_key_toggle = 0x54;
 static const char* const Grav_weapon_name = "edf_pistol";
 static const float Grav_range = 250.0f; // metres the tether reaches
 static const float Grav_min_hold_dist = 3.0f;
-// Held things are all but locked to the crosshair: each frame closes this share of the gap to the hold point (the
-// rest keeps the motion physical, so held things still push and get pushed).
-static const float Grav_follow_share = 0.85f;
-static const float Grav_max_speed = 45.0f; // m/s while held: people, vehicles, debris, props, loose pieces
-static const float Grav_max_speed_chunk = 300.0f; // m/s while held: a building chunk the tether tore loose
+// Held things sit exactly on the crosshair; these cap only the speed they keep when let go.
+static const float Grav_max_speed = 45.0f; // m/s: people, vehicles, debris, props, loose pieces
+static const float Grav_max_speed_chunk = 300.0f; // m/s: a building chunk the tether tore loose
 static const float Grav_spin_damping = 0.6f; // per frame, while held
 static const float Grav_spin_damping_chunk = 0.3f; // per frame: held chunks barely turn, so they stay as they are put
 static const float Grav_throw_speed = 55.0f; // m/s added along the view
@@ -114,11 +112,26 @@ struct grav_protected
     int num_links;
     int* yields;
 };
-static const int Grav_max_protected = 16;
+static const int Grav_max_protected = 64;
 static grav_protected Grav_protected[Grav_max_protected];
 static int Grav_num_protected;
+// Some buildings are several movers: chunks parented to one another (get_parent / child_ptr). In Chunk mode, or when a
+// torn-off chunk is grabbed again, the rest of its building comes along, each chunk kept where it sat relative to the
+// grabbed one (in the grabbed body's frame).
+struct grav_group_member
+{
+    unsigned int handle;
+    vector rel_pos;
+    matrix rel_orient;
+};
+static const int Grav_max_group = 32;
+static grav_group_member Grav_group[Grav_max_group];
+static int Grav_group_count;
+static vector Grav_body_velocity; // how fast the held body was carried last frame: its speed when let go
+static bool Grav_zoom_was_down; // the game's own zoom code takes the press first, so the tether watches the button
 
 static void grav_log(const char* fmt, ...);
+static bool grav_make_chunk_dynamic(rfg_mover* rm);
 
 static void grav_message(const char* text)
 {
@@ -294,6 +307,185 @@ static void grav_unfreeze(unsigned int handle)
     grav_remove_frozen(index);
 }
 
+static bool grav_is_rfg_mover(const object* objp)
+{
+    return objp != nullptr && objp->get_obj_type() == OT_MOVER && objp->get_sub_type() == OT_SUB_MOVER_RFG;
+}
+
+// Every chunk of the building rm belongs to: up its parents to the topmost chunk, then down all its child chunks.
+static int grav_collect_building(rfg_mover* rm, rfg_mover** out, int max)
+{
+    rfg_mover* root = rm;
+    for (int depth = 0; depth < 16; depth++) // Magic number: guards against a parent loop
+    {
+        if (root->get_parent() == 0xFFFFFFFF)
+        {
+            break;
+        }
+        object* parent = World.object_from_handle(root->get_parent());
+        if (!grav_is_rfg_mover(parent))
+        {
+            break;
+        }
+        root = (rfg_mover*)parent;
+    }
+    int count = 0;
+    out[count++] = root;
+    for (int i = 0; i < count; i++)
+    {
+        object* const first = out[i]->child_ptr;
+        object* child = first;
+        while (child != nullptr)
+        {
+            if (grav_is_rfg_mover(child) && !child->obj_flags.destroyed)
+            {
+                bool seen = false;
+                for (int j = 0; j < count; j++)
+                {
+                    seen = seen || out[j] == child;
+                }
+                if (!seen)
+                {
+                    if (count >= max)
+                    {
+                        return count;
+                    }
+                    out[count++] = (rfg_mover*)child;
+                }
+            }
+            child = child->child_next;
+            if (child == first)
+            {
+                break;
+            }
+        }
+    }
+    return count;
+}
+
+// Takes hold of the rest of the held mover's building (body: the held one's Havok body).
+static void grav_start_group(object* objp, unsigned int body)
+{
+    Grav_group_count = 0;
+    if (!grav_is_rfg_mover(objp) || !(Grav_mode == GRAV_MODE_CHUNK || grav_is_chunk(objp->get_handle())))
+    {
+        return;
+    }
+    rfg_mover* movers[Grav_max_group + 1];
+    const int count = grav_collect_building((rfg_mover*)objp, movers, Grav_max_group + 1);
+    if (count <= 1)
+    {
+        return;
+    }
+    vector pos;
+    matrix orient;
+    havok_body_get_pos_orient(body, pos, orient);
+    for (int i = 0; i < count && Grav_group_count < Grav_max_group; i++)
+    {
+        rfg_mover* m = movers[i];
+        if (m == objp || m->havok_handle == 0xFFFFFFFF)
+        {
+            continue;
+        }
+        grav_unfreeze(m->get_handle());
+        if (m->get_move_type() == RFGM_FIXED || !havok_body_is_movable(m->havok_handle))
+        {
+            if (!grav_make_chunk_dynamic(m))
+            {
+                continue;
+            }
+        }
+        if (!havok_body_is_movable(m->havok_handle))
+        {
+            havok_body_set_movable(m->havok_handle, true);
+        }
+        havok_body_force_activate(m->havok_handle);
+        vector mpos;
+        matrix morient;
+        havok_body_get_pos_orient(m->havok_handle, mpos, morient);
+        grav_group_member& g = Grav_group[Grav_group_count++];
+        g.handle = m->get_handle();
+        g.rel_pos = grav_world_to_local(orient, mpos - pos);
+        g.rel_orient.rvec = grav_world_to_local(orient, morient.rvec);
+        g.rel_orient.uvec = grav_world_to_local(orient, morient.uvec);
+        g.rel_orient.fvec = grav_world_to_local(orient, morient.fvec);
+        grav_protect(m);
+    }
+    grav_log("GRAV group %08X: %d of %d building chunks come along", objp->get_handle(), Grav_group_count, count - 1);
+}
+
+// Each carried chunk is put exactly at its place in the held body's frame.
+static void grav_group_frame(const vector& pos, const matrix& orient)
+{
+    for (int i = Grav_group_count - 1; i >= 0; i--)
+    {
+        grav_group_member& g = Grav_group[i];
+        object* objp = World.object_from_handle(g.handle);
+        const unsigned int body = grav_body(objp);
+        if (body == 0xFFFFFFFF)
+        {
+            grav_unprotect(g.handle, false);
+            Grav_group[i] = Grav_group[--Grav_group_count];
+            continue;
+        }
+        matrix target_orient;
+        target_orient.rvec = grav_local_to_world(orient, g.rel_orient.rvec);
+        target_orient.uvec = grav_local_to_world(orient, g.rel_orient.uvec);
+        target_orient.fvec = grav_local_to_world(orient, g.rel_orient.fvec);
+        if (!havok_body_is_movable(body))
+        {
+            havok_body_set_movable(body, true);
+        }
+        havok_body_set_pos_orient(body, pos + grav_local_to_world(orient, g.rel_pos), target_orient);
+        havok_body_force_activate(body);
+        havok_body_set_linear_velocity(body, ZERO_VECTOR);
+        havok_body_set_angular_velocity(body, ZERO_VECTOR);
+    }
+}
+
+// Lets go of the carried chunks with the speed they have (plus extra_velocity); their link strengths come back.
+static void grav_group_release(const vector& extra_velocity)
+{
+    for (int i = 0; i < Grav_group_count; i++)
+    {
+        object* objp = World.object_from_handle(Grav_group[i].handle);
+        if (grav_body(objp) != 0xFFFFFFFF)
+        {
+            havok_body_set_linear_velocity(objp->havok_handle, Grav_body_velocity + extra_velocity);
+        }
+        grav_unprotect(Grav_group[i].handle, true);
+    }
+    Grav_group_count = 0;
+}
+
+// Freezes the carried chunks where they are, as the held one is (they stay protected while frozen).
+static void grav_group_freeze()
+{
+    for (int i = 0; i < Grav_group_count; i++)
+    {
+        object* objp = World.object_from_handle(Grav_group[i].handle);
+        if (grav_body(objp) == 0xFFFFFFFF)
+        {
+            grav_unprotect(Grav_group[i].handle, false);
+            continue;
+        }
+        if (Grav_num_frozen >= Grav_max_frozen)
+        {
+            grav_unprotect(Grav_group[i].handle, true);
+            continue;
+        }
+        grav_frozen& f = Grav_frozen[Grav_num_frozen++];
+        f.handle = Grav_group[i].handle;
+        f.kind = GRAV_BODY;
+        f.pos = objp->pos;
+        f.orient = objp->orient;
+        havok_body_set_linear_velocity(objp->havok_handle, ZERO_VECTOR);
+        havok_body_set_angular_velocity(objp->havok_handle, ZERO_VECTOR);
+        havok_body_set_movable(objp->havok_handle, false);
+    }
+    Grav_group_count = 0;
+}
+
 static void grav_start_hold(object* objp, const vector& hit_pos)
 {
     const unsigned int handle = objp->get_handle();
@@ -336,12 +528,15 @@ static void grav_start_hold(object* objp, const vector& hit_pos)
     Grav_grab_local = grav_world_to_local(orient, hit_pos - pos);
     Grav_held_kind = GRAV_BODY;
     Grav_held_chunk = grav_is_chunk(handle);
+    Grav_body_velocity = ZERO_VECTOR;
     grav_protect(objp);
+    grav_start_group(objp, body);
     grav_log("GRAV grab body %08X (type %d/%d) dist=%.1f movable=%d", handle, (int)objp->get_obj_type(), (int)objp->get_sub_type(), Grav_hold_dist, havok_body_is_movable(body) ? 1 : 0);
 }
 
 static void grav_end_hold()
 {
+    grav_group_release(ZERO_VECTOR); // carried chunks no one let go of explicitly fall where they are
     Grav_held_kind = GRAV_NONE;
     Grav_held_handle = 0xFFFFFFFF;
 }
@@ -367,11 +562,10 @@ static void grav_release(const vector& extra_velocity)
         object* objp = World.object_from_handle(Grav_held_handle);
         if (grav_body(objp) != 0xFFFFFFFF)
         {
-            vector velocity;
-            havok_body_get_linear_velocity(objp->havok_handle, velocity);
-            havok_body_set_linear_velocity(objp->havok_handle, velocity + extra_velocity);
+            havok_body_set_linear_velocity(objp->havok_handle, Grav_body_velocity + extra_velocity);
         }
         grav_unprotect(Grav_held_handle, true);
+        grav_group_release(extra_velocity);
     }
     grav_end_hold();
 }
@@ -394,6 +588,7 @@ static void grav_freeze_held()
         havok_body_set_linear_velocity(objp->havok_handle, ZERO_VECTOR);
         havok_body_set_angular_velocity(objp->havok_handle, ZERO_VECTOR);
         havok_body_set_movable(objp->havok_handle, false);
+        grav_group_freeze();
     }
     grav_log("GRAV freeze %08X kind=%d (%d frozen)", Grav_held_handle, (int)Grav_held_kind, Grav_num_frozen);
     grav_message("FROZEN");
@@ -609,24 +804,29 @@ static void grav_hold_frame(float dt)
     vector pos;
     matrix orient;
     havok_body_get_pos_orient(body, pos, orient);
-    const vector grab_world = pos + grav_local_to_world(orient, Grav_grab_local);
     if (!havok_body_is_movable(body))
     {
         havok_body_set_movable(body, true); // the game fixed it again (a re-anchored building); it has its dynamic motion now
     }
+    // The held thing is put exactly on the crosshair each frame (no lag). How fast that moved it is kept as its speed
+    // for when it is let go, capped so a flick of the view doesn't launch it.
+    const vector target = hold_point - grav_local_to_world(orient, Grav_grab_local);
     const float inv_dt = dt > 0.001f ? 1.0f / dt : 60.0f;
-    vector velocity = (hold_point - grab_world) * (Grav_follow_share * inv_dt);
+    vector velocity = (target - pos) * inv_dt;
     const float max_speed = Grav_held_chunk ? Grav_max_speed_chunk : Grav_max_speed;
     const float speed = grav_length(velocity);
     if (speed > max_speed)
     {
         velocity = velocity * (max_speed / speed);
     }
+    Grav_body_velocity = velocity;
+    havok_body_set_pos_orient(body, target, orient);
     havok_body_force_activate(body);
-    havok_body_set_linear_velocity(body, velocity);
+    havok_body_set_linear_velocity(body, ZERO_VECTOR); // the next step must not carry it past the crosshair
     vector spin;
     havok_body_get_angular_velocity(body, spin);
     havok_body_set_angular_velocity(body, spin * (Grav_held_chunk ? Grav_spin_damping_chunk : Grav_spin_damping));
+    grav_group_frame(target, orient);
 }
 
 // Frozen humans stay where they were frozen (bodies are unmovable instead); gone objects leave the list.
@@ -788,6 +988,7 @@ void grav_tether_level_init()
     Grav_held_handle = 0xFFFFFFFF;
     Grav_piece_pending = false;
     Grav_num_frozen = 0;
+    Grav_group_count = 0;
     // The old level's movers are gone: only the records go.
     while (Grav_num_protected > 0)
     {
@@ -837,6 +1038,9 @@ void grav_tether_do_frame()
     }
     const bool holding_tether = grav_tether_owns_weapon(pp->get_equipped_weapon()) && !pp->is_killed() && human_in_vehicle(pp) == nullptr;
     const bool fire_down = holding_tether && controls_is_button_down(CBA_OFC_ATTACK_PRIMARY, Player_controller_index);
+    const bool zoom_down = holding_tether && controls_is_button_down(CBA_OFC_ZOOM, Player_controller_index);
+    const bool zoom_pressed = zoom_down && !Grav_zoom_was_down;
+    Grav_zoom_was_down = zoom_down;
     if (Grav_held_kind == GRAV_NONE)
     {
         if (!fire_down)
@@ -865,7 +1069,7 @@ void grav_tether_do_frame()
         grav_release(Rfg_camera.real_orient.fvec * Grav_throw_speed);
         return;
     }
-    if (controls_is_button_just_pressed(CBA_OFC_ZOOM, Player_controller_index))
+    if (zoom_pressed)
     {
         grav_freeze_held();
         return;
