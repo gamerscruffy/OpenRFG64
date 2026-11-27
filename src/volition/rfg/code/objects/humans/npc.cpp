@@ -30,6 +30,7 @@
 #include "volition/rfg/code/objects/object_prop_names_shared.h"
 #include "volition/rfg/code/objects/turret.h"
 #include "volition/rfg/code/pathfinding/bb_pathfinding.h"
+#include "volition/rfg/code/spawn/ambient_spawn_manager.h" // OpenRFG: OPENRFG_NPC_POOL_SIZE
 #include "volition/rfg/code/spawn/ambient_prop_info.h"
 #include "volition/rfg/code/spawn/spawn_resource_manager.h"
 #include "volition/rfg/code/vehicle/vehicle_class.h"
@@ -46,10 +47,10 @@
 #include <math.h>
 #include <string.h>
 
-// Magic number: rfg.exe's pool.
-static object_pool<npc,100,1> npcpool; // 0x03560AB0
+// Magic number: rfg.exe's pool (100). OpenRFG: larger on x64 for the ambient spawn multiplier.
+static object_pool<npc,OPENRFG_NPC_POOL_SIZE,1> npcpool; // 0x03560AB0
 static const char* DESPAWN_TYPE_NAMES[5] = { "Low", "Medium", "High", "Withdraw", "Retreat" }; // 0x0169443C
-static farray<unsigned int,100> Offscreen_update_queue; // 0x01695428
+static farray<unsigned int,OPENRFG_NPC_POOL_SIZE> Offscreen_update_queue; // 0x01695428
 static int Queue_position; // 0x0302F0A8
 static bool Marauders_should_retreat; // 0x0302F0A2
 static timestamp Marauder_retreat_check_timer; // 0x016955C8
@@ -225,7 +226,7 @@ object* alloc_npc()
     return npcpool.alloc(0);
 }
 
-static obj_class_instantiator npc_instantiator("npc", alloc_npc, types_npc, bpo_index_npc, classname_npc, npc::pool_remaining, 0x54E80, 100); // 0x033C1448
+static obj_class_instantiator npc_instantiator("npc", alloc_npc, types_npc, bpo_index_npc, classname_npc, npc::pool_remaining, 0x54E80 / 100 * OPENRFG_NPC_POOL_SIZE, OPENRFG_NPC_POOL_SIZE); // 0x033C1448
 
 // 0x00A0F1C0 (:855)
 unsigned int npc::get_classname_hash()
