@@ -198,6 +198,7 @@ bool Link::create_region() {
     block_->tlas_fast_trace = opt_.tlas_fast_trace ? 1 : 0;
     block_->dred = opt_.dred ? 1 : 0;
     for (int i = 0; i < 3; ++i) block_->terrain_albedo[i] = opt_.terrain_albedo[i];
+    block_->gi_clamp = opt_.gi_clamp;
     block_->ao_radius = opt_.ao_radius;
     block_->debug_view = opt_.debug_view;
     block_->gi_rays = opt_.gi_rays;

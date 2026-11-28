@@ -15,6 +15,7 @@
 #include "hooks/hooks.h"
 #include "patch/ambient.h"
 #include "patch/eye_adaption.h"
+#include "patch/filmic.h"
 #include "patch/fog.h"
 #include "patch/glass.h"
 #include "patch/shadow_floor.h"
@@ -55,6 +56,7 @@ std::atomic<ID3D11ShaderResourceView*> g_bind_glass_refl{nullptr};  // what the 
 std::atomic<ID3D11ShaderResourceView*> g_bind_glass_fog{nullptr};   // the fog in front of the glass (t21; null: the game's)
 std::atomic<uint32_t> g_glass_fog_patched{0}, g_glass_fog_unsupported{0};  // its shaders with the core's fog at the glass
 bool g_glass_fog = false;  // Fog.Glass (with the glass's light and the volumetric fog)
+float g_glass_opacity = 1.0f;  // Reflections.GlassOpacity (with the clear glass's reflections; patch/glass.h)
 std::atomic<ID3D11ShaderResourceView*> g_bind_tint{nullptr};  // the sun through clear glass (t20; null: read as 0, the game's sun)
 bool g_tint = false;  // GI.WindowTint
 std::atomic<uint32_t> g_tint_patched{0}, g_tint_unsupported{0};
@@ -75,6 +77,8 @@ std::atomic<bool> g_fog_armed{false};
 std::atomic<uint32_t> g_fog_patched{0}, g_fog_lit{0}, g_fog_unsupported{0};
 bool g_eye = false;  // Tonemap.EyeAdaptationDark set (0 or more)
 std::atomic<uint32_t> g_eye_patched{0}, g_eye_mads{0}, g_eye_unsupported{0};
+bool g_filmic = false;  // OpenRFG64: Tonemap.Filmic above 0
+std::atomic<uint32_t> g_filmic_patched{0}, g_filmic_unsupported{0};
 std::atomic<uint64_t> g_fog_bound{0};  // lit passes that got the core's fog at t18
 uint64_t g_fog_blended = 0, g_fog_size_differs = 0, g_fog_unarmed = 0;
 
@@ -191,10 +195,12 @@ bool install(const Config& cfg) {
     g_glass = cfg.gi_enabled && cfg.gi_glass && cfg.host_enabled && cfg.host_mode == 3;
     g_fog = cfg.gi_enabled && cfg.fog_enabled && cfg.gi_debug == 0 && cfg.host_enabled && cfg.host_mode == 3;
     g_glass_fog = g_glass && g_fog && cfg.fog_glass;
+    g_glass_opacity = cfg.refl_enabled && cfg.refl_glass ? float(cfg.refl_glass_opacity) : 1.0f;
     g_tint = cfg.gi_enabled && cfg.gi_window_tint && cfg.gi_debug == 0 && cfg.host_enabled && cfg.host_mode == 3;
     g_rim_scale = float(cfg.gi_rim_light < 0.0 ? 0.0 : cfg.gi_rim_light > 1.0 ? 1.0 : cfg.gi_rim_light);
     g_rim = cfg.gi_enabled && cfg.gi_debug == 0 && cfg.host_enabled && cfg.host_mode == 3 && g_rim_scale < 1.0f;
     g_eye = cfg.tonemap_eye_adaptation_dark >= 0.0 && cfg.host_enabled;
+    g_filmic = cfg.tonemap_filmic > 0.0 && cfg.host_enabled;
     if (!g_on && !lights::enabled()) return true;  // the hook below serves both (lights::install comes first)
     if (g_on) session::add_flush_handler(&report);
     const bool ok = hooks::create_this(rfg::rva::rl_scene_renderer__set_shadow_states, &d_set_shadow_states, &o_set_shadow_states,
@@ -377,6 +383,20 @@ bool patch_fog(const void* code, size_t size, std::vector<uint8_t>* out) {
 }
 
 bool patch_tonemap(const void* code, size_t size, std::vector<uint8_t>* out) {
+    // OpenRFG64: the filmic curve on rl_hdr's final composites (Tonemap.Filmic); the eye's adaptation is other shaders
+    if (g_filmic) {
+        std::vector<uint8_t> patched;
+        filmic::Report fr;
+        const filmic::Result f = filmic::patch(code, size, float(g_cfg.tonemap_filmic), float(g_cfg.tonemap_filmic_exposure),
+                                               &patched, &fr);
+        if (f == filmic::Result::Patched) {
+            ++g_filmic_patched;
+            *out = std::move(patched);
+            return true;
+        }
+        if (f == filmic::Result::Unsupported && g_filmic_unsupported.fetch_add(1) < 4)
+            LOG("gi: a shader's tone curve not made filmic: %s", fr.reason.c_str());
+    }
     if (!g_eye) return false;
     std::vector<uint8_t> patched;
     eye_adaption::Report er;
@@ -398,7 +418,7 @@ bool patch_pixel_shader(const void* code, size_t size, std::vector<uint8_t>* out
     // GI's irradiance, which is the light of what is behind it (patch/glass.h)
     if (g_glass) {
         glass::Report gr;
-        const glass::Result gres = glass::patch(code, size, out, &gr, g_glass_fog);
+        const glass::Result gres = glass::patch(code, size, out, &gr, g_glass_fog, g_glass_opacity);
         if (gres == glass::Result::Patched) {
             ++g_glass_patched;
             // with the volumetric fog, the core's fog at the glass in place of the game's (t21; patch/glass.h): the game's
@@ -412,7 +432,7 @@ bool patch_pixel_shader(const void* code, size_t size, std::vector<uint8_t>* out
                 } else {
                     if (g_glass_fog_unsupported.fetch_add(1) < 4)
                         LOG("gi: a glass shader keeps the game's fog: %s", fr.reason.empty() ? fog::name(fr.result) : fr.reason.c_str());
-                    glass::patch(code, size, out, &gr, false);
+                    glass::patch(code, size, out, &gr, false, g_glass_opacity);
                 }
             }
             return true;
@@ -523,6 +543,9 @@ void report(bool) {
     if (g_eye)
         LOG("gi: the eye's adaptation below its base %g (Tonemap.EyeAdaptationDark) in %u shaders (%u adaptations; %u not "
             "patched)", g_cfg.tonemap_eye_adaptation_dark, g_eye_patched.load(), g_eye_mads.load(), g_eye_unsupported.load());
+    if (g_filmic)
+        LOG("gi: the filmic tone curve (Tonemap.Filmic %g, FilmicExposure %g) in %u of rl_hdr's composites (%u not patched)",
+            g_cfg.tonemap_filmic, g_cfg.tonemap_filmic_exposure, g_filmic_patched.load(), g_filmic_unsupported.load());
     if (g_floor)
         LOG("gi: the sun's specular in full shadow %.3g where traced (the game's 0.05 elsewhere), patched into %u shaders (%u not); "
             "sun terms that never met the shadow shadowed in %u",

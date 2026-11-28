@@ -27,6 +27,7 @@
 #include "render/gi.h"
 #include "render/lights.h"
 #include "render/seam.h"
+#include "render/emitters.h"
 #include "render/sky_particles.h"
 #include "rt/link.h"
 #include "test/automation.h"
@@ -166,6 +167,7 @@ void init() {
     link.window_tint = cfg.gi_window_tint && cfg.host_mode == rfgrt_ipc::kModeSunShadows;
     link.tlas_fast_trace = cfg.tlas_fast_trace;
     link.dred = cfg.host_dred;
+    link.gi_clamp = float(cfg.gi_clamp > 0.0 ? cfg.gi_clamp : 0.0);  // OpenRFG64 GI.Clamp
     if (cfg.gi_terrain_albedo.size() >= 3)
         for (int i = 0; i < 3; ++i)
             link.terrain_albedo[i] = float(cfg.gi_terrain_albedo[size_t(i)] < 0.0 ? 0.0 : cfg.gi_terrain_albedo[size_t(i)] > 1.0 ? 1.0
@@ -179,11 +181,14 @@ void init() {
     rtlink::core_link().configure(link);
     // the materials' diffuse maps for the rays' hits: only where rays look at surfaces (GI, reflections), with the mirror
     textures::set_enabled(cfg.gi_textures && link.snapshots && (link.gi_rays > 0 || link.refl_enabled));
+    textures::set_emission(cfg.gi_emissive, cfg.gi_glow, cfg.gi_self_lit);
+    textures::set_screens(cfg.gi_screens);  // OpenRFG64: GI.Screens  // OpenRFG64: lamps, screens and glow halos light the rays' hits
     LOG("textures: the materials' diffuse maps %s", textures::enabled() ? "go to the core for the rays' hits (GI.Textures)"
                                                                         : "stay the game's (every hit a plain grey)");
     if (!lights::install(cfg)) LOG("lights hooks failed: no shadows for the dynamic lights");
     if (!gi::install(cfg)) LOG("gi hooks failed: no global illumination");
     sky_particles::install(cfg);  // logs its own outcome
+    emitters::install(cfg);       // OpenRFG64: glowing particles, coronas and meshes light the rays (logs its own)
     if (!seam::install(cfg)) {
         LOG("frame seam hooks failed: plugin stays inactive");
         return;

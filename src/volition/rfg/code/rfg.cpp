@@ -1821,6 +1821,8 @@ int rfg_pre_initialize_game(keen::GameFrameworkSystem* pKeenGameFrameworkSystem,
     }
     xml_set_page_pool(&Common_page_pool);
     vlib_timer_init();
+    // OpenRFG64: the window's close button shuts the game down as its menu's Quit does (os_request_close)
+    keen::GameFramework::setCloseRequestHandler(&os_request_close);
     rfg_init_stage_1_prepare(pKeenGameFrameworkSystem, pGraphicsCommandWriter);
     return 0;
 }

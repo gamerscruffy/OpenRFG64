@@ -63,7 +63,7 @@ void cardinal_spline::get_point(vector& out, float u) const
         out = ZERO_VECTOR;
         return;
     }
-    if (u < 1.0f)
+    if (!(u >= 1.0f)) // OpenRFG (x64): and NaN, whose (int) is INT_MIN (cubic_bezier_spline::get_point)
     {
         out = pts[1];
         return;
@@ -100,7 +100,7 @@ void cardinal_spline::get_tangent(vector& out, float u) const
         return;
     }
     const float s = (1.0f - tension) * 0.5f;
-    if (u < 1.0f)
+    if (!(u >= 1.0f)) // OpenRFG (x64): and NaN, whose (int) is INT_MIN (cubic_bezier_spline::get_point)
     {
         out.x = (pts[2].x - pts[0].x) * s;
         out.y = (pts[2].y - pts[0].y) * s;
@@ -159,7 +159,7 @@ void catmull_rom_spline::get_point(vector& out, float u) const
         return;
     }
     const int i = (int)(float)floor((double)u);
-    if (u < 1.0f)
+    if (!(u >= 1.0f)) // OpenRFG (x64): and NaN, whose (int) is INT_MIN (cubic_bezier_spline::get_point)
     {
         out = pts[1];
         return;
@@ -192,7 +192,7 @@ void catmull_rom_spline::get_tangent(vector& out, float u) const
         return;
     }
     const int i = (int)(float)floor((double)u);
-    if (u < 1.0f)
+    if (!(u >= 1.0f)) // OpenRFG (x64): and NaN, whose (int) is INT_MIN (cubic_bezier_spline::get_point)
     {
         out.x = (pts[2].x - pts[0].x) * 0.5f;
         out.y = (pts[2].y - pts[0].y) * 0.5f;
@@ -245,7 +245,7 @@ void catmull_rom_spline_2d::get_point(vector2& out, float u) const
         return;
     }
     const int i = (int)floor((double)u);
-    if (u < 1.0f)
+    if (!(u >= 1.0f)) // OpenRFG (x64): and NaN, whose (int) is INT_MIN (cubic_bezier_spline::get_point)
     {
         out = pts[1];
         return;
@@ -295,7 +295,9 @@ void cubic_bezier_spline::get_point(vector& out, float u) const
         out = ZERO_VECTOR;
         return;
     }
-    if (u <= 0.0f)
+    // OpenRFG (x64): NaN takes this branch too (!(u > 0)). (int)NaN is INT_MIN; on x86 knots[INT_MIN] wrapped round to
+    // knots[0], on x64 it reads 24 GB below the array (a civilian car's route crashed there).
+    if (!(u > 0.0f))
     {
         out = knots[0];
         return;
@@ -331,7 +333,7 @@ void cubic_bezier_spline::get_tangent(vector& out, float u) const
         out = ZERO_VECTOR;
         return;
     }
-    if (u <= 0.0f)
+    if (!(u > 0.0f)) // OpenRFG (x64): and NaN (get_point)
     {
         out.x = (outgoing_handles[0].x - knots[0].x) * 3.0f;
         out.y = (outgoing_handles[0].y - knots[0].y) * 3.0f;
@@ -378,7 +380,7 @@ void cubic_bezier_spline::get_second_derivative(vector& out, float u) const
         out = ZERO_VECTOR;
         return;
     }
-    if (u < 0.0f)
+    if (!(u >= 0.0f)) // OpenRFG (x64): and NaN (get_point)
     {
         const vector& k0 = knots[0];
         const vector& h0 = outgoing_handles[0];
@@ -536,7 +538,7 @@ void cardinal_spline_2d::get_point(vector2& out, float u) const
         return;
     }
     const int index = (int)floor((double)u);
-    if (u < 1.0f)
+    if (!(u >= 1.0f)) // OpenRFG (x64): and NaN, whose (int) is INT_MIN (cubic_bezier_spline::get_point)
     {
         out = pts[1];
         return;

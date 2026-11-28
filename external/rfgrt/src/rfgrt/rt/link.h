@@ -54,6 +54,7 @@ struct Options {
     bool window_tint = true;      // the clear glass tints the sun's light through it (GI.WindowTint): a texture at t20
     bool tlas_fast_trace = true;  // the TLAS built for fast tracing (Mirror.TlasFastTrace)
     bool dred = true;             // the core's device keeps its removed-device data (Host.Dred)
+    float gi_clamp = 0.0f;  // OpenRFG64 GI.Clamp (rfgrt_ipc::Block::gi_clamp)
     float terrain_albedo[3] = {0.032f, 0.010f, 0.002f};  // what the rays take for the terrain's albedo (GI.TerrainAlbedo)
     int gi_denoiser = 2;  // the GI's denoiser (GI.Denoiser: 0 one pass, 1 wavelet, 2 Ray Reconstruction)
     int dlss_mode = 1;    // Ray Reconstruction's mode (DLSS.Mode; rfgrt_ipc::Block::dlss_mode)

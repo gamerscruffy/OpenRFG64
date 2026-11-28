@@ -571,6 +571,18 @@ int wmain(int argc, wchar_t** argv) {
                 } else {
                     problems.push_back(shader + ": the glass-patched shader is refused by CreatePixelShader");
                 }
+                // Reflections.GlassOpacity below 1 (its alpha scaled where there is a reflection): patched and accepted too
+                std::vector<uint8_t> gt;
+                glass::Report grt;
+                if (glass::patch(blob.data(), blob.size(), &gt, &grt, false, 0.5f) != glass::Result::Patched) {
+                    problems.push_back(shader + ": glass with GlassOpacity 0.5 not patched: " + grt.reason);
+                } else {
+                    ps = nullptr;
+                    if (SUCCEEDED(dev->CreatePixelShader(gt.data(), gt.size(), nullptr, &ps)))
+                        ps->Release();
+                    else
+                        problems.push_back(shader + ": the glass shader with GlassOpacity 0.5 is refused by CreatePixelShader");
+                }
                 if (!read_interface(blob, &fo) || !read_interface(gl, &fg) || fo.light_cb == UINT32_MAX)
                     problems.push_back(shader + ": glass: interface unreadable");
             }

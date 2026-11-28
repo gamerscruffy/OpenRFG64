@@ -13,15 +13,27 @@
 #include "volition/rfg/code/objects/humans/player.h"
 #include "volition/rfg/code/objects/object_squad.h"
 
+#include <stdio.h>
+
 // Magic numbers: a handle's low 8 bits are the pool index (128 orders), the rest the instance id; clean up above 96 in use;
 // polls every 0.75 to 1.5 s for dead targets and every 2 to 4 s for moved ones.
+#ifdef OPENRFG_X64
+// OpenRFG (x64): 1024 orders need 10 index bits; the instance id keeps the other 22. Clean-up at 75% in use, as 96/128.
+static const unsigned int ORDERS_INDEX_MASK = 0x3FF;
+static const int ORDERS_INSTANCE_SHIFT = 10;
+static const int MAX_ORDERS_INSTANCE = 0x3FFFFF;
+static const unsigned int ORDERS_CLEANUP_THRESHOLD = 768;
+#else
 static const unsigned int ORDERS_INDEX_MASK = 0xFF;
 static const int ORDERS_INSTANCE_SHIFT = 8;
 static const int MAX_ORDERS_INSTANCE = 0xFFFFFF;
 static const unsigned int ORDERS_CLEANUP_THRESHOLD = 0x60;
+#endif
 static const int FIRST_ORDERS_INSTANCE = 1;
 
 static const gfm_orders_flags DEFAULT_ORDERS_FLAGS(true, false); // 0x02270D39
+
+void openrfg_log(const char* text); // crash_early.cpp
 
 extern gfm_smash_building_coordinator Smash_building_coordinator; // gameplay.cpp
 
@@ -306,6 +318,14 @@ gfm_orders* gfm_orders_manager::get_orders_object()
         orders = master_orders_pool.alloc(0);
         if (orders == nullptr)
         {
+            // OpenRFG: told in openrfg_crash.txt (the first 5, then every 100th): squads go without orders.
+            static unsigned int failures = 0;
+            if (++failures <= 5 || failures % 100 == 0)
+            {
+                char text[128];
+                snprintf(text, sizeof(text), "ORDERS pool full (%d): new orders failed, %u times", (int)master_orders_pool.get_capacity(), failures);
+                openrfg_log(text);
+            }
             return nullptr;
         }
     }
@@ -432,8 +452,17 @@ void gfm_orders_manager::do_frame()
         do_frame_update();
         update_polling_timer.set_rand(2000, 4000);
     }
-    if (master_orders_pool.get_capacity() - (unsigned int)master_orders_pool.get_free() > ORDERS_CLEANUP_THRESHOLD)
+    const unsigned int in_use = master_orders_pool.get_capacity() - (unsigned int)master_orders_pool.get_free();
+    if (in_use > ORDERS_CLEANUP_THRESHOLD)
     {
+        // OpenRFG: told once per 100 clean-ups, with how many were in use.
+        static unsigned int cleanups = 0;
+        if (cleanups++ % 100 == 0)
+        {
+            char text[128];
+            snprintf(text, sizeof(text), "ORDERS clean-up: %u of %d in use (%u clean-ups)", in_use, (int)master_orders_pool.get_capacity(), cleanups);
+            openrfg_log(text);
+        }
         do_frame_clean_up_old();
     }
 }

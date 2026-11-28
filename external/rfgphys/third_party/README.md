@@ -24,3 +24,7 @@ one of the scene's (an element with a garbage pointer crashed the host in two lo
 `physx-sdk/` is a git submodule, NVIDIA's repository pinned to commit `b97365c6`. Clone with
 `git clone --recurse-submodules`, or run `git submodule update --init third_party/physx-sdk` in an existing clone,
 before `tools/build_physx.cmd`. Only the repository's `physx/` folder is used.
+
+In OpenRFG64 the PhysX checkout and build sit next to the OpenRFG-main folder (`../physx-5.12/physx-sdk`,
+`../physx-5.12/physx-build`): set `RFGPHYS_PHYSX_SRC` and `RFGPHYS_PHYSX_OUT` for `tools/build_physx.cmd`;
+`cmake/openrfg_sdks.cmake` finds `release-gpu/install` there.

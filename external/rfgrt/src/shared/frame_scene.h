@@ -91,6 +91,18 @@ struct Light {
 };
 static_assert(sizeof(Light) == 48, "fixed layout");
 
+// OpenRFG64: a glowing thing that lights the path tracer's rays (render/emitters.h): additive particles (sparks, fire,
+// the jetpack's flame), coronas (the glow over a street light) and glowing meshes. A sphere of `radius` giving off
+// `color` (the game's light units: its irradiance at 1 m, straight on); the GI samples one a pixel (gi_trace.hlsl).
+constexpr uint32_t kMaxEmitters = 64;
+struct Emitter {
+    float position[3];  // render-offset space
+    float radius;       // the sphere it gives off its light from (at least 5 cm)
+    float color[3];
+    float range;        // it lights nothing beyond this
+};
+static_assert(sizeof(Emitter) == 32, "fixed layout");
+
 // A screen's particle that gives light (GI.ScreenLight: the screens' particles, as VOM's particle renderer draws them;
 // mirror/screen_quads.h): a quad, its corner at u, v (0..1 across its bitmap's rectangle) at center + (2u - 1) axis_u +
 // (2v - 1) axis_v. Where the game draws it, it adds min(its bitmap's colour x the bitmap's alpha x alpha x color, 1)
@@ -147,6 +159,16 @@ struct SlotHeader {
     uint32_t lights_dropped;  // more lights than masks: the farthest go without
     uint32_t pad4[2];
     Light lights[kMaxLights];
+    // OpenRFG64: the emitters (render/emitters.h), the brightest kMaxEmitters near the camera
+    uint32_t emitter_count;
+    uint32_t emitters_dropped;
+    float emitter_grey;  // OpenRFG64: how far the emitters' light (after a mesh's texture tint) goes to grey at the
+                         // same luminance, 0 their own colour (GI.EmitterSaturation 1), 1 grey
+    uint32_t pad6;
+    Emitter emitters[kMaxEmitters];
+    // OpenRFG64: each emitter's texture for its light's colour, the core's texture id + 1 (0: none): a glowing mesh's
+    // diffuse map (a screen's picture), whose average colour tints its light (gi_trace.hlsl emitter_light)
+    uint32_t emitter_texture[kMaxEmitters];
     // The particles that give light, drawn in the frame before (mirror/screen_quads.h).
     uint32_t screen_quad_count;
     uint32_t screen_quads_dropped;  // more than kMaxScreenQuads: the last left out

@@ -212,6 +212,9 @@ private:
     timestamp update_period; // 0x50C
 };
 
+// OpenRFG: an NPC count limit of rfg.exe's (75, 90) scaled with the ambient spawn multiplier, for limits outside this
+// file that must keep their place against the ambient ones (object_squad's squad spawn limit).
+int amb_spawn_npc_threshold(int base);
 automobile* find_farthest_offscreen_auto(); // 0x00B4D950 (:2836)
 void do_frame_despawn_auto_aggressive(); // 0x00B4DDE0 (:3047)
 void amb_spawn_system_init(); // 0x00B42CE0 (:4901)

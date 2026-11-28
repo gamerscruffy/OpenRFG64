@@ -20,39 +20,62 @@ if "%PTX%"=="" set "PTX=120"
 set "CONFIG=%~3"
 if "%CONFIG%"=="" set "CONFIG=release"
 for /f "tokens=1 delims=," %%a in ("%ARCHS%") do set "BASE=%%a"
-set "VS=C:\Program Files\Microsoft Visual Studio\18\Community"
+rem Where PhysX's source and build live (OpenRFG64: outside the repository, so syncs never pack them):
+rem   RFGPHYS_PHYSX_SRC  the PhysX checkout (default third_party\physx-sdk, the submodule)
+rem   RFGPHYS_PHYSX_OUT  the build folder (default third_party\physx-build); %CONFIG%-gpu goes inside it
+rem   RFGPHYS_PHYSX_CONFIGURE_ONLY=1  configure, then stop (checks the toolchain before the long CUDA build)
+rem Visual Studio: the newest install with the v143 14.44 toolset (any edition, Build Tools included), from vswhere.
+set "VS="
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" for /f "usebackq delims=" %%v in (`"%VSWHERE%" -products * -prerelease -sort -property installationPath`) do (
+    if not defined VS dir /b /ad "%%v\VC\Tools\MSVC\14.44*" >nul 2>&1 && set "VS=%%v"
+)
+if not defined VS (
+    echo No Visual Studio with the MSVC v143 14.44 toolset: add Microsoft.VisualStudio.Component.VC.14.44.17.14.x86.x64
+    exit /b 1
+)
 set "CUDA=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"
 if not exist "%CUDA%\bin\nvcc.exe" (
     echo CUDA 12.8 not found at %CUDA%
     exit /b 1
 )
+echo Visual Studio: %VS%
 call "%VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=14.44 >nul || exit /b 1
 set "CMAKE=%VS%\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 set "PATH=%VS%\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja;%CUDA%\bin;%PATH%"
 set "CUDA_PATH=%CUDA%"
 cd /d "%~dp0.."
-if not exist "third_party\physx-sdk\physx\CMakeLists.txt" (
-    echo PhysX source missing: git submodule update --init third_party/physx-sdk
+set "PATCH=%CD%\third_party\physx-sdk-rfgphys.patch"
+set "SRC=%RFGPHYS_PHYSX_SRC%"
+if "%SRC%"=="" set "SRC=%CD%\third_party\physx-sdk"
+set "OUTBASE=%RFGPHYS_PHYSX_OUT%"
+if "%OUTBASE%"=="" set "OUTBASE=%CD%\third_party\physx-build"
+if not exist "%SRC%\physx\CMakeLists.txt" (
+    echo PhysX source missing at %SRC%: git submodule update --init third_party/physx-sdk
     exit /b 1
 )
-rem Our changes to PhysX (third_party\physx-sdk-rfgphys.patch), applied to a fresh checkout of the submodule.
-git -C third_party\physx-sdk apply --reverse --check ..\physx-sdk-rfgphys.patch >nul 2>&1
+rem Our changes to PhysX (third_party\physx-sdk-rfgphys.patch), applied to a fresh checkout.
+git -C "%SRC%" apply --reverse --check "%PATCH%" >nul 2>&1
 if errorlevel 1 (
-    git -C third_party\physx-sdk apply ..\physx-sdk-rfgphys.patch || exit /b 1
+    git -C "%SRC%" apply "%PATCH%" || exit /b 1
     echo applied third_party\physx-sdk-rfgphys.patch
 )
-set "OUT=%CD%\third_party\physx-build\%CONFIG%-gpu"
+set "OUT=%OUTBASE%\%CONFIG%-gpu"
 set "ARCHDEFS=-DPX_GPU_SASS_ARCHS=%ARCHS% -DPX_GPU_PTX_ARCH=%PTX% -DCMAKE_CUDA_ARCHITECTURES=%BASE%"
 if "%ARCHS%"=="sdk" set "ARCHDEFS=-UPX_GPU_SASS_ARCHS -UPX_GPU_PTX_ARCH -DCMAKE_CUDA_ARCHITECTURES=70"
 echo PhysX GPU architectures: %ARCHS% (PTX %PTX%)
 rem Configured every time, so that other architectures take effect.
-"%CMAKE%" -S third_party\physx-sdk\physx -B "%OUT%" -G Ninja -DCMAKE_BUILD_TYPE=%CONFIG% ^
+"%CMAKE%" -S "%SRC%\physx" -B "%OUT%" -G Ninja -DCMAKE_BUILD_TYPE=%CONFIG% ^
     -DPX_GENERATE_GPU_PROJECTS=ON -DPX_GENERATE_STATIC_LIBRARIES=ON -DPX_GENERATE_GPU_STATIC_LIBRARIES=OFF ^
     -DCMAKE_CUDA_COMPILER="%CUDA%\bin\nvcc.exe" -DCUDAToolkit_ROOT="%CUDA%" %ARCHDEFS% ^
     -DNV_USE_STATIC_WINCRT=ON -DNV_USE_DEBUG_WINCRT=OFF ^
     -DPX_BUILDSNIPPETS=OFF -DPX_BUILDPVDRUNTIME=OFF -DPX_FLOAT_POINT_PRECISE_MATH=OFF ^
     -DPX_OUTPUT_LIB_DIR="%OUT%\lib" -DPX_OUTPUT_BIN_DIR="%OUT%\bin" -DPX_OUTPUT_DLL_DIR="%OUT%\bin" ^
     -DCMAKE_INSTALL_PREFIX="%OUT%\install" || exit /b 1
+if "%RFGPHYS_PHYSX_CONFIGURE_ONLY%"=="1" (
+    echo configured PhysX in %OUT% ^(RFGPHYS_PHYSX_CONFIGURE_ONLY=1: not built^)
+    exit /b 0
+)
 "%CMAKE%" --build "%OUT%" || exit /b 1
 "%CMAKE%" --install "%OUT%" || exit /b 1
 echo built PhysX with GPU support into %OUT%

@@ -24,6 +24,7 @@ static bool dbg_part_key(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; 
 #include "volition/render_lib/code/rl_renderable_particles.h"
 #include "volition/render_lib/code/rl_renderable_particles_instance.h"
 #include "volition/render_lib/code/rl_renderer.h"
+#include "backends/backends.h" // OpenRFG64: glowing particles light the path tracer's rays
 #include "volition/vlib/code/bmpman/bmpman.h"
 #include "library/modules/runtime/graphics/sources/d3d11/graphicscommandbuffer_d3d11.hpp"
 #include "keen/base/trace.hpp"
@@ -838,6 +839,112 @@ static void rl_rt_screens_capture(rl_renderable_particles_instance* instance_p, 
     }
 }
 
+// OpenRFG64: an additive particle emitter lights the path tracer's rays (backends.h openrfg_backends_add_emitter): one
+// light at the brightness-weighted middle of its particles, its light the sum of their colour x alpha x size^2 (the game's
+// colours are gamma-encoded: squared), reaching further the more spread out they are. Alpha-blended smoke and dust,
+// subtractive and distortion particles, the always-on-top ones (the camera's wind dust; markers) and the ones the path
+// tracer draws with the sky (rfgrt's 0x20000000 tag, Particles.WithSkyEffects) light nothing.
+static const float kParticle_light = 3.0f;
+static const float kCorona_light = 2.0f;
+
+static void particle_emitter_add(rl_renderable_particles_instance* instance_p, rl_renderable_particles* renderable_p, bool is_iterative, int count)
+{
+    if (openrfg_backends_effective_renderer() != OPENRFG_RENDERER_PATH_TRACED)
+    {
+        return;
+    }
+    const rl_particle_material_data* material_p = renderable_p->get_material();
+    const int flags = material_p->flags;
+    const int no_light = rl_particle_material_data::MATERIAL_FLAG_SUBTRACTIVE | rl_particle_material_data::MATERIAL_FLAG_DISTORTION |
+                         rl_particle_material_data::MATERIAL_FLAG_ALWAYS_ON_TOP | 0x20000000;
+    if ((flags & no_light) != 0)
+    {
+        return;
+    }
+    const bool additive = (flags & rl_particle_material_data::MATERIAL_FLAG_ADDITIVE) != 0;
+    // get_is_local_space reads the parametric constant block: iterative instances have none (null), as render() checks
+    const bool local_space = renderable_p->get_local_space_emission() ||
+                             (!is_iterative && instance_p->get_parametric_constant_data() != nullptr && instance_p->get_is_local_space());
+    const vector& origin = instance_p->get_local_emission_position();
+    const matrix& rotation = instance_p->get_local_emission_rotation();
+    float sum[3] = {0.0f, 0.0f, 0.0f};
+    float weight = 0.0f;
+    float middle[3] = {0.0f, 0.0f, 0.0f};
+    float lo[3] = {1e30f, 1e30f, 1e30f};
+    float hi[3] = {-1e30f, -1e30f, -1e30f};
+    auto add = [&](const vector& q, const rl_color_float& color, float additive_key, float size) {
+        if (!additive && additive_key < 0.5f)
+        {
+            return;
+        }
+        const float a = color.alpha < 0.0f ? 0.0f : color.alpha > 1.0f ? 1.0f : color.alpha;
+        const float s = size < 0.0f ? 0.0f : size > 8.0f ? 8.0f : size;
+        const float k = a * s * s;
+        const float rgb[3] = {color.red * color.red * k, color.green * color.green * k, color.blue * color.blue * k};
+        const float w = 0.2126f * rgb[0] + 0.7152f * rgb[1] + 0.0722f * rgb[2];
+        if (!(w > 0.0f) || !(w < 1e6f))
+        {
+            return;
+        }
+        float p[3] = {q.x, q.y, q.z};
+        if (local_space)
+        {
+            p[0] = rotation.rvec.x * q.x + rotation.uvec.x * q.y + rotation.fvec.x * q.z + origin.x;
+            p[1] = rotation.rvec.y * q.x + rotation.uvec.y * q.y + rotation.fvec.y * q.z + origin.y;
+            p[2] = rotation.rvec.z * q.x + rotation.uvec.z * q.y + rotation.fvec.z * q.z + origin.z;
+        }
+        for (int i = 0; i < 3; i++)
+        {
+            sum[i] += rgb[i];
+            middle[i] += p[i] * w;
+            lo[i] = p[i] < lo[i] ? p[i] : lo[i];
+            hi[i] = p[i] > hi[i] ? p[i] : hi[i];
+        }
+        weight += w;
+    };
+    if (499 < count)
+    {
+        count = 499;
+    }
+    if (is_iterative)
+    {
+        const int n = (int)instance_p->get_particle_iterative_list().size();
+        for (int i = 0; i < count && i < n; i++)
+        {
+            const rl_particle_iterative& particle = instance_p->get_particle_iterative_list()[i];
+            add(particle.position, particle.current_color, particle.current_additive_key, particle.current_size);
+        }
+    }
+    else
+    {
+        // (their colour and size are the shader's, along their life: the instance's mid-life keys stand for all of them)
+        const unsigned char* constants_p = instance_p->get_parametric_constant_data();
+        if (constants_p == nullptr)
+        {
+            return;
+        }
+        const auto* data = reinterpret_cast<const rl_renderable_particles_instance::parametric_constant_data*>(constants_p);
+        const int n = (int)instance_p->get_particle_parametric_list().size();
+        for (int i = 0; i < count && i < n; i++)
+        {
+            add(instance_p->get_particle_parametric_list()[i].position, data->m_color_mid_A, data->m_additive_key_mid_A, data->m_size_mid_A);
+        }
+    }
+    if (!(weight > 0.0f))
+    {
+        return;
+    }
+    const rl_color_float tint = instance_p->get_effect_material_tint();
+    const float opacity = instance_p->get_opacity();
+    const float position[3] = {middle[0] / weight, middle[1] / weight, middle[2] / weight};
+    const float color[3] = {sum[0] * tint.red * opacity * kParticle_light, sum[1] * tint.green * opacity * kParticle_light,
+                            sum[2] * tint.blue * opacity * kParticle_light};
+    const float dx = hi[0] - lo[0], dy = hi[1] - lo[1], dz = hi[2] - lo[2];
+    float radius = 0.5f * sqrtf(dx * dx + dy * dy + dz * dz);
+    radius = radius < 0.1f ? 0.1f : radius > 4.0f ? 4.0f : radius;
+    openrfg_backends_add_emitter(position, color, radius, 6.0f + radius * 4.0f, instance_p);
+}
+
 void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera, rl_renderable_particles_instance* instance_p, const rl_particle_lighting_state& lighting_state, const bool is_distortion_pass)
 {
     rl_renderable_particles* renderable_p = instance_p->get_renderable_particles();
@@ -857,6 +964,11 @@ void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera
             return;
     }
 #endif // DBGPART2 disabled
+    // (a screen whose picture the path tracer takes as quads gives no light of this kind too: rl_rt_screens_capture)
+    if (!is_distortion_pass && !(instance_p->m_rt_screen_light > 0.0f))
+    {
+        particle_emitter_add(instance_p, renderable_p, is_iterative, count);
+    }
     const bool has_alternate_view = instance_p->get_has_alternate_view();
     if (!is_iterative)
     {
@@ -1256,6 +1368,21 @@ void rl_particle_renderer::render_corona_internal(rl_renderer& renderer, const r
 // 0x0052B280 (:1140): the three phases of a corona.
 void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera, rl_corona_instance* instance_p)
 {
+    // OpenRFG64: a corona (the glow over a street light, a beacon) lights the path tracer's rays from where it is, whether
+    // the game sees it or not (the rays' shadows hide it where it is hidden). Not the infinite-depth ones (the sun's glare
+    // and lens flare): placed a unit from the camera toward the sun, they lit the player from beside the camera.
+    if (openrfg_backends_effective_renderer() == OPENRFG_RENDERER_PATH_TRACED && !instance_p->get_infinite_depth())
+    {
+        const rl_color_float& c = instance_p->get_color_start();
+        const float a = c.alpha < 0.0f ? 0.0f : c.alpha > 1.0f ? 1.0f : c.alpha;
+        const float k = instance_p->get_intensity_scale() * a * kCorona_light;
+        const vector& p = instance_p->get_position();
+        const float position[3] = {p.x, p.y, p.z};
+        const float color[3] = {c.red * c.red * k, c.green * c.green * k, c.blue * c.blue * k};
+        float radius = instance_p->get_radius_start() * 0.1f;
+        radius = radius < 0.05f ? 0.05f : radius > 1.0f ? 1.0f : radius;
+        openrfg_backends_add_emitter(position, color, radius, 15.0f, instance_p);
+    }
     for (int visibility_phase = 0; visibility_phase < 3; visibility_phase++)
     {
         render_corona_internal(renderer, camera, instance_p, visibility_phase);

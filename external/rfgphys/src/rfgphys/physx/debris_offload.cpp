@@ -1153,6 +1153,7 @@ struct VehicleProxy {
     bool kf_sent = false;
     float kf_from[3] = {};
     float kf_dt = 0;
+    bool kept = false;  // OpenRFG64: a chunk the game moves itself (a constraint, the tether): kinematic here while it lasts (kept_in_havok)
 };
 std::vector<VehicleProxy> g_vehicles;
 std::vector<uint32_t> g_vehicle_free;
@@ -1211,6 +1212,8 @@ std::vector<ChunkImpulse> g_chunk_impulses_queued;  // the game's pushes on driv
 SRWLOCK g_chunk_impulse_lock = SRWLOCK_INIT;
 uint32_t g_chunks_driven = 0, g_chunks_too_large = 0, g_chunk_motion_fixed = 0;
 uint32_t g_chunks_waited_for_mirror = 0, g_chunks_held = 0, g_chunks_given_back = 0, g_chunk_frames_flown = 0;
+// OpenRFG64: chunks left to Havok by a scan (kept_in_havok): on a constraint, and held by the Gravity Tether.
+uint32_t g_chunks_kept_constrained = 0, g_chunks_kept_tethered = 0;
 float g_follow_peak = 0;   // m: a chunk's middle from its target after a Havok step, the most this level
 uint32_t g_follow_far = 0;  // chunk-frames over 1 m off
 uint32_t g_chunk_parts_last = 0;    // chunk_shape's parts, for its caller
@@ -1750,6 +1753,36 @@ void restore_motions() {
 
 // Four times a second: the vehicle bodies in Havok's simulation islands within range of the player get proxies,
 // and proxies whose body left the islands or the range go.
+// OpenRFG64: a chunk the Gravity Tether places itself every frame (held, carried with its building, or frozen). A
+// driven chunk's Havok body is keyframed to the host's pose and put back when far from it, which pulled a held chunk
+// back to where the host had it. False without the export (rfg.exe).
+bool tether_holds(uint32_t obj_handle) {
+    using HoldsFn = bool(__cdecl*)(uint32_t);
+    static const HoldsFn holds = reinterpret_cast<HoldsFn>(GetProcAddress(GetModuleHandleW(nullptr), "openrfg_grav_tether_holds"));
+    return holds && holds(obj_handle);
+}
+
+// OpenRFG64: a chunk on one of the game's constraints (its child or host constraint list; the third attach pointer,
+// attach_info, is not a constraint). The host has no constraints: a windmill's blades, hinged to its motor, fell off at
+// once when driven there. Freed (the game destroys the constraint when a blade dies) it is driven like any other.
+bool constrained(const uint8_t* obj) {
+    void* const* attach = reinterpret_cast<void* const*>(obj + kObjAttach);  // child_constraint, host_constraint
+    return attach[0] || attach[1];
+}
+
+// OpenRFG64: a chunk whose motion the game decides itself (a constraint, the tether). It stays in Havok and gets a
+// kinematic proxy in the host, so it still pushes the debris there; once that ends it is driven again.
+enum class Kept : uint8_t { No, Constrained, Tethered };
+Kept kept_in_havok(const uint8_t* obj) {
+    if (constrained(obj)) return Kept::Constrained;
+    if (tether_holds(*reinterpret_cast<const uint32_t*>(obj + kObjHandle))) return Kept::Tethered;
+    return Kept::No;
+}
+bool kept_in_havok(uint32_t obj_handle) {
+    const uint8_t* obj = object_of_handle(obj_handle);
+    return obj && kept_in_havok(obj) != Kept::No;
+}
+
 void scan_vehicles(const float* player_pos) {
     uint8_t* hw = rfg::global<uint8_t*>(r::Havok_world);
     if (!hw) return;
@@ -1818,9 +1851,21 @@ void scan_vehicles(const float* player_pos) {
                     if (keyframed) motion = it->motion;
                     drop_vehicle(size_t(it - g_vehicles.begin()), false);  // a chunk that lost pieces: made again
                 }
-                // Keyframed or fixed in Havok by the game itself (a chunk held in place): not ours to drive.
-                const bool drive = chunk && g_chunks_in_physx &&
+                // Keyframed or fixed in Havok by the game itself (a chunk held in place): not ours to drive. Nor one on
+                // a constraint or held by the tether (kept_in_havok): a kinematic proxy while that lasts.
+                const Kept why_kept = chunk ? kept_in_havok(obj) : Kept::No;
+                const bool kept = why_kept != Kept::No;
+                if (chunk && g_chunks_in_physx && (keyframed || (motion != kChunkMotionKeyframed && motion != kChunkMotionFixed))) {
+                    if (why_kept == Kept::Constrained) ++g_chunks_kept_constrained;
+                    if (why_kept == Kept::Tethered) ++g_chunks_kept_tethered;
+                }
+                const bool drive = chunk && g_chunks_in_physx && !kept &&
                                    (keyframed || (motion != kChunkMotionKeyframed && motion != kChunkMotionFixed));
+                if (kept && keyframed) {  // a driven or parked one, keyframed to the host: its own motion back
+                    g_motion_restores.emplace_back(*reinterpret_cast<const uint32_t*>(obj + kObjHavokHandle), motion);
+                    restore_motions();
+                    keyframed = false;
+                }
                 // The world mirror notices a building's lost pieces on its own 250 ms clock. A chunk that came to the
                 // host ahead of that lay with every part in its own static twin: tens of thousands of contacts on one
                 // body in a moment, and with them a solver that never recovered and a GPU crash (research/docs/08, C3).
@@ -1883,6 +1928,10 @@ void scan_vehicles(const float* player_pos) {
                 VehicleProxy v{body, slot, signature, {pos[0], pos[1], pos[2]}, {q[0], q[1], q[2], q[3]}, true, chunk, 0.0f, 0};
                 memcpy(v.mid, mid, sizeof(mid));
                 v.half = half;
+                if (kept) {
+                    v.kept = true;
+                    v.obj_handle = *reinterpret_cast<const uint32_t*>(obj + kObjHandle);
+                }
                 if (drive) {
                     v.driven = true;
                     v.made_in_scan = g_scan_number;
@@ -3018,6 +3067,20 @@ void move_vehicles() {
         g_chunks_in_physx = false;
         LOG("debris offload: the PhysX host is gone: loose chunks are the game's own again");
     }
+    // OpenRFG64: a parked chunk the game moves itself now (the tether took hold of it, or it is on a constraint) gets its
+    // own motion back (keyframed, it would hang where it is let go).
+    for (auto it = g_parked.begin(); it != g_parked.end();) {
+        if (!kept_in_havok(it->second.obj_handle)) {
+            ++it;
+            continue;
+        }
+        g_motion_restores.emplace_back(it->second.handle, it->second.motion);
+        g_driven.erase(it->second.obj_handle);
+        body_release(it->first);
+        it = g_parked.erase(it);
+        restore_motions();
+        g_next_vehicle_scan = 0;
+    }
     if (g_chunks_in_physx) sync_chunks();  // before the scan, which would make a body that lost parts again
     static bool chunk_made_waiting = false;
     static double scanned_at = 0;
@@ -3062,6 +3125,18 @@ void move_vehicles() {
         if (!*reinterpret_cast<void* const*>(v.body + kEntityWorld)) {
             if (v.driven) note_chunk_end(kEndGone, v, reinterpret_cast<const float*>(player + layout::object_pos));
             drop_vehicle(i, false);  // gone from Havok's world
+            continue;
+        }
+        if (v.driven && kept_in_havok(v.obj_handle)) {  // OpenRFG64: the game moves it now: back to Havok, kinematic here next scan
+            drop_vehicle(i);
+            ++g_chunks_given_back;
+            restore_motions();
+            g_next_vehicle_scan = 0;
+            continue;
+        }
+        if (v.kept && !kept_in_havok(v.obj_handle)) {  // let go or freed: made again in the next scan, driven
+            drop_vehicle(i, false);
+            g_next_vehicle_scan = 0;
             continue;
         }
         if (v.driven) {
@@ -6133,6 +6208,11 @@ void __cdecl d_level_shutdown() {
                 static_cast<unsigned long long>(g_parts_removed), static_cast<unsigned long long>(g_sync_mismatch),
                 g_chunks_waited_for_mirror, g_chunks_held, g_chunks_given_back, double(g_follow_peak), g_follow_far,
                 g_put_back);
+        if (g_chunks_kept_constrained || g_chunks_kept_tethered)
+            LOG("debris offload: level end; chunks left to Havok with a kinematic proxy: %u on a constraint (a windmill's "
+                "blades), %u held by the Gravity Tether; chunk proxies without a shape %u",
+                g_chunks_kept_constrained, g_chunks_kept_tethered, g_vehicle_shapes_failed);
+        g_chunks_kept_constrained = g_chunks_kept_tethered = 0;
         g_chunks_waited_for_mirror = g_chunks_held = g_chunks_given_back = 0;
         g_follow_peak = 0;
         g_follow_far = 0;

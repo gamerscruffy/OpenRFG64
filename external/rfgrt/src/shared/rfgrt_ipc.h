@@ -27,7 +27,7 @@
 namespace rfgrt_ipc {
 
 constexpr uint32_t kMagic = 0x54524652;  // "RFRT"
-constexpr uint32_t kVersion = 31;
+constexpr uint32_t kVersion = 34;
 constexpr uint32_t kMaxLightMasks = 16;  // shadow masks of dynamic lights a frame
 
 enum HostState : int32_t {
@@ -165,6 +165,10 @@ struct Block {
     // shader, no material map), where neither the game's colour nor the radiance cache has it
     float terrain_albedo[3];
     int32_t window_tint;  // GI.WindowTint: the clear glass tints the sun's light through it (sun_tint.hlsl)
+    // OpenRFG64 GI.Clamp: the most luminance a single GI or reflection ray brings back (0: no limit); the rare ray that
+    // meets a small bright emitter otherwise flickers as a firefly through the denoiser
+    float gi_clamp;
+    float gi_clamp_pad;
     // Host.Dred (OpenRFG64-memtest): the core's device keeps Direct3D 12's removed-device data (the command lists'
     // progress, the page fault's address), logged if the device is lost
     int32_t dred;

@@ -62,6 +62,13 @@ bool os_should_close()
     return Os_window_closed;
 }
 
+// OpenRFG64: the keen window's close button: game_input_poll then shuts the game down (GS_SHUTDOWN), as this module's
+// own window did (win32_message_handler, which nothing creates now).
+void os_request_close()
+{
+    Os_window_closed = true;
+}
+
 // 0x0058B030 (:174)
 void os_set_fullscreen(const bool fullscreen)
 {
