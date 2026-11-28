@@ -17,10 +17,10 @@ struct rfgrt_binding {
     const void* (*caller)(const void* return_address);
 };
 
-// A particle that gives light, as the game's particle renderer hands it to rfgrt_particle_emitters (main.cpp) while it
+// A particle that gives light, as the game's particle renderer hands it to rfgrt_screen_quads (main.cpp) while it
 // draws it: a quad in world space, its corner at u, v (0..1 across the bitmap's rectangle) at center + (2u - 1) axis_u +
-// (2v - 1) axis_v, and what the game multiplies its bitmap by (rfgrt_frame::Emitter, with the game's bitmap handle).
-struct rfgrt_emitter_quad {
+// (2v - 1) axis_v, and what the game multiplies its bitmap by (rfgrt_frame::ScreenQuad, with the game's bitmap handle).
+struct rfgrt_screen_quad {
     float center[3];
     int bitmap;      // the game's bitmap handle (bm_get_entry's), -1 none
     float axis_u[3];

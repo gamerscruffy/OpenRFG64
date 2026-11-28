@@ -266,9 +266,9 @@ private:
     rl_particle_base::tail_data* m_tails; // 0xD8
 public:
     // OpenRFG (VOM): above 0, this instance's particles give the path tracer their light (rl_particle_renderer::render
-    // hands them to it: Rl_rt_emitters_sink; research/docs/05-particle-emission-plan.md); vfx_effect sets it every frame
+    // hands them to it: Rl_rt_screens_sink; research/docs/05-particle-emission-plan.md); vfx_effect sets it every frame
     // (the screens' effects while path tracing).
-    float m_rt_emission;
+    float m_rt_screen_light;
 };
 
 #include "volition/render_lib/code/rl_renderable_particles_instance.inl"

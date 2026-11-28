@@ -61,7 +61,7 @@ cbuffer Frame : register(b0) {
                           // (Reflections.GlassReflectance), y 1 when they are on (Reflections.Glass)
     float4 probe;         // xy: where the probe aims (probe.hlsl), fractions of the screen (Test.ProbePixel)
     float4 terrain;       // rgb: the albedo of a surface whose material is not known, the terrain (GI.TerrainAlbedo); w: the
-                          // frame's particles that give light (their count: emitters_along)
+                          // frame's particles that give light (their count: screens_along)
     float4 upscale;       // DLSS (dlss.h): xy the GI's render size (0: the frame's), zw the sample's offset from each of its
                           // pixels' centres (its pixels, y down); gi_size, gi_source
     float4 fog4;          // the volumetric fog: x the rays from each froxel a frame (Fog.Rays), y 1 when the froxels' light
@@ -179,17 +179,17 @@ bool seen_radiance(float3 hp, out float3 L) {
     return true;
 }
 
-// The frame's particles that give light (GI.Emitters: the screens' particles; the core's tlas.h Emitters), two a quad: its
-// bitmap's rectangle (u0 v0 u1 v1), then its colour x alpha x GI.Emitters and its bitmap's id + 1 (w's bits; 0 none). Their
+// The frame's particles that give light (GI.ScreenLight: the screens' particles; the core's tlas.h ScreenQuads), two a quad: its
+// bitmap's rectangle (u0 v0 u1 v1), then its colour x alpha x GI.ScreenLight and its bitmap's id + 1 (w's bits; 0 none). Their
 // quads are in the TLAS in mask 0x04 alone, non-opaque: no other ray meets them.
-StructuredBuffer<float4> emitter_data : register(t8);
-static const uint kMaxEmitterCrossings = 32;
+StructuredBuffer<float4> screen_data : register(t8);
+static const uint kMaxScreenCrossings = 32;
 
 // The light of those particles along a ray from o along d, up to tmax (where it hits a surface): each quad it crosses adds
 // what the game draws there, min(its bitmap's colour x the bitmap's alpha x its colour, 1) (the particles' pixel shader,
-// without the sun's and the ambient's share), as radiance (over pi, the core's units; frame_scene.h Emitter). They add up
+// without the sun's and the ambient's share), as radiance (over pi, the core's units; frame_scene.h ScreenQuad). They add up
 // in any order, and stop nothing. The bitmap is read two mips down (the light of a screen's picture, not its pixels).
-float3 emitters_along(float3 o, float3 d, float tmax) {
+float3 screens_along(float3 o, float3 d, float tmax) {
     if (terrain.w < 0.5) return 0.0;
     RayDesc ray;
     ray.Origin = o;
@@ -208,14 +208,14 @@ float3 emitters_along(float3 o, float3 d, float tmax) {
         // triangle 1 corners 2 1 3 (the barycentrics weigh the second and the third)
         const float2 b = q.CandidateTriangleBarycentrics();
         const float2 uv = (p & 1u) == 0u ? b : float2(b.x + b.y, 1.0 - b.x);
-        const float4 rect = emitter_data[e * 2u];
-        const float4 c = emitter_data[e * 2u + 1u];
+        const float4 rect = screen_data[e * 2u];
+        const float4 c = screen_data[e * 2u + 1u];
         const uint tex = asuint(c.w);
         float4 t = float4(1.0, 1.0, 1.0, 1.0);
         if (tex != 0u && tex <= kMaterialTextures)
             t = material_textures[NonUniformResourceIndex(tex - 1u)].SampleLevel(material_sampler, lerp(rect.xy, rect.zw, uv), 2.0);
         L += min(t.rgb * t.a * c.rgb, 1.0);
-        if (++crossings >= kMaxEmitterCrossings) {
+        if (++crossings >= kMaxScreenCrossings) {
             q.Abort();
             break;
         }

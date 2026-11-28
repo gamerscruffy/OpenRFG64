@@ -35,7 +35,7 @@ static bool dbg_part_key(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; 
 #include <stdio.h>
 #include "volition/render_lib/code/rl_renderer_core.h"
 #include "volition/render_lib/code/rl_screen_info.h"
-#include "../../../../external/rfgrt/src/rfgrt/hooks/binding.h" // OpenRFG (VOM): rfgrt_emitter_quad
+#include "../../../../external/rfgrt/src/rfgrt/hooks/binding.h" // OpenRFG (VOM): rfgrt_screen_quad
 #include "volition/render_lib/code/rl_shader_library.h"
 #include "volition/vlib/code/math/crc.h"
 #include "volition/vlib/code/memory/vmemory.h"
@@ -743,11 +743,11 @@ static void particle_set_color_correction(keen::ParticleFragmentShaderConstants&
 // constant block (the shader runs the curves); the material's constants and texture, the blend state, the lighting
 // (or none in the distortion pass) and the technique (parametric, soft) are set, the filler of the render type fills
 // at most 499 particles, and the instance's particle lists are emptied for the next frame.
-// OpenRFG (VOM): the path tracer's particles that give light (rfgrt's rfgrt_particle_emitters; research/docs/05): set by
+// OpenRFG (VOM): the path tracer's particles that give light (rfgrt's rfgrt_screen_quads; research/docs/05): set by
 // the path tracing backend (backends/rt/rt_backend.cpp) when it takes them, null otherwise.
-void (*Rl_rt_emitters_sink)(const rfgrt_emitter_quad* quads, unsigned int count) = nullptr;
+void (*Rl_rt_screens_sink)(const rfgrt_screen_quad* quads, unsigned int count) = nullptr;
 
-// OpenRFG (VOM): an instance's particles that give light (rl_renderable_particles_instance::m_rt_emission) to the path
+// OpenRFG (VOM): an instance's particles that give light (rl_renderable_particles_instance::m_rt_screen_light) to the path
 // tracer as the game draws them: each billboard's quad as rl_particle_standard_billboard's vertex shader places it, about
 // the eye orientation it is drawn with (`eye`: an alternate view's, a screen's, or the camera's): its corner at uv (u, v)
 // is the particle's position + (u - 0.5) width A + (v - 0.5) length B, A = cos(rotation) right + sin(rotation) up,
@@ -755,7 +755,7 @@ void (*Rl_rt_emitters_sink)(const rfgrt_emitter_quad* quads, unsigned int count)
 // frames of the strip's `tiling`, column frame mod its width, row frame / its width); its colour the vertex colour with
 // the effect's tint in it and its alpha the effect's opacity's (the vertex and pixel shaders, without the ambient's and
 // the sun's shares: the particle's own light). Iterative billboards only (the screens' layers).
-static void rl_rt_emitters_capture(rl_renderable_particles_instance* instance_p, rl_renderable_particles* renderable_p, const matrix& eye,
+static void rl_rt_screens_capture(rl_renderable_particles_instance* instance_p, rl_renderable_particles* renderable_p, const matrix& eye,
                                    float opacity, const rl_color_float& tint, float material_percent, int bitmap, bool additive, float tiles_x, float tiles_y)
 {
     if (!renderable_p->get_is_iterative() || renderable_p->get_particle_type() != rl_particle_base::RENDER_TYPE_BILLBOARD)
@@ -764,7 +764,7 @@ static void rl_rt_emitters_capture(rl_renderable_particles_instance* instance_p,
     }
     // Magic number: a screen has a particle a layer; at most 64 an instance.
     static const int MAX_QUADS = 64;
-    rfgrt_emitter_quad quads[MAX_QUADS];
+    rfgrt_screen_quad quads[MAX_QUADS];
     unsigned int n = 0;
     const int count = instance_p->get_particle_iterative_list().size();
     const bool local_space = renderable_p->get_local_space_emission();
@@ -797,7 +797,7 @@ static void rl_rt_emitters_capture(rl_renderable_particles_instance* instance_p,
         const float c = cosf(particle.rotation_angle);
         const float half_width = 0.5f * particle.current_size;
         const float half_length = 0.5f * particle.current_length;
-        rfgrt_emitter_quad& q = quads[n];
+        rfgrt_screen_quad& q = quads[n];
         q.center[0] = position.x;
         q.center[1] = position.y;
         q.center[2] = position.z;
@@ -834,7 +834,7 @@ static void rl_rt_emitters_capture(rl_renderable_particles_instance* instance_p,
     }
     if (n != 0)
     {
-        Rl_rt_emitters_sink(quads, n);
+        Rl_rt_screens_sink(quads, n);
     }
 }
 
@@ -1021,11 +1021,11 @@ void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera
     {
         return;
     }
-    // OpenRFG (VOM): the particles that give light, to the path tracer as drawn here (rl_rt_emitters_capture).
-    if (instance_p->m_rt_emission > 0.0f && Rl_rt_emitters_sink != nullptr && !is_distortion_pass)
+    // OpenRFG (VOM): the particles that give light, to the path tracer as drawn here (rl_rt_screens_capture).
+    if (instance_p->m_rt_screen_light > 0.0f && Rl_rt_screens_sink != nullptr && !is_distortion_pass)
     {
         const int bitmap = -1 < textures_p[0].tex_stage ? textures_p[0].tex_ref : -1;
-        rl_rt_emitters_capture(instance_p, renderable_p, has_alternate_view ? alternate_view.m_rotation : camera.get_rotation(), opacity, tint,
+        rl_rt_screens_capture(instance_p, renderable_p, has_alternate_view ? alternate_view.m_rotation : camera.get_rotation(), opacity, tint,
                                renderable_p->get_effect_material_percent(), bitmap, (flags & rl_particle_material_data::MATERIAL_FLAG_ADDITIVE) != 0,
                                m_vertexData.effectUvAnimTiling.x, m_vertexData.effectUvAnimTiling.y);
     }

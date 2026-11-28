@@ -71,7 +71,7 @@ bool Tlas::init(ID3D12Device5* dev, uint32_t max_instances, int ring, LogFn log,
 }
 
 uint32_t Tlas::record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_frame::Instance* in, uint32_t count,
-                      const Scene& scene, const D3D12_GPU_VIRTUAL_ADDRESS* posed, D3D12_GPU_VIRTUAL_ADDRESS emitters) {
+                      const Scene& scene, const D3D12_GPU_VIRTUAL_ADDRESS* posed, D3D12_GPU_VIRTUAL_ADDRESS screens) {
     auto* descs = reinterpret_cast<D3D12_RAYTRACING_INSTANCE_DESC*>(descs_cpu_ + uint64_t(slot) * max_ * sizeof(D3D12_RAYTRACING_INSTANCE_DESC));
     auto* table = reinterpret_cast<uint32_t*>(geo_cpu_ + uint64_t(slot) * max_ * 16);
     uint32_t n = 0;
@@ -187,10 +187,10 @@ uint32_t Tlas::record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_fram
         nearest2 = d2 < nearest2 ? d2 : nearest2;
     }
     if (n) stats.nearest_sum += double(std::sqrt(nearest2));
-    // The particles that give light (Emitters): their quads are in render-offset space already. Mask 0x04 alone: only the
+    // The particles that give light (ScreenQuads): their quads are in render-offset space already. Mask 0x04 alone: only the
     // queries that gather their light meet them (no shadow, no surface for any other ray). (n < max_: the TLAS's
     // buffers hold max_ instances.)
-    if (emitters && n < max_) {
+    if (screens && n < max_) {
         D3D12_RAYTRACING_INSTANCE_DESC& d = descs[n++];
         memset(&d, 0, sizeof(d));
         d.Transform[0][0] = d.Transform[1][1] = d.Transform[2][2] = 1.0f;
@@ -198,8 +198,8 @@ uint32_t Tlas::record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_fram
         d.InstanceMask = 0x04;
         d.InstanceContributionToHitGroupIndex = 0;
         d.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE | D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_NON_OPAQUE;
-        d.AccelerationStructure = emitters;
-        ++stats.emitter_frames;
+        d.AccelerationStructure = screens;
+        ++stats.screen_frames;
     }
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC bd{};
     bd.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
@@ -234,9 +234,9 @@ void Tlas::release() {
 
 namespace {
 
-// The emitters' BLAS's one geometry for `quads` quads: non-opaque (a query sees every quad it crosses), each crossing
+// The screen quads' BLAS's one geometry for `quads` quads: non-opaque (a query sees every quad it crosses), each crossing
 // reported once (the light is summed). Addresses 0 for the prebuild's sizes.
-D3D12_RAYTRACING_GEOMETRY_DESC emitter_geometry(uint32_t quads, D3D12_GPU_VIRTUAL_ADDRESS vertices, D3D12_GPU_VIRTUAL_ADDRESS indices) {
+D3D12_RAYTRACING_GEOMETRY_DESC screen_quad_geometry(uint32_t quads, D3D12_GPU_VIRTUAL_ADDRESS vertices, D3D12_GPU_VIRTUAL_ADDRESS indices) {
     D3D12_RAYTRACING_GEOMETRY_DESC g{};
     g.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
     g.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
@@ -250,22 +250,22 @@ D3D12_RAYTRACING_GEOMETRY_DESC emitter_geometry(uint32_t quads, D3D12_GPU_VIRTUA
     return g;
 }
 
-constexpr uint64_t kEmitterCornerBytes = uint64_t(rfgrt_frame::kMaxEmitters) * 4 * 12;  // a slot's corners, then its data
+constexpr uint64_t kScreenQuadCornerBytes = uint64_t(rfgrt_frame::kMaxScreenQuads) * 4 * 12;  // a slot's corners, then its data
 
 }  // namespace
 
-bool Emitters::init(ID3D12Device5* dev, int ring, LogFn log) {
+bool ScreenQuads::init(ID3D12Device5* dev, int ring, LogFn log) {
     dev_ = dev;
     ring_ = ring;
     log_ = log;
     if (!dev_ || ring_ <= 0 || ring_ > kMaxRing) return false;
-    constexpr uint32_t n = rfgrt_frame::kMaxEmitters;
+    constexpr uint32_t n = rfgrt_frame::kMaxScreenQuads;
     static_assert(n * 4 <= 65536, "16-bit indices");
-    slot_bytes_ = (kEmitterCornerBytes + uint64_t(n) * 32 + 255) & ~uint64_t(255);
+    slot_bytes_ = (kScreenQuadCornerBytes + uint64_t(n) * 32 + 255) & ~uint64_t(255);
     upload_ = make_buffer(dev_, D3D12_HEAP_TYPE_UPLOAD, slot_bytes_ * uint64_t(ring_), D3D12_RESOURCE_FLAG_NONE,
-                          D3D12_RESOURCE_STATE_GENERIC_READ, L"rtcore emitters");
+                          D3D12_RESOURCE_STATE_GENERIC_READ, L"rtcore screen quads");
     indices_ = make_buffer(dev_, D3D12_HEAP_TYPE_UPLOAD, uint64_t(n) * 6 * sizeof(uint16_t), D3D12_RESOURCE_FLAG_NONE,
-                           D3D12_RESOURCE_STATE_GENERIC_READ, L"rtcore emitters' indices");
+                           D3D12_RESOURCE_STATE_GENERIC_READ, L"rtcore screen quads' indices");
     D3D12_RANGE none{0, 0};
     if (!upload_ || !indices_ || FAILED(upload_->Map(0, &none, reinterpret_cast<void**>(&upload_cpu_)))) return false;
     memset(upload_cpu_, 0, size_t(slot_bytes_ * uint64_t(ring_)));
@@ -278,7 +278,7 @@ bool Emitters::init(ID3D12Device5* dev, int ring, LogFn log) {
         memcpy(idx + uint64_t(q) * 6, tri, sizeof(tri));
     }
     indices_->Unmap(0, nullptr);
-    const D3D12_RAYTRACING_GEOMETRY_DESC g = emitter_geometry(n, 0, 0);
+    const D3D12_RAYTRACING_GEOMETRY_DESC g = screen_quad_geometry(n, 0, 0);
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS in{};
     in.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
     in.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
@@ -290,27 +290,27 @@ bool Emitters::init(ID3D12Device5* dev, int ring, LogFn log) {
     if (!info.ResultDataMaxSizeInBytes) return false;
     for (int i = 0; i < ring_; ++i) {
         result_[i] = make_buffer(dev_, D3D12_HEAP_TYPE_DEFAULT, info.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
-                                 D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"rtcore emitters' BLAS");
+                                 D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"rtcore screen quads' BLAS");
         scratch_[i] = make_buffer(dev_, D3D12_HEAP_TYPE_DEFAULT, info.ScratchDataSizeInBytes ? info.ScratchDataSizeInBytes : 256,
                                   D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                                  L"rtcore emitters' BLAS scratch");
+                                  L"rtcore screen quads' BLAS scratch");
         if (!result_[i] || !scratch_[i]) return false;
     }
     return true;
 }
 
-D3D12_GPU_VIRTUAL_ADDRESS Emitters::record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_frame::SlotHeader* h, float scale) {
+D3D12_GPU_VIRTUAL_ADDRESS ScreenQuads::record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_frame::SlotHeader* h, float scale) {
     if (slot < 0 || slot >= ring_) return 0;
     count_[slot] = 0;
     if (!cl || !h || !upload_cpu_ || !result_[slot] || !(scale > 0.0f)) return 0;
-    const uint32_t n = h->emitter_count < rfgrt_frame::kMaxEmitters ? h->emitter_count : rfgrt_frame::kMaxEmitters;
+    const uint32_t n = h->screen_quad_count < rfgrt_frame::kMaxScreenQuads ? h->screen_quad_count : rfgrt_frame::kMaxScreenQuads;
     if (!n) return 0;
     uint8_t* base = upload_cpu_ + slot_bytes_ * uint64_t(slot);
     float* corners = reinterpret_cast<float*>(base);
-    float* data = reinterpret_cast<float*>(base + kEmitterCornerBytes);
+    float* data = reinterpret_cast<float*>(base + kScreenQuadCornerBytes);
     uint32_t k = 0;
     for (uint32_t i = 0; i < n; ++i) {
-        const rfgrt_frame::Emitter& e = h->emitters[i];
+        const rfgrt_frame::ScreenQuad& e = h->screen_quads[i];
         float c[4][3];
         bool finite = std::isfinite(e.alpha);
         for (int j = 0; j < 4; ++j) {
@@ -335,7 +335,7 @@ D3D12_GPU_VIRTUAL_ADDRESS Emitters::record(ID3D12GraphicsCommandList4* cl, int s
     }
     if (!k) return 0;
     const D3D12_RAYTRACING_GEOMETRY_DESC g =
-        emitter_geometry(k, upload_->GetGPUVirtualAddress() + slot_bytes_ * uint64_t(slot), indices_->GetGPUVirtualAddress());
+        screen_quad_geometry(k, upload_->GetGPUVirtualAddress() + slot_bytes_ * uint64_t(slot), indices_->GetGPUVirtualAddress());
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC bd{};
     bd.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
     bd.Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
@@ -356,12 +356,12 @@ D3D12_GPU_VIRTUAL_ADDRESS Emitters::record(ID3D12GraphicsCommandList4* cl, int s
     return result_[slot]->GetGPUVirtualAddress();
 }
 
-D3D12_GPU_VIRTUAL_ADDRESS Emitters::data(int slot) const {
+D3D12_GPU_VIRTUAL_ADDRESS ScreenQuads::data(int slot) const {
     if (!upload_ || slot < 0 || slot >= ring_) return 0;
-    return upload_->GetGPUVirtualAddress() + slot_bytes_ * uint64_t(slot) + kEmitterCornerBytes;
+    return upload_->GetGPUVirtualAddress() + slot_bytes_ * uint64_t(slot) + kScreenQuadCornerBytes;
 }
 
-void Emitters::release() {
+void ScreenQuads::release() {
     if (upload_ && upload_cpu_) upload_->Unmap(0, nullptr);
     upload_cpu_ = nullptr;
     release_ptr(upload_);

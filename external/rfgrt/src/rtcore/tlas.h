@@ -18,10 +18,10 @@ public:
     bool init(ID3D12Device5* dev, uint32_t max_instances, int ring, LogFn log, bool fast_trace = true);
     // Fills ring slot `slot`'s instance descs from `in` and records the build into `cl` (a UAV barrier follows).
     // `posed` (may be null): per instance of `in`, a posed BLAS that replaces its mesh's (skinning.h), 0 for none.
-    // `emitters`: the frame's particles that give light (Emitters below), one more instance in a mask of its own (0x04),
+    // `screens`: the frame's particles that give light (ScreenQuads below), one more instance in a mask of its own (0x04),
     // 0 for none. Returns the number of instances in the TLAS.
     uint32_t record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_frame::Instance* in, uint32_t count, const Scene& scene,
-                    const D3D12_GPU_VIRTUAL_ADDRESS* posed = nullptr, D3D12_GPU_VIRTUAL_ADDRESS emitters = 0);
+                    const D3D12_GPU_VIRTUAL_ADDRESS* posed = nullptr, D3D12_GPU_VIRTUAL_ADDRESS screens = 0);
     // Ring slot `slot`'s TLAS: each frame in flight has its own, so that a build never rewrites the one a previous
     // frame's pass may still be tracing.
     D3D12_GPU_VIRTUAL_ADDRESS address(int slot) const { return result_[slot] ? result_[slot]->GetGPUVirtualAddress() : 0; }
@@ -44,7 +44,7 @@ public:
         // one of each, for the log: mesh id, submesh, the mesh's submesh count (beyond) or the instance's kind
         uint32_t sample_beyond[3] = {}, sample_blas[3] = {};
         double nearest_sum = 0;  // distance from the camera to the nearest instance origin, summed over frames
-        uint64_t emitter_frames = 0;  // frames with the particles that give light in the TLAS
+        uint64_t screen_frames = 0;  // frames with the particles that give light in the TLAS
     } stats;
     void set_camera(const float origin[3]) {
         camera_[0] = origin[0];
@@ -68,15 +68,15 @@ private:
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS flags_ = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
 };
 
-// The particles that give light (frame_scene.h Emitter, GI.Emitters): every frame their quads in a small BLAS, non-opaque
+// The particles that give light (frame_scene.h ScreenQuad, GI.ScreenLight): every frame their quads in a small BLAS, non-opaque
 // so that a query meets each one it crosses (once: no duplicate candidates), the TLAS's instance in mask 0x04 (no other
-// ray's mask has it), and per quad what the shaders need (trace_common.hlsli emitters_along): a float4 of its bitmap's
-// rectangle, a float4 of its colour x alpha x GI.Emitters and its bitmap's id + 1 (the bits).
-class Emitters {
+// ray's mask has it), and per quad what the shaders need (trace_common.hlsli screens_along): a float4 of its bitmap's
+// rectangle, a float4 of its colour x alpha x GI.ScreenLight and its bitmap's id + 1 (the bits).
+class ScreenQuads {
 public:
     bool init(ID3D12Device5* dev, int ring, LogFn log);
     // Ring slot `slot`'s quads from the frame's slot header, the BLAS's build recorded into `cl` (a UAV barrier
-    // follows); `scale`: GI.Emitters (0: none). Returns the BLAS, 0 for none this frame.
+    // follows); `scale`: GI.ScreenLight (0: none). Returns the BLAS, 0 for none this frame.
     D3D12_GPU_VIRTUAL_ADDRESS record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_frame::SlotHeader* h, float scale);
     uint32_t count(int slot) const { return slot >= 0 && slot < kMaxRing ? count_[slot] : 0; }
     // Ring slot `slot`'s quads for the shaders: StructuredBuffer<float4> t8, two a quad (0: none made).

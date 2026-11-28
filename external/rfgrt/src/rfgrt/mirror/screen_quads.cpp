@@ -1,4 +1,4 @@
-#include "mirror/emitters.h"
+#include "mirror/screen_quads.h"
 
 #include <atomic>
 #include <cstring>
@@ -10,14 +10,14 @@
 #include "hooks/binding.h"
 #include "mirror/textures.h"
 
-namespace emitters {
+namespace screen_quads {
 
 namespace {
 
 std::atomic<bool> g_enabled{false};
 std::mutex g_mutex;
-std::vector<rfgrt_emitter_quad> g_drawn;  // since the last collect
-std::vector<rfgrt_emitter_quad> g_frame;  // the frame's, for its scene's worker
+std::vector<rfgrt_screen_quad> g_drawn;  // since the last collect
+std::vector<rfgrt_screen_quad> g_frame;  // the frame's, for its scene's worker
 
 // Totals for the log.
 uint64_t g_frames = 0, g_frames_with = 0, g_written = 0, g_textured = 0, g_waiting = 0, g_no_texture = 0, g_dropped = 0,
@@ -28,11 +28,11 @@ uint64_t g_frames = 0, g_frames_with = 0, g_written = 0, g_textured = 0, g_waiti
 void set_enabled(bool on) { g_enabled = on; }
 bool enabled() { return g_enabled.load(); }
 
-void add(const rfgrt_emitter_quad* quads, uint32_t count) {
+void add(const rfgrt_screen_quad* quads, uint32_t count) {
     if (!g_enabled.load() || !quads || !count) return;
     std::lock_guard<std::mutex> lock(g_mutex);
     // (a frame's more than twice what a slot holds: left out here already)
-    if (g_drawn.size() + count > 2 * rfgrt_frame::kMaxEmitters) {
+    if (g_drawn.size() + count > 2 * rfgrt_frame::kMaxScreenQuads) {
         g_over += count;
         return;
     }
@@ -46,13 +46,13 @@ void collect() {
 }
 
 void write(rfgrt_frame::SlotHeader* h) {
-    h->emitter_count = 0;
-    h->emitters_dropped = 0;
-    h->pad6[0] = h->pad6[1] = 0;
+    h->screen_quad_count = 0;
+    h->screen_quads_dropped = 0;
+    h->pad7[0] = h->pad7[1] = 0;
     if (!g_enabled.load()) return;
     std::lock_guard<std::mutex> lock(g_mutex);
     uint32_t n = 0, dropped = 0;
-    for (const rfgrt_emitter_quad& q : g_frame) {
+    for (const rfgrt_screen_quad& q : g_frame) {
         uint32_t texture = 0;
         if (q.bitmap >= 0) {
             // its bitmap as the materials' textures go to the core; one not there yet waits (a frame or two)
@@ -68,11 +68,11 @@ void write(rfgrt_frame::SlotHeader* h) {
             texture = id + 1;
             ++g_textured;
         }
-        if (n >= rfgrt_frame::kMaxEmitters) {
+        if (n >= rfgrt_frame::kMaxScreenQuads) {
             ++dropped;
             continue;
         }
-        rfgrt_frame::Emitter& e = h->emitters[n++];
+        rfgrt_frame::ScreenQuad& e = h->screen_quads[n++];
         for (int k = 0; k < 3; ++k) {
             e.center[k] = q.center[k] - h->render_offset[k];
             e.axis_u[k] = q.axis_u[k];
@@ -85,8 +85,8 @@ void write(rfgrt_frame::SlotHeader* h) {
         e.pad = 0.0f;
         memcpy(e.uv, q.uv, sizeof(e.uv));
     }
-    h->emitter_count = n;
-    h->emitters_dropped = dropped;
+    h->screen_quad_count = n;
+    h->screen_quads_dropped = dropped;
     ++g_frames;
     g_frames_with += n ? 1 : 0;
     g_written += n;
@@ -97,14 +97,14 @@ void write(rfgrt_frame::SlotHeader* h) {
 void log_stats() {
     if (!g_enabled.load()) return;
     std::lock_guard<std::mutex> lock(g_mutex);
-    LOG("emitters (GI.Emitters): the particles that give light in %llu of %llu frame scenes, %.1f a frame (%llu at most), "
+    LOG("screens (GI.ScreenLight): the particles that give light in %llu of %llu frame scenes, %.1f a frame (%llu at most), "
         "%llu of them with their bitmap; left out: their bitmap on its way to the core %llu, no bitmap for the core %llu, past "
         "the slot's %u %llu, past twice that drawn in a frame %llu",
         static_cast<unsigned long long>(g_frames_with), static_cast<unsigned long long>(g_frames),
         g_frames ? double(g_written) / double(g_frames) : 0.0, static_cast<unsigned long long>(g_most),
         static_cast<unsigned long long>(g_textured), static_cast<unsigned long long>(g_waiting),
-        static_cast<unsigned long long>(g_no_texture), rfgrt_frame::kMaxEmitters, static_cast<unsigned long long>(g_dropped),
+        static_cast<unsigned long long>(g_no_texture), rfgrt_frame::kMaxScreenQuads, static_cast<unsigned long long>(g_dropped),
         static_cast<unsigned long long>(g_over));
 }
 
-}  // namespace emitters
+}  // namespace screen_quads

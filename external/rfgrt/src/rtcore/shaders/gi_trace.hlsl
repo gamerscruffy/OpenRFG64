@@ -76,8 +76,8 @@ void main(uint3 id : SV_DispatchThreadID) {
             sum += through * gi2.x * shade_hit(origin, dir, q.CommittedRayT(), q.CommittedInstanceID(), q.CommittedGeometryIndex(),
                                                q.CommittedPrimitiveIndex(), q.CommittedTriangleBarycentrics(),
                                                q.CommittedObjectToWorld3x4(), h2 ^ 0x68E31DA4u);
-        // the particles that give light (the screens') it crosses before that (GI.Emitters)
-        sum += emitters_along(origin, dir, hit ? q.CommittedRayT() : gi.y);
+        // the particles that give light (the screens') it crosses before that (GI.ScreenLight)
+        sum += screens_along(origin, dir, hit ? q.CommittedRayT() : gi.y);
     }
     const float3 e = PI * sum / float(rays);  // cosine-weighted: E = pi * the mean radiance
     traced[id.xy] = float4(e, 1.0);

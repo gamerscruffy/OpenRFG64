@@ -130,10 +130,10 @@ struct Block {
     // GI.ShadeBounceAlbedo: the least albedo a surface in shade passes on its light with (the second and later bounces);
     // 0: as the game draws it
     float gi_shade_bounce_albedo;
-    // GI.Emitters: the light of the particles that give it (the screens' particles: frame_scene.h Emitter) in the GI, times
+    // GI.ScreenLight: the light of the particles that give it (the screens' particles: frame_scene.h ScreenQuad) in the GI, times
     // what the game draws them with (1 as drawn, 0 none: they light nothing)
-    float gi_emitters;
-    float pad_emitters;  // (8 bytes: the fields after keep their places' alignment)
+    float gi_screen_light;
+    float pad_screen_light;  // (8 bytes: the fields after keep their places' alignment)
     // Reflections (Reflections.*): on, the rays' length (m), the lobe's exponent, the most frames averaged, the filter.
     int32_t refl_enabled;
     float refl_length;

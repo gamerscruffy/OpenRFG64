@@ -19,7 +19,7 @@
 #include "hooks/binding.h"
 #include "hooks/hooks.h"
 #include "menu/display_rows.h"
-#include "mirror/emitters.h"
+#include "mirror/screen_quads.h"
 #include "mirror/geometry.h"
 #include "mirror/instances.h"
 #include "mirror/textures.h"
@@ -133,9 +133,9 @@ void init() {
     link.gi_shade_bounce_albedo =
         float(cfg.gi_shade_bounce_albedo < 0.0 ? 0.0 : cfg.gi_shade_bounce_albedo > 0.5 ? 0.5 : cfg.gi_shade_bounce_albedo);
     link.gi_sky = float(cfg.gi_sky >= 0.0 ? cfg.gi_sky : 0.0);
-    // the particles that give light: taken only for a GI that traces (mirror/emitters.h)
-    link.gi_emitters = gi_traced ? float(cfg.gi_emitters < 0.0 ? 0.0 : cfg.gi_emitters > 64.0 ? 64.0 : cfg.gi_emitters) : 0.0f;
-    emitters::set_enabled(link.gi_emitters > 0.0f);
+    // the particles that give light: taken only for a GI that traces (mirror/screen_quads.h)
+    link.gi_screen_light = gi_traced ? float(cfg.gi_screen_light < 0.0 ? 0.0 : cfg.gi_screen_light > 64.0 ? 64.0 : cfg.gi_screen_light) : 0.0f;
+    screen_quads::set_enabled(link.gi_screen_light > 0.0f);
     link.gi_cache = cfg.gi_cache;
     link.gi_glass = cfg.gi_glass;
     link.gi_denoiser = cfg.gi_denoiser < 0 ? 0 : cfg.gi_denoiser > 2 ? 2 : cfg.gi_denoiser;
@@ -316,14 +316,14 @@ extern "C" __declspec(dllexport) void rfgrt_set_binding(const rfgrt_binding* bin
 }
 
 // For a game whose particle renderer hands the particles that give light (OpenRFG64 VOM's, the screens'; hooks/binding.h
-// rfgrt_emitter_quad): while it draws them (mirror/emitters.h). Ignored unless rfgrt_particle_emitters_on.
-extern "C" __declspec(dllexport) void rfgrt_particle_emitters(const rfgrt_emitter_quad* quads, unsigned int count) {
-    emitters::add(quads, count);
+// rfgrt_screen_quad): while it draws them (mirror/screen_quads.h). Ignored unless rfgrt_screen_quads_on.
+extern "C" __declspec(dllexport) void rfgrt_screen_quads(const rfgrt_screen_quad* quads, unsigned int count) {
+    screen_quads::add(quads, count);
 }
 
-// Whether the path tracer takes them (GI.Emitters with a GI that traces): the game then gives those particles no light
+// Whether the path tracer takes them (GI.ScreenLight with a GI that traces): the game then gives those particles no light
 // of its own while path tracing. From InitializeASI on.
-extern "C" __declspec(dllexport) int rfgrt_particle_emitters_on() { return emitters::enabled() ? 1 : 0; }
+extern "C" __declspec(dllexport) int rfgrt_screen_quads_on() { return screen_quads::enabled() ? 1 : 0; }
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_ATTACH) {

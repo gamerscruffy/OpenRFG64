@@ -753,16 +753,16 @@ static const vfx_synthetic_light_profile* vfx_synthetic_light_profile_find(const
 }
 
 // OpenRFG (VOM): the screens' light while path tracing ([graphics] screen_lights; game_options.cpp): 0 the path
-// tracer's, the screens' particles giving it from what they show (rl_particle_renderer.cpp Rl_rt_emitters_sink;
+// tracer's, the screens' particles giving it from what they show (rl_particle_renderer.cpp Rl_rt_screens_sink;
 // research/docs/05-particle-emission-plan.md); 1 the game lights above, as in STANDARD.
 int Vfx_screen_lights = 0;
-struct rfgrt_emitter_quad;
-extern void (*Rl_rt_emitters_sink)(const rfgrt_emitter_quad* quads, unsigned int count);
+struct rfgrt_screen_quad;
+extern void (*Rl_rt_screens_sink)(const rfgrt_screen_quad* quads, unsigned int count);
 
 // Whether the screens' particles give the path tracer their light now, in place of their game lights.
 static bool vfx_screens_path_traced()
 {
-    return Vfx_screen_lights == 0 && Rl_rt_emitters_sink != nullptr && openrfg_backends_effective_renderer() == OPENRFG_RENDERER_PATH_TRACED;
+    return Vfx_screen_lights == 0 && Rl_rt_screens_sink != nullptr && openrfg_backends_effective_renderer() == OPENRFG_RENDERER_PATH_TRACED;
 }
 
 // 0x00CA3CC0 (:450)
@@ -1095,7 +1095,7 @@ void vfx_effect::update_render(float delta_time, bool is_visible, rl_renderer* p
             }
             renderable_instance_p->m_is_visible = m_is_visible && instance_p->m_is_visible;
             renderable_instance_p->m_has_alternate_view = instance_p->m_has_alternate_view;
-            renderable_instance_p->m_rt_emission = rt_emission; // OpenRFG (VOM)
+            renderable_instance_p->m_rt_screen_light = rt_emission; // OpenRFG (VOM)
             if (!emitter_p->is_iterative && constants_p != nullptr)
             {
                 constants_p->m_time = instance_p->current_elapsed_time;

@@ -44,8 +44,8 @@ namespace
 }
 
 // The particle renderer's sink for the particles that give light (rl_particle_renderer.cpp): rfgrt's
-// rfgrt_particle_emitters once the plugin says it takes them (GI.Emitters with a GI that traces).
-extern void (*Rl_rt_emitters_sink)(const rfgrt_emitter_quad* quads, unsigned int count);
+// rfgrt_screen_quads once the plugin says it takes them (GI.ScreenLight with a GI that traces).
+extern void (*Rl_rt_screens_sink)(const rfgrt_screen_quad* quads, unsigned int count);
 
 bool openrfg_rt_start(bool on, int dlss_mode, bool frame_generation)
 {
@@ -74,11 +74,11 @@ bool openrfg_rt_start(bool on, int dlss_mode, bool frame_generation)
     openrfg_rt_set_dlss_mode(dlss_mode);
     openrfg_rt_set_frame_generation(frame_generation);
     initialize();
-    const auto emitters = reinterpret_cast<void (*)(const rfgrt_emitter_quad*, unsigned int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_particle_emitters")));
-    const auto emitters_on = reinterpret_cast<int (*)()>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_particle_emitters_on")));
+    const auto emitters = reinterpret_cast<void (*)(const rfgrt_screen_quad*, unsigned int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_screen_quads")));
+    const auto emitters_on = reinterpret_cast<int (*)()>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_screen_quads_on")));
     if (emitters != nullptr && emitters_on != nullptr && emitters_on() != 0)
     {
-        Rl_rt_emitters_sink = emitters;
+        Rl_rt_screens_sink = emitters;
     }
     return state() == 2;
 }
