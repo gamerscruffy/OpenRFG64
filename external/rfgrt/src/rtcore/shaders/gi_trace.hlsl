@@ -70,6 +70,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         const bool hit = q.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
         // the clear glass it crossed tints what it brings back (GI.WindowTint)
         const float3 through = panes_through(panes, hit ? q.CommittedRayT() : gi.y);
+        sum += panes_glow(panes, hit ? q.CommittedRayT() : gi.y);  // OpenRFG64: the glow halos it crossed (GI.Glow)
         if (!hit)
             sum += through * gi2.y * sky_radiance(dir);  // GI.Sky: the sky as a light
         else
@@ -77,7 +78,9 @@ void main(uint3 id : SV_DispatchThreadID) {
                                                q.CommittedPrimitiveIndex(), q.CommittedTriangleBarycentrics(),
                                                q.CommittedObjectToWorld3x4(), h2 ^ 0x68E31DA4u);
     }
-    const float3 e = PI * sum / float(rays);  // cosine-weighted: E = pi * the mean radiance
+    float3 e = PI * sum / float(rays);  // cosine-weighted: E = pi * the mean radiance
+    // OpenRFG64: nothing not finite goes on into the history and the denoiser's (it stayed there, the light tinted)
+    if (!all(isfinite(e))) e = float3(0.0, 0.0, 0.0);
     traced[id.xy] = float4(e, 1.0);
     if ((flags & 128) != 0 && all((id.xy & 7u) == 0u)) census(gi_source(id.xy), n, origin, e);
 }

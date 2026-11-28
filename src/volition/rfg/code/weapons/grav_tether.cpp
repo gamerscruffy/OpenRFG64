@@ -982,6 +982,29 @@ bool grav_tether_owns_weapon(const weapon* wp)
     return Grav_enabled && wp != nullptr && wp->w_info != nullptr && Player != nullptr && wp->owner_handle == Player->get_handle() && strcmp(wp->w_info->name, Grav_weapon_name) == 0;
 }
 
+// Whether the tether places this object itself every frame: the held one, the rest of its building, or a frozen one.
+// rfgphys (the PhysX backend) finds this export with GetProcAddress on the program and leaves such a chunk to Havok:
+// a chunk it simulates has its Havok body keyframed to the PhysX pose, which would pull the tether's pose back.
+extern "C" __declspec(dllexport) bool openrfg_grav_tether_holds(unsigned int handle)
+{
+    if (handle == 0xFFFFFFFF)
+    {
+        return false;
+    }
+    if (Grav_held_kind == GRAV_BODY && Grav_held_handle == handle)
+    {
+        return true;
+    }
+    for (int i = 0; i < Grav_group_count; i++)
+    {
+        if (Grav_group[i].handle == handle)
+        {
+            return true;
+        }
+    }
+    return grav_find_frozen(handle) >= 0;
+}
+
 void grav_tether_level_init()
 {
     Grav_held_kind = GRAV_NONE;

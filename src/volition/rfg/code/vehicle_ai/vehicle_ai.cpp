@@ -626,7 +626,17 @@ bool vehicle_ai_find_approx_advanced_position_along_route(vector& spline_pos, co
         vector tangent;
         cbs.get_tangent(tangent, u);
         const float speed = tangent.mag_and_normalize_safe();
-        u += step / speed;
+        // OpenRFG: a degenerate lane (its handles on its knots) has no tangent there. rfg.exe's step / 0 went to +inf,
+        // clamped to the lane's end below, as here; but 0 / 0 (no step left) made u NaN, and the spline lookup with it
+        // crashed on x64 (cubic_bezier_spline::get_point). u stays then.
+        if (speed > 0.0f)
+        {
+            u += step / speed;
+        }
+        else if (step > 0.0f)
+        {
+            u = max_u;
+        }
         if (u >= max_u)
         {
             u = max_u;

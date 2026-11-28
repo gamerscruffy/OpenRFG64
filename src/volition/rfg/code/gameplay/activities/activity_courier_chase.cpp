@@ -86,6 +86,19 @@ static const char* const Persona_names_chase[NUM_CTC_RADIO_LINES] = {
     "PCM01", "ACTIVE", "ACTIVE",
 };
 
+// OpenRFG: why a courier chase ends, in openrfg_crash.txt as "COURIER ...". The user saw couriers vanish a moment
+// after the activity began; these name the path that took them.
+void openrfg_log(const char* text); // crash_early.cpp
+static void cc_log(const char* fmt, ...)
+{
+    char text[256] = "COURIER ";
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(text + 8, sizeof(text) - 8, fmt, args);
+    va_end(args);
+    openrfg_log(text);
+}
+
 // 0x00797000 (:140)
 void unused_dcf_make_courier_stuck()
 {
@@ -255,6 +268,7 @@ void activity_courier_chase_data::check_for_start()
     object_squad* squad = World.object_from_handle<object_squad>(squad_handle);
     if (squad == nullptr)
     {
+        cc_log("check_for_start: squad %08X gone (simulated last frame %d)", squad_handle, flags.simulated_last_frame ? 1 : 0);
         // The squad is gone. Original: one that was simulated when last seen ends the activity, or else it has been
         // killed while it was away from the player, and the case drops at the last position.
         if (!flags.simulated_last_frame)
@@ -455,6 +469,7 @@ void activity_courier_chase_data::check_for_end()
     }
     if (squad == nullptr || squad->is_killed())
     {
+        cc_log("check_for_end: squad %08X %s, case dropped", squad_handle, squad == nullptr ? "gone" : "killed");
         vehicle* vp = get_courier_vehicle();
         if (vp != nullptr && !flags.at_destination)
         {
@@ -468,6 +483,9 @@ void activity_courier_chase_data::check_for_end()
     if (!squad->streamed() || leader == nullptr || !leader->streamed())
     {
         // Out of the streamed world counts as out of range, and the timer runs out at once.
+        cc_log("check_for_end: out of range at once (squad streamed %d, leader %s, leader streamed %d, %d members)",
+               squad->streamed() ? 1 : 0, leader != nullptr ? "found" : "none", leader != nullptr && leader->streamed() ? 1 : 0,
+               (int)squad->member_array.size());
         player_dist = 3.4028235e+38f;
         out_of_bounds_timestamp.set(0);
     }
@@ -548,6 +566,7 @@ void activity_courier_chase_data::activity_end()
 // 0x007A8DF0 (:674)
 void activity_courier_chase_data::activity_kill()
 {
+    cc_log("activity_kill: squad %08X and its vehicle destroyed", squad_handle);
     activity_base_modal::activity_kill(); // rfg.exe inlines it
     if (courier_def != nullptr)
     {
@@ -585,6 +604,9 @@ void activity_courier_chase_data::activity_do_frame_ready()
     activity_base::activity_do_frame_ready();
     if (vec_xz_dist_squared(get_courier_position(), patrol_end_pos) < NEAR_DEST_DIST_SQRD)
     {
+        const vector at = get_courier_position();
+        cc_log("ready: courier at %.0f %.0f %.0f, near its end %.0f %.0f %.0f: ended", at.x, at.y, at.z, patrol_end_pos.x,
+               patrol_end_pos.y, patrol_end_pos.z);
         activity_end_common(true);
         return;
     }
@@ -723,6 +745,9 @@ void activity_courier_chase_data::scripted_activity_courier_escape()
 // 0x007A8EC0 (:843)
 void activity_courier_chase_data::activity_end_common(bool courier_escaped)
 {
+    cc_log("end: escaped %d, chased %d, escaping %d, end next frame %d, at destination %d, data dropped %d", courier_escaped ? 1 : 0,
+           flags.chased ? 1 : 0, flags.escaping ? 1 : 0, end_activity_next_frame ? 1 : 0, flags.at_destination ? 1 : 0,
+           flags.data_dropped ? 1 : 0);
     last_courier_escaped = courier_escaped;
     if (flags.chased && courier_escaped)
     {

@@ -50,5 +50,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         env = PI * shade_hit(origin, dir, q.CommittedRayT(), q.CommittedInstanceID(), q.CommittedGeometryIndex(),
                              q.CommittedPrimitiveIndex(), q.CommittedTriangleBarycentrics(), q.CommittedObjectToWorld3x4(),
                              h2 ^ 0x68E31DA4u);
-    traced[id.xy] = float4(through * env, 1.0);
+    // OpenRFG64: the glow halos it crossed on the way (GI.Glow); nothing not finite kept for the history
+    const float3 r = through * env + PI * panes_glow(panes, hit ? q.CommittedRayT() : gi.y);
+    traced[id.xy] = float4(all(isfinite(r)) ? r : float3(0.0, 0.0, 0.0), 1.0);
 }

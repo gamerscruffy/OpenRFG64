@@ -39,6 +39,10 @@
 #include <string.h>
 #include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
+#include <stdio.h>
+
+void openrfg_log(const char* text); // crash_early.cpp
+
 // ---- file-static globals
 static object_pool<obj_zone,OPENRFG_MAX_ZONES,1> obj_zonepool; // 0x03042670
 static obj_zone_phatom Zone_phantoms[OPENRFG_MAX_ZONES]; // 0x03187220
@@ -59,12 +63,15 @@ static int request_aabb_phantom(obj_zone* zone, terrain_data* data)
     float min_y = FLT_MAX;
     vector body_min;
     vector body_max;
+    const char* source = "neither"; // OpenRFG: which gave the floor, told in openrfg_crash.txt
     if (havok_body_get_aabb(zone->havok_handle, zone->pos, zone->orient, body_min, body_max))
     {
         min_y = body_min.y;
+        source = "height field";
     }
     else if (data != nullptr && data->m_low_lod_patches_p.to_pointer() != nullptr)
     {
+        source = "low LOD patches";
         for (int i = 0; i < 9; i++)
         {
             const float patch_min_y = data->m_low_lod_patches_p[i].m_aabb_min.y;
@@ -92,6 +99,12 @@ static int request_aabb_phantom(obj_zone* zone, terrain_data* data)
     }
     bmax.y = min_y - 10.0f;
     bmin.y = broadphase_min.y + 1.0f;
+    {
+        char text[256];
+        snprintf(text, sizeof(text), "KILLVOL zone %08X at (%.1f, %.1f, %.1f): floor %.1f from %s, volume y %.1f to %.1f, x %.1f to %.1f, z %.1f to %.1f",
+            zone->get_handle(), zone->pos.x, zone->pos.y, zone->pos.z, min_y, source, bmin.y, bmax.y, bmin.x, bmax.x, bmin.z, bmax.z);
+        openrfg_log(text);
+    }
     for (int i = 0; i < OPENRFG_MAX_ZONES; i++)
     {
         obj_zone_phatom& phantom = Zone_phantoms[i];
@@ -109,6 +122,7 @@ static int request_aabb_phantom(obj_zone* zone, terrain_data* data)
             return i;
         }
     }
+    openrfg_log("KILLVOL no free phantom for this zone");
     return -1;
 }
 

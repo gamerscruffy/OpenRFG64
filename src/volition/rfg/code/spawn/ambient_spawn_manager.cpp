@@ -300,6 +300,11 @@ static int npc_threshold(int base)
     return (int)((float)base * amb_population_factor(90, OPENRFG_NPC_POOL_SIZE, 10));
 }
 
+int amb_spawn_npc_threshold(int base)
+{
+    return npc_threshold(base);
+}
+
 // An automobile count threshold (rfg.exe's 24, 28 or 30), scaled.
 static int auto_threshold(int base)
 {
@@ -1465,13 +1470,16 @@ static void do_frame_despawn_npc_high()
 // Magic numbers: 75 m, squared, and 75 NPCs.
 static void do_frame_despawn_npc_critical()
 {
+    // OpenRFG: rfg.exe stops at 76, one over the high threshold; scaled with it, or with the ambient spawn multiplier
+    // every offscreen NPC in a vehicle went at once.
+    const int enough = npc_threshold(75) + 1;
     int num_deleted = delete_dead_npcs(0.0f, 5625.0f);
-    if (World.get_num_objects<npc>() - num_deleted < 76)
+    if (World.get_num_objects<npc>() - num_deleted < enough)
     {
         return;
     }
     num_deleted += delete_vehicle_passengers(true);
-    if (World.get_num_objects<npc>() - num_deleted < 76)
+    if (World.get_num_objects<npc>() - num_deleted < enough)
     {
         return;
     }
@@ -1492,9 +1500,11 @@ static void do_frame_despawn_npc_critical()
         {
             continue;
         }
+        // OpenRFG: the seat is asked before the NPC goes. rfg.exe asked after, when it had left the vehicle and had no
+        // seat, so the vehicle stayed with nobody in it: the empty civilian cars found standing on the roads.
+        const bool driver = vp != nullptr && vehicle_passenger_get_seat(vp, np) == VSI_DRIVER;
         World.destroy_object(np, false);
-        // Original: asks for the seat of the NPC just destroyed.
-        if (vp != nullptr && vehicle_passenger_get_seat(vp, np) == VSI_DRIVER)
+        if (driver)
         {
             World.destroy_object(vp, false);
         }

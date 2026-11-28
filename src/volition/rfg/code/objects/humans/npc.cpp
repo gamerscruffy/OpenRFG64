@@ -268,9 +268,17 @@ const char* npc::get_classname() const
     return "npc";
 }
 
+// OpenRFG: a courier destroyed while alive is logged with its callers in openrfg_crash.txt (who despawned it).
+void openrfg_log_with_callers(const char* text); // crash_early.cpp
+bool activity_cc_is_courier(const npc* np); // activity_courier_chase.cpp
+
 // 0x00A333B0 (:861)
 void npc::destroy_notify()
 {
+    if (!is_killed() && activity_cc_is_courier(this))
+    {
+        openrfg_log_with_callers("COURIER npc destroyed alive");
+    }
     human::destroy_notify();
     if (is_killed())
     {

@@ -120,6 +120,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             RT_PROCEED_PANES(g, panes, kDiffuseSpread);
             const bool hit = g.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
             const float3 through = panes_through(panes, hit ? g.CommittedRayT() : gi.y);  // (GI.WindowTint)
+            sum += panes_glow(panes, hit ? g.CommittedRayT() : gi.y);  // OpenRFG64: the glow halos it crossed (GI.Glow)
             if (!hit)
                 sum += through * gi2.y * sky_radiance(d);
             else

@@ -1545,7 +1545,16 @@ void set_detail_page(detail_option_pages page)
                 Localization_hash.insert_key_data(caption_hash, kDynamic_lights_caption);
             }
         }
-        ui_menu_add_char_list_item(Menu_handle_doptions, kDynamic_lights_caption_key, cDisplay_settings_dynamic_lights, 5, option_change_occurred_doptions, rl_lod_get_dynamic_lights_level(Pending_lod), true);
+        // OpenRFG (VOM): with PATH TRACED chosen the row is greyed out at HIGH, the level the scene renderer runs the lights
+        // at while path tracing (rl_scene_renderer.cpp render_scene_part2); the setting itself stays, for STANDARD.
+        const bool lights_path_traced = openrfg_backends_enabled() && Pending_backends.renderer == OPENRFG_RENDERER_PATH_TRACED &&
+                                        openrfg_backends_renderer_supported(OPENRFG_RENDERER_PATH_TRACED);
+        ui_menu_add_char_list_item(Menu_handle_doptions, kDynamic_lights_caption_key, cDisplay_settings_dynamic_lights, 5, option_change_occurred_doptions,
+                                   lights_path_traced ? 3 : rl_lod_get_dynamic_lights_level(Pending_lod), true);
+        if (lights_path_traced)
+        {
+            ui_menu_enable_menu_item(Menu_handle_doptions, DOPTIONS_ADVANCED_ROW_DYNAMIC_LIGHTS, false);
+        }
         // OpenRFG: rows 10..12, World Detail Distance (no effect on 32-bit: its cell arrays hold the original 5x5), LOD
         // Detail and Draw Distance.
         display_add_openrfg_level_labels();

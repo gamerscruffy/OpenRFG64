@@ -174,7 +174,11 @@ bool seen_radiance(float3 hp, out float3 L) {
     if (reversed ? pd <= 0.0 : pd >= 1.0) return false;
     const float pz = prev.y / (pd - prev.x);
     if (abs(pz - c.w) > max(c.w * 0.02, 0.1)) return false;
-    L = max(radiance[q].rgb, 0.0) / PI;
+    // OpenRFG64: a pixel not finite (the game's colour around a focus change or a resize) is not seen: taken in, it went
+    // on into the radiance cache, the GI's history and Ray Reconstruction's, tinting the light for good
+    const float3 c3 = radiance[q].rgb;
+    if (!all(isfinite(c3))) return false;
+    L = clamp(c3, 0.0, 1024.0) / PI;
     return true;
 }
 
@@ -244,6 +248,7 @@ struct Surface {
     float3 albedo;
     float3 mean;  // the material's mean albedo (its texture's last mip times its colour; the albedo without a texture)
     float glow;
+    bool emit;   // OpenRFG64: an emitter (kMaterialEmitter, the material's x bit 30): glow is the light it gives off
     bool known;  // its material is known (the plugin sent it; not the terrain's, which draws without a material map)
 };
 
@@ -257,6 +262,7 @@ Surface hit_surface(uint instance, uint geometry, uint primitive, float2 bary, f
     s.albedo = gi.z;
     s.mean = gi.z;
     s.glow = 0.0;
+    s.emit = false;
     s.known = false;
     const uint4 g = instances[instance];
     const uint page = g.x & 0xFFu;
@@ -286,6 +292,7 @@ Surface hit_surface(uint instance, uint geometry, uint primitive, float2 bary, f
     }
     s.known = true;
     s.glow = f16tof32(mat.w >> 16);
+    s.emit = (mat.x & 0x40000000u) != 0u;
     const uint tex = mat.x & 0xFFFFu;
     if (tex == 0u || tex > kMaterialTextures || head.x == 0xFFFFFFFFu) return s;
     const float2 tiling = float2(f16tof32(mat.y & 0xFFFFu), f16tof32(mat.y >> 16));
@@ -313,7 +320,10 @@ Surface hit_surface(uint instance, uint geometry, uint primitive, float2 bary, f
 // The light a diffuse surface sends back under irradiance `e` (the game's units): the game lights a self-illuminated
 // material toward albedo x 4 instead of its ambient (rfg-standard: lerp(ambient light, 4, Self_Illumination)), here
 // toward it instead of all of its light.
+// OpenRFG64: an emitter (a lamp, a screen: GI.Emissive) gives off its albedo times its glow over pi on top of what it
+// sends back of its light.
 float3 surface_radiance(Surface s, float3 e) {
+    if (s.emit) return s.albedo / PI * (e + s.glow);
     return s.albedo / PI * lerp(e, float3(4.0, 4.0, 4.0), saturate(s.glow));
 }
 
@@ -408,7 +418,11 @@ float3 mirror_radiance(float3 origin, float3 dir, float t, uint instance, uint g
 static const float kDiffuseSpread = 0.15;
 
 // What a clear pane passes where a ray crosses it: lerp(1, colour, alpha) of its material's texel there (1 without one).
-float3 pane_pass(uint instance, uint geometry, uint primitive, float2 bary, float3x4 to_world, float3 dir, float width) {
+// OpenRFG64: `emit`, the light a glow halo (an emitter among the transparent materials, GI.Glow) gives the ray there:
+// its texel's colour times its alpha times its glow, over pi (the game adds it over what is behind); it tints nothing.
+float3 pane_pass(uint instance, uint geometry, uint primitive, float2 bary, float3x4 to_world, float3 dir, float width,
+                 out float3 emit) {
+    emit = 0.0;
     const uint4 g = instances[instance];
     const uint page = g.x & 0xFFu;
     if (page >= 64u) return 1.0;
@@ -447,8 +461,19 @@ float3 pane_pass(uint instance, uint geometry, uint primitive, float2 bary, floa
     const float4 texel = material_textures[NonUniformResourceIndex(tex - 1u)].SampleLevel(material_sampler, uv, lod);
     const float3 c = saturate(texel.rgb * color);
     const float a = saturate(texel.a);
+    if ((mat.x & 0x40000000u) != 0u) {
+        const float3 l = c * a * f16tof32(mat.w >> 16) / PI;
+        emit = all(isfinite(l)) ? l : 0.0;
+        return float3(1.0, 1.0, 1.0);
+    }
     const float3 pass = lerp(float3(1.0, 1.0, 1.0), c, a);
     return all(pass == pass) ? pass : float3(1.0, 1.0, 1.0);
+}
+
+// (the sun's tint through the glass: what it passes alone; a glow halo passes all of it)
+float3 pane_pass(uint instance, uint geometry, uint primitive, float2 bary, float3x4 to_world, float3 dir, float width) {
+    float3 emit;
+    return pane_pass(instance, geometry, primitive, bary, to_world, dir, width, emit);
 }
 
 // counts a pane at distance d along the ray unless one within kPaneThickness of it was (its other face)
@@ -477,6 +502,10 @@ struct Panes {
     float3 c1;
     float3 c2;
     float3 c3;
+    float3 e0;  // OpenRFG64: the light each gives the ray (a glow halo's: pane_pass)
+    float3 e1;
+    float3 e2;
+    float3 e3;
     uint n;
 };
 
@@ -487,6 +516,10 @@ Panes panes_none() {
     p.c1 = p.c0;
     p.c2 = p.c0;
     p.c3 = p.c0;
+    p.e0 = float3(0.0, 0.0, 0.0);
+    p.e1 = p.e0;
+    p.e2 = p.e0;
+    p.e3 = p.e0;
     p.n = 0u;
     return p;
 }
@@ -497,19 +530,23 @@ bool panes_new(Panes p, float d) {
            abs(d - p.t.z) >= kPaneThickness && abs(d - p.t.w) >= kPaneThickness;
 }
 
-void panes_add(inout Panes p, float d, float3 c) {
+void panes_add(inout Panes p, float d, float3 c, float3 e) {
     if (p.n == 0u) {
         p.t.x = d;
         p.c0 = c;
+        p.e0 = e;
     } else if (p.n == 1u) {
         p.t.y = d;
         p.c1 = c;
+        p.e1 = e;
     } else if (p.n == 2u) {
         p.t.z = d;
         p.c2 = c;
+        p.e2 = e;
     } else {
         p.t.w = d;
         p.c3 = c;
+        p.e3 = e;
     }
     ++p.n;
 }
@@ -525,6 +562,16 @@ float3 panes_through(Panes p, float tmax) {
     return c;
 }
 
+// OpenRFG64: the light the glow halos before `tmax` give the ray (as panes_through, those beyond its hit left out).
+float3 panes_glow(Panes p, float tmax) {
+    float3 l = float3(0.0, 0.0, 0.0);
+    if (p.n > 0u && p.t.x < tmax) l += p.e0;
+    if (p.n > 1u && p.t.y < tmax) l += p.e1;
+    if (p.n > 2u && p.t.z < tmax) l += p.e2;
+    if (p.n > 3u && p.t.w < tmax) l += p.e3;
+    return l;
+}
+
 // RT_PROCEED (rt_query.hlsli) that also gathers the clear panes the ray passes into `panes` (a Panes from panes_none),
 // with RTQ_TINT; `spread`: the ray's cone, for the texel's level of detail at a pane (spread x its distance).
 #define RT_PROCEED_PANES(q, panes, spread)                                                                        \
@@ -535,13 +582,15 @@ float3 panes_through(Panes p, float tmax) {
             q.CommitNonOpaqueTriangleHit();                                                                       \
         } else if (RTQ_TRANSLUCENT(q, rtq_c, rtq_g)) {                                                            \
             RTQ_TRANSLUCENT_STEP(q)                                                                               \
-        } else if (RTQ_TINT) {                                                                                    \
+        } else {                                                                                                  \
             const float rtq_d = q.CandidateTriangleRayT();                                                        \
-            if (panes_new(panes, rtq_d))                                                                          \
-                panes_add(panes, rtq_d,                                                                           \
-                          pane_pass(q.CandidateInstanceID(), rtq_g, q.CandidatePrimitiveIndex(),                  \
-                                    q.CandidateTriangleBarycentrics(), q.CandidateObjectToWorld3x4(),             \
-                                    q.WorldRayDirection(), (spread) * rtq_d));                                    \
+            if (panes_new(panes, rtq_d)) {                                                                        \
+                float3 rtq_e;                                                                                     \
+                const float3 rtq_p = pane_pass(q.CandidateInstanceID(), rtq_g, q.CandidatePrimitiveIndex(),       \
+                                               q.CandidateTriangleBarycentrics(), q.CandidateObjectToWorld3x4(),  \
+                                               q.WorldRayDirection(), (spread) * rtq_d, rtq_e);                   \
+                if (RTQ_TINT || any(rtq_e > 0.0)) panes_add(panes, rtq_d, RTQ_TINT ? rtq_p : (float3)1, rtq_e); \
+            }                                                                                                     \
         }                                                                                                         \
     }
 

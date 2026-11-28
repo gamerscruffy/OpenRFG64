@@ -113,6 +113,8 @@ Config load_config(const std::wstring& ini) {
     c.gi_frosted_glass = get_int(ini, L"GI", L"FrostedGlass", 1) != 0;
     c.gi_window_tint = get_int(ini, L"GI", L"WindowTint", 1) != 0;
     c.gi_rim_light = get_double(ini, L"GI", L"RimLight", 0.0);
+    c.gi_emissive = get_double(ini, L"GI", L"Emissive", 6.0);
+    c.gi_glow = get_double(ini, L"GI", L"Glow", 3.0);
     c.gi_cloud_shadows = get_int(ini, L"GI", L"CloudShadows", 1) != 0;
     c.gi_terrain_albedo = get_list(ini, L"GI", L"TerrainAlbedo");
     c.fog_enabled = get_int(ini, L"Fog", L"Enabled", 1) != 0;

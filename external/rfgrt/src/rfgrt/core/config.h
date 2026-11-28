@@ -99,6 +99,9 @@ struct Config {
     bool gi_window_tint = true;   // the clear glass tints the sun's light through it, texel by texel (GI.WindowTint)
     bool gi_cloud_shadows = true; // the game's cloud shadows on the sunlight of the GI's hits, the fog and the glass (the
                                   // direct sunlight has them from the game's ClbTexture either way)
+    double gi_emissive = 6.0;     // OpenRFG64: the light the solid emitters (rfg-lightsource: lamps, screens) give the rays,
+                                  // times their texture (the game's units: 4 a fully self-lit rfg-standard; 0 none)
+    double gi_glow = 3.0;         // the same for the glow halos the rays cross (rfg-vfx-glow, -glow2, -light-cone)
     double gi_rim_light = 0.0;    // the characters' cloth's rim light (a glow along their edges turned from the sun,
                                   // patch/rim_light.h) where the path tracer lights them: 0 none, 1 the game's
     bool gi_frosted_glass = true; // the patterned glass (rfg-eosglass) diffuses the light through it: no sunlight through

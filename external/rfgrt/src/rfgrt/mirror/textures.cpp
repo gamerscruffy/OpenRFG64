@@ -203,19 +203,88 @@ bool constant(const uint8_t* material, const char* name, float* out, int count) 
     return rfg::fn<Get>(rfg::rva::Material_getConstantDataByName)(material, out, name, count);
 }
 
+// OpenRFG64: the emitters (scene_ring.h kMaterialEmitter). Their shaders' handles from the shader library, once (by
+// name: a name the library does not know gives what a made-up one gives, and matches nothing then).
+std::atomic<float> g_emissive{0.0f}, g_glow{0.0f};
+constexpr const char* kSolidEmitters[] = {"rfg-lightsource"};
+constexpr const char* kGlowEmitters[] = {"rfg-vfx-glow", "rfg-vfx-glow2", "rfg-vfx-light-cone"};
+constexpr size_t kSolidCount = sizeof(kSolidEmitters) / sizeof(kSolidEmitters[0]);
+constexpr size_t kEmitterCount = kSolidCount + sizeof(kGlowEmitters) / sizeof(kGlowEmitters[0]);
+uint32_t g_emitter_shaders[kEmitterCount];
+std::once_flag g_emitters_looked;
+std::atomic<uint64_t> g_emitter_materials[kEmitterCount];  // materials read, by emitter shader
+std::atomic<uint32_t> g_emitter_logged{0};                 // by bit: the first of each emitter shader logged
+// The emitters' map, when Diffuse_Map is not one of their shader's textures (the names tried in turn).
+constexpr const char* kEmitterMaps[] = {"Diffuse_Map", "Glow_Map", "Illumination_Map", "Self_Illumination_Map",
+                                        "Emissive_Map", "Base_Map", "Texture_Map", "Light_Map"};
+
+void look_up_emitters() {
+    for (uint32_t& h : g_emitter_shaders) h = 0xFFFFFFFEu;
+    __try {
+        using Instance = uint8_t*(__cdecl*)();
+        using Lookup = uint32_t(__thiscall*)(uint8_t*, const char*);
+        uint8_t* lib = rfg::fn<Instance>(rfg::rva::ShaderLibrary_instance)();
+        if (!lib) return;
+        const Lookup lookup = rfg::fn<Lookup>(rfg::rva::ShaderLibrary_lookup);
+        const uint32_t none = lookup(lib, "rfgrt-no-such-shader");
+        for (size_t i = 0; i < kEmitterCount; ++i) {
+            const uint32_t h = lookup(lib, i < kSolidCount ? kSolidEmitters[i] : kGlowEmitters[i - kSolidCount]);
+            g_emitter_shaders[i] = h == none ? 0xFFFFFFFEu : h;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        for (uint32_t& h : g_emitter_shaders) h = 0xFFFFFFFEu;
+    }
+}
+
+// Which emitter shader `shader` is (an index into g_emitter_shaders), -1 none.
+int emitter_of(uint32_t shader) {
+    if (g_emissive.load() <= 0.0f && g_glow.load() <= 0.0f) return -1;
+    std::call_once(g_emitters_looked, look_up_emitters);
+    for (size_t i = 0; i < kEmitterCount; ++i)
+        if (g_emitter_shaders[i] == shader) return int(i);
+    return -1;
+}
+
 bool read_material(uint32_t handle, rfgrt_scene::MaterialEntry* out, int* diffuse) {
     __try {
         using Resolve = uint8_t*(__cdecl*)(uint32_t handle, bool);
         const uint8_t* m = rfg::fn<Resolve>(rfg::rva::resolve_material_handle)(handle, false);
         if (!m) return false;
         using TextureByName = bool(__thiscall*)(const uint8_t*, int*, const char*);
+        const TextureByName texture_by_name = rfg::fn<TextureByName>(rfg::rva::Material_getTextureDataByName);
         int tex = -1;
-        if (rfg::fn<TextureByName>(rfg::rva::Material_getTextureDataByName)(m, &tex, "Diffuse_Map")) *diffuse = tex;
+        if (texture_by_name(m, &tex, "Diffuse_Map")) *diffuse = tex;
         float v[4] = {};
         if (constant(m, "Diffuse_Color", v, 3)) memcpy(out->color, v, sizeof(float) * 3);
         if (constant(m, "Diffuse_Map_TilingU", v, 1)) out->tiling[0] = v[0];
         if (constant(m, "Diffuse_Map_TilingV", v, 1)) out->tiling[1] = v[0];
         if (constant(m, "Self_Illumination", v, 1)) out->self_illumination = v[0];
+        // OpenRFG64: an emitter's light, from its own map when it has no Diffuse_Map (the first of kEmitterMaps it has)
+        const uint8_t* d = *reinterpret_cast<const uint8_t* const*>(m + rfg::off::Material_data);
+        const int e = d ? emitter_of(*reinterpret_cast<const uint32_t*>(d + rfg::off::MaterialData_shader)) : -1;
+        if (e >= 0) {
+            const char* map = *diffuse != -1 ? "Diffuse_Map" : nullptr;
+            for (const char* name : kEmitterMaps) {
+                if (map) break;
+                int t = -1;
+                if (texture_by_name(m, &t, name) && t != -1) {
+                    *diffuse = t;
+                    map = name;
+                }
+            }
+            const float strength = size_t(e) < kSolidCount ? g_emissive.load() : g_glow.load();
+            if (strength > 0.0f) {
+                out->flags |= rfgrt_scene::kMaterialEmitter;
+                out->self_illumination = strength;
+            }
+            g_emitter_materials[e].fetch_add(1);
+            const uint32_t bit = 1u << e;
+            if (!(g_emitter_logged.fetch_or(bit) & bit))
+                LOG("textures: the first %s material: its map %s, colour (%.2f %.2f %.2f), light %.2f for the rays (%s)",
+                    size_t(e) < kSolidCount ? kSolidEmitters[e] : kGlowEmitters[e - kSolidCount], map ? map : "none found",
+                    out->color[0], out->color[1], out->color[2], strength,
+                    size_t(e) < kSolidCount ? "GI.Emissive" : "GI.Glow");
+        }
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -226,6 +295,10 @@ bool read_material(uint32_t handle, rfgrt_scene::MaterialEntry* out, int* diffus
 
 void set_enabled(bool on) { g_enabled = on; }
 bool enabled() { return g_enabled.load(); }
+void set_emission(double emissive, double glow) {
+    g_emissive = float(emissive > 0.0 ? (emissive < 256.0 ? emissive : 256.0) : 0.0);
+    g_glow = float(glow > 0.0 ? (glow < 256.0 ? glow : 256.0) : 0.0);
+}
 
 uint32_t id_of(uint32_t handle) {
     if (handle == kNone || !g_enabled.load()) return kNone;
@@ -391,6 +464,12 @@ void log_stats() {
     for (const auto& [f, n] : g_formats_left) left += (left.empty() ? "" : ", ") + std::to_string(f) + ": " + std::to_string(n);
     LOG("textures: their view formats (DXGI) taken {%s}, left out {%s}", taken.empty() ? "none" : taken.c_str(),
         left.empty() ? "none" : left.c_str());
+    std::string emitters;
+    for (size_t i = 0; i < kEmitterCount; ++i)
+        emitters += std::string(i ? ", " : "") + (i < kSolidCount ? kSolidEmitters[i] : kGlowEmitters[i - kSolidCount]) + " " +
+                    std::to_string(g_emitter_materials[i].load());
+    LOG("textures: emitters' materials read (light for the rays: GI.Emissive %.2f, GI.Glow %.2f): %s", g_emissive.load(),
+        g_glow.load(), emitters.c_str());
 }
 
 }  // namespace textures

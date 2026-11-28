@@ -847,6 +847,10 @@ struct Host {
         pusher_woke_at.resize(cap, ipc::BodyPose{});
         blow_of.resize(cap, 0);
         pusher_mid.resize(cap, PxVec3(0.0f));
+        ground_side.resize(cap, kSideUnknown);
+        body_mid.resize(cap, PxVec3(0.0f));
+        terrain_hint.resize(cap, 0);
+        terrain_caught_step.resize(cap, kNeverCaught);
         pusher_half.resize(cap, 0.0f);
         pusher_wakes.resize(cap, 0);
         pusher_woken.resize(cap, 0);
@@ -858,6 +862,7 @@ struct Host {
         moved_late.resize(cap, 0);
         freeze_pending.resize(cap, 0);
         thaw_pending.resize(cap, 0);
+        rescued_step.resize(cap, kNeverRescued);
         if (capacity) logf("slots: the tables follow the game's slots to %u (of %u at most)", cap, max_bodies);
         capacity = cap;
         sh.control->slots_capacity.store(cap, std::memory_order_relaxed);
@@ -945,6 +950,17 @@ struct Host {
             all_bounds.include(b);
         }
         body_radius[c.slot] = radius;
+        {
+            // OpenRFG64: every body's middle in its own frame, for the terrain guard: a piece's origin can lie well off
+            // the piece (a chunk's is its building's), and held against the ground it told the wrong side.
+            PxBounds3 local = PxBounds3::empty();
+            for (PxShape* shape : it->second) {
+                PxBounds3 b;
+                PxGeometryQuery::computeGeomBounds(b, shape->getGeometry(), shape->getLocalPose(), 0.0f, 1.0f);
+                local.include(b);
+            }
+            body_mid[c.slot] = local.isEmpty() ? PxVec3(0.0f) : local.getCenter();
+        }
         if (pusher[c.slot] || chunk[c.slot]) {
             PxBounds3 local = PxBounds3::empty();
             for (PxShape* shape : it->second) {
@@ -957,11 +973,15 @@ struct Host {
             if (chunk[c.slot]) a->setMaxAngularVelocity(kChunkMaxSpeed / std::max(pusher_half[c.slot], 1.0f));
         }
         calm[c.slot] = 0;
+        ground_side[c.slot] = kSideUnknown;
+        terrain_hint[c.slot] = 0;
+        terrain_caught_step[c.slot] = kNeverCaught;
         awake_since[c.slot] = step_index;
         still_from[c.slot].pos = c.pos;
         still_from[c.slot].rot = {pose.q.x, pose.q.y, pose.q.z, pose.q.w};
         still_step[c.slot] = step_index;
         born_step[c.slot] = step_index;
+        rescued_step[c.slot] = kNeverRescued;
         born_excused[c.slot] = c.lin_vel.y > kBubbleSpeed ? 1 : 0;
         bodies[c.slot].actor = a;
         pending_add.push_back(a);
@@ -1134,7 +1154,10 @@ struct Host {
 
     void release_group(Group& g) {
         for (PxRigidStatic* st : g.pieces) st->release();
-        for (PxRigidStatic* st : g.actors) st->release();
+        for (PxRigidStatic* st : g.actors) {
+            forget_terrain(st);
+            st->release();
+        }
         count_statics(-int(g.shape_count));
         g = Group{};
     }
@@ -1865,10 +1888,25 @@ struct Host {
         ++stat_cooked;
         const PxTransform pose(PxVec3(c.origin.x, c.origin.y, c.origin.z), PxQuat(c.rot.x, c.rot.y, c.rot.z, c.rot.w).getNormalized());
         PxRigidStatic* st = physics->createRigidStatic(pose);
-        PxRigidActorExt::createExclusiveShape(*st, PxHeightFieldGeometry(hf, PxMeshGeometryFlags(), c.height_scale, c.row_scale,
-                                                                         c.column_scale), *material);
-        hf->release();
+        PxShape* shape = PxRigidActorExt::createExclusiveShape(*st, PxHeightFieldGeometry(hf, PxMeshGeometryFlags(), c.height_scale,
+                                                                                          c.row_scale, c.column_scale), *material);
+        // OpenRFG64: contacts with the ground from kTerrainContactOffset away (a pair's distance is the sum of its
+        // shapes' offsets), so a piece pushed or thrown at it has them before it gets there: at the default (2 cm)
+        // a piece crossed the surface between two steps and was under the ground. Only the narrow phase pays: the
+        // height field's bounds already span its cell, so no pair is added.
+        if (shape) shape->setContactOffset(kTerrainContactOffset);
         add_static_actor(c.group, st);
+        Terrain t;
+        t.st = st;
+        t.hf = hf;  // our reference (from PxCreateHeightField), given back in forget_terrain
+        t.pose = pose;
+        t.height_scale = c.height_scale;
+        t.row_scale = c.row_scale;
+        t.column_scale = c.column_scale;
+        t.rows = float(c.rows - 1);
+        t.columns = float(c.columns - 1);
+        t.bounds = st->getWorldBounds();
+        terrains.push_back(t);
         logf("height field %u x %u (cells %.2f x %.2f m, height step %.4f m) for group %u", c.rows, c.columns,
              double(c.row_scale), double(c.column_scale), double(c.height_scale), c.group);
     }
@@ -2158,7 +2196,28 @@ struct Host {
     // A chunk (ahead): only what it is about to reach, each block by how it moves, and what lies on it. The rubble beside a chunk
     // going down cannot be touched by it, and nearly all wakes went nowhere (research/docs/08 §18).
     bool chunk_wake_ahead = true;  // Control::chunk_wake_ahead
-    uint32_t wake_near_parts(PxRigidDynamic* a, float reach, bool ahead = false) {
+    // How a body moves, for wake_near_parts: its velocity at `about` and its spin.
+    struct Motion {
+        PxVec3 lin, ang, about;
+    };
+    // OpenRFG64: a kinematic pusher's motion over its last step, from its poses (its own velocities are not the game
+    // body's). A windmill's blades (a chunk on a constraint, kinematic here) woke everything up to 12 m round the
+    // whole rotor on every step, as a pusher without an ahead: the rubble under it bounced for good.
+    Motion pose_motion(const ipc::BodyPose& p) const {
+        Motion m{PxVec3(0.0f), PxVec3(0.0f), PxVec3(p.pos.x, p.pos.y, p.pos.z)};
+        if (dt <= 0.0f) return m;
+        m.lin = PxVec3(p.pos.x - p.prev_pos.x, p.pos.y - p.prev_pos.y, p.pos.z - p.prev_pos.z) / dt;
+        const PxQuat qa(p.prev_rot.x, p.prev_rot.y, p.prev_rot.z, p.prev_rot.w), qb(p.rot.x, p.rot.y, p.rot.z, p.rot.w);
+        PxQuat d = qb * qa.getConjugate();
+        if (d.w < 0.0f) d = -d;  // the short way round
+        float angle = 0.0f;
+        PxVec3 axis(0.0f);
+        d.toRadiansAndUnitAxis(angle, axis);
+        if (std::isfinite(angle) && angle > 1e-6f) m.ang = axis * (angle / dt);
+        return m;
+    }
+
+    uint32_t wake_near_parts(PxRigidDynamic* a, float reach, bool ahead = false, const Motion* motion = nullptr) {
         part_blocks.clear();
         PxShape* parts[256];
         const PxU32 total = a->getNbShapes();
@@ -2172,8 +2231,8 @@ struct Host {
             }
         }
         uint32_t woken = 0;
-        const PxVec3 com = (a->getGlobalPose() * a->getCMassLocalPose()).p;
-        const PxVec3 lin = a->getLinearVelocity(), ang = a->getAngularVelocity();
+        const PxVec3 com = motion ? motion->about : (a->getGlobalPose() * a->getCMassLocalPose()).p;
+        const PxVec3 lin = motion ? motion->lin : a->getLinearVelocity(), ang = motion ? motion->ang : a->getAngularVelocity();
         const float look = (kPushLookahead + float(change_every - 1)) * dt;
         for (auto& [key, b] : part_blocks) {
             const PxVec3 v = lin + ang.cross(b.getCenter() - com);
@@ -2219,8 +2278,10 @@ struct Host {
             if (pusher_moved(s, at.pos, at.rot, p.pos, p.rot) < kPushStep) continue;
             at = p;
             const float speed_per_step = pusher_moved(s, p.prev_pos, p.prev_rot, p.pos, p.rot);
+            // OpenRFG64: every pusher wakes ahead of it, not only a chunk: a kinematic one by its poses' motion.
+            const Motion motion = chunk[s] ? Motion{} : pose_motion(p);
             const uint32_t woken = wake_near_parts(bodies[s].actor, kPushReach + (kPushLookahead + float(change_every - 1)) * std::min(speed_per_step, 2.0f),
-                                                   chunk[s] && chunk_wake_ahead);
+                                                   chunk_wake_ahead, chunk[s] ? nullptr : &motion);
             stat_pushed_awake += woken;
             ++pusher_wakes[s];
             pusher_woken[s] += woken;
@@ -2348,7 +2409,169 @@ struct Host {
     // them against it. Ten times a second, a piece falling fast whose nearest static straight above it is the terrain
     // (seen from below) is put back on top of it, at rest.
     static constexpr float kFallingSpeed = 6.0f;  // m/s downwards
+    // OpenRFG64: the terrain crossing guard. A piece pushed hard into the ground (a vehicle, the player, a falling
+    // chunk) or thrown at it went through: no CCD (see create_body), and a height field holds nothing under its
+    // surface. Each step, every awake piece's middle is held against the ground under it, read from the height
+    // field itself (no ray): one that was above it at the last step and is now more than kTerrainCrossMargin under it
+    // went through, and goes back onto it with its motion into the ground taken away (along it, it keeps moving).
+    // A piece that was already under the ground when it came (a tunnel, a cellar) is left alone.
+    static constexpr float kTerrainContactOffset = 0.25f;  // m
+    static constexpr float kTerrainCrossMargin = 0.1f;     // m
+    static constexpr float kTerrainEdgeReach = 2.0f;       // m: a catch this near a height field's edge is told apart
+    static constexpr uint8_t kSideUnknown = 0, kSideAbove = 1, kSideBelow = 2;
+    struct Terrain {
+        PxRigidStatic* st = nullptr;
+        PxHeightField* hf = nullptr;
+        PxTransform pose = PxTransform(PxIdentity);
+        float height_scale = 1, row_scale = 1, column_scale = 1, rows = 0, columns = 0;
+        PxBounds3 bounds = PxBounds3::empty();
+        bool checked = false;  // check_terrain has held its lookup against ray casts
+    };
+    std::vector<Terrain> terrains;
+    std::vector<uint8_t> ground_side;  // by slot: kSide*, where its middle was at the last step
+    std::vector<PxVec3> body_mid;      // by slot: the middle of its shapes' bounds, in its own frame
+    uint32_t terrain_detail_logged = 0;  // the first catches are told one by one
+    std::vector<uint16_t> terrain_hint;  // by slot: the height field it was over at the last step, looked at first
+    static constexpr uint32_t kNeverCaught = 0xFFFFFFFFu;
+    static constexpr float kTerrainAgainS = 1.0f;  // a catch this soon after the last is told apart (a pusher's crush)
+    std::vector<uint32_t> terrain_caught_step;  // by slot: the step it was last put back
+    uint32_t stat_terrain_caught = 0, stat_terrain_fast = 0, stat_terrain_edge = 0, stat_terrain_again = 0,
+             stat_terrain_floor = 0;
+    void forget_terrain(PxRigidStatic* st) {
+        for (size_t i = 0; i < terrains.size(); ++i) {
+            if (terrains[i].st != st) continue;
+            terrains[i].hf->release();
+            terrains[i] = terrains.back();
+            terrains.pop_back();
+            return;
+        }
+    }
+    // The ground's height under p, from the height field there; false where there is none.
+    bool ground_height(const PxVec3& p, float& height, bool& near_edge, uint16_t* hint = nullptr) const {
+        const size_t n = terrains.size();
+        const size_t first = hint && *hint < n ? *hint : 0;
+        for (size_t k = 0; k < n; ++k) {
+            const size_t i = (first + k) % n;
+            const Terrain& t = terrains[i];
+            if (p.x < t.bounds.minimum.x || p.x > t.bounds.maximum.x || p.z < t.bounds.minimum.z || p.z > t.bounds.maximum.z)
+                continue;
+            const PxVec3 local = t.pose.transformInv(p);
+            const float row = local.x / t.row_scale, column = local.z / t.column_scale;
+            if (!(row >= 0.0f && row <= t.rows && column >= 0.0f && column <= t.columns)) continue;
+            const float h = t.hf->getHeight(row, column) * t.height_scale;
+            height = t.pose.transform(PxVec3(local.x, h, local.z)).y;
+            const float edge_rows = kTerrainEdgeReach / std::fabs(t.row_scale);
+            const float edge_columns = kTerrainEdgeReach / std::fabs(t.column_scale);
+            near_edge = row < edge_rows || row > t.rows - edge_rows || column < edge_columns || column > t.columns - edge_columns;
+            if (hint) *hint = uint16_t(i);
+            return true;
+        }
+        return false;
+    }
+    // Once for each height field: its lookup (ground_height) held against ray casts down onto it, 4 x 4 points, logged.
+    // Metres off, or lookups failing, means the grid is read wrong (rows along x, columns along z, the scales).
+    void check_terrain(Terrain& t) {
+        t.checked = true;
+        const PxQueryFilterData statics_only(PxQueryFlag::eSTATIC);
+        float worst = 0.0f;
+        uint32_t hits = 0, failed = 0;
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j) {
+                const PxVec3 at(t.bounds.minimum.x + (t.bounds.maximum.x - t.bounds.minimum.x) * (0.125f + 0.25f * float(i)),
+                                t.bounds.maximum.y + 1.0f,
+                                t.bounds.minimum.z + (t.bounds.maximum.z - t.bounds.minimum.z) * (0.125f + 0.25f * float(j)));
+                PxRaycastBuffer hit;
+                const float reach = t.bounds.maximum.y - t.bounds.minimum.y + 2.0f;
+                if (!scene->raycast(at, PxVec3(0.0f, -1.0f, 0.0f), reach, hit, PxHitFlag::eDEFAULT, statics_only) ||
+                    !hit.hasBlock || hit.block.actor != t.st)
+                    continue;
+                ++hits;
+                float h = 0.0f;
+                bool edge = false;
+                if (!ground_height(hit.block.position, h, edge)) {
+                    ++failed;
+                    continue;
+                }
+                worst = std::max(worst, std::fabs(h - hit.block.position.y));
+            }
+        logf("terrain guard check: height field at (%.0f, %.0f): %u of 16 rays hit it, lookup %s; worst %.3f m off",
+             double(t.bounds.getCenter().x), double(t.bounds.getCenter().z), hits,
+             failed ? "FAILED for some" : "found all", double(worst));
+        if (failed) logf("terrain guard check: %u lookups failed", failed);
+    }
+    void guard_terrain() {
+        if (terrains.empty()) return;
+        HOST_ZONE("host.terrain_guard");
+        for (Terrain& t : terrains)
+            if (!t.checked) check_terrain(t);
+        for (uint32_t s : awake_slots) {
+            if (user_kinematic[s] || frozen[s] || !bodies[s].actor) continue;
+            PxRigidDynamic* a = bodies[s].actor;
+            const PxTransform t = a->getGlobalPose();
+            const PxVec3 mid = t.transform(body_mid[s]);
+            float ground = 0.0f;
+            bool near_edge = false;
+            if (!ground_height(mid, ground, near_edge, &terrain_hint[s])) {
+                ground_side[s] = kSideUnknown;
+                continue;
+            }
+            if (mid.y >= ground - kTerrainCrossMargin) {
+                ground_side[s] = kSideAbove;
+                continue;
+            }
+            if (ground_side[s] != kSideAbove) {
+                ground_side[s] = kSideBelow;  // under the ground from the start: a tunnel or a cellar, left alone
+                continue;
+            }
+            // Something static not of the ground just under it (a tunnel's floor, a cellar, a foundation): it went
+            // there, not through the ground, and is left there.
+            const PxBounds3 wb = a->getWorldBounds(1.0f);
+            {
+                const PxQueryFilterData statics_only(PxQueryFlag::eSTATIC);
+                PxRaycastBuffer hit;
+                const float reach = mid.y - wb.minimum.y + 0.5f;
+                if (scene->raycast(mid, PxVec3(0.0f, -1.0f, 0.0f), reach, hit, PxHitFlag::eDEFAULT, statics_only) &&
+                    hit.hasBlock && hit.block.shape && hit.block.shape->getGeometry().getType() != PxGeometryType::eHEIGHTFIELD) {
+                    ground_side[s] = kSideBelow;
+                    ++stat_terrain_floor;
+                    continue;
+                }
+            }
+            // Through: its lowest point goes just onto the ground (as rescue_fallen does), its motion into it is gone.
+            PxVec3 v = a->getLinearVelocity();
+            const float travel = v.magnitude() * dt;
+            if (terrain_detail_logged < 40) {
+                ++terrain_detail_logged;
+                const PxVec3 d = wb.getDimensions();
+                const bool again = terrain_caught_step[s] != kNeverCaught;
+                logf("terrain guard catch: slot %u %s, %.0f kg, size %.2f x %.2f x %.2f m, middle %.2f m under the ground "
+                     "(top %.2f m over it), speed %.2f m/s (down %.2f), origin %.2f m off its middle, at (%.1f, %.1f, %.1f)%s",
+                     s, chunk[s] ? "chunk" : "piece", double(a->getMass()), double(d.x), double(d.y), double(d.z),
+                     double(ground - mid.y), double(wb.maximum.y - ground), double(v.magnitude()), double(-v.y),
+                     double((mid - t.p).magnitude()), double(mid.x), double(mid.y), double(mid.z),
+                     again ? ", caught before" : "");
+            }
+            a->setGlobalPose(PxTransform(t.p + PxVec3(0.0f, ground + 0.02f - wb.minimum.y, 0.0f), t.q));
+            if (v.y < 0.0f) v.y = 0.0f;
+            a->setLinearVelocity(v);
+            ++stat_terrain_caught;
+            if (travel > 0.5f * wb.getDimensions().minElement()) ++stat_terrain_fast;
+            if (near_edge) ++stat_terrain_edge;
+            const uint32_t again_steps = uint32_t(kTerrainAgainS / std::max(dt, 1e-3f));
+            if (terrain_caught_step[s] != kNeverCaught && step_index - terrain_caught_step[s] <= again_steps) ++stat_terrain_again;
+            terrain_caught_step[s] = step_index;
+        }
+    }
     uint32_t stat_rescued = 0;
+    // OpenRFG64: a piece put back that falls through again within kRescueAgainS is frozen where it was put back. Where
+    // the ground does not hold it (the static world there not in the host yet, a hole the ray does not see), it fell,
+    // was put back and fell again for good: the user saw rubble hop on the ground like a dropped item, and the log had
+    // 1-2 pieces awake for minutes, their speed cycling 0.9 to 5.9 m/s, with 3-4 put back every 5 s. A thaw (a pusher,
+    // a blast) lets it fall again if the ground has come by then.
+    static constexpr float kRescueAgainS = 5.0f;
+    static constexpr uint32_t kNeverRescued = 0xFFFFFFFFu;
+    std::vector<uint32_t> rescued_step;  // by slot: the step it was last put back (kNeverRescued: never)
+    uint32_t stat_rescued_frozen = 0;
     void rescue_fallen() {
         if (step_index % 6) return;
         HOST_ZONE("host.rescue");
@@ -2361,17 +2584,27 @@ struct Host {
             // A chunk's origin is its building's, tens of metres off: its middle tells, and goes to just above the
             // ground. By its origin and its reach from there, it went back up 100 m, for good if it fell through again.
             const PxVec3 from = chunk[s] ? t.transform(pusher_mid[s]) : t.p;
-            const float clearance = chunk[s] ? pusher_half[s] : body_radius[s];
             PxRaycastBuffer hit;
             if (!scene->raycast(from, PxVec3(0.0f, 1.0f, 0.0f), 500.0f, hit,
                                 PxHitFlag::eDEFAULT | PxHitFlag::eMESH_BOTH_SIDES, statics_only) ||
                 !hit.hasBlock || !hit.block.shape ||
                 hit.block.shape->getGeometry().getType() != PxGeometryType::eHEIGHTFIELD)
                 continue;
-            a->setGlobalPose(PxTransform(t.p + PxVec3(0.0f, hit.block.position.y + clearance + 0.05f - from.y, 0.0f), t.q));
+            // OpenRFG64: its lowest point goes just onto the ground. By its bounding sphere's radius (and a chunk's
+            // half size) a flat or long piece went up well over the ground: it dropped from there (the "hop"), and
+            // once frozen on its second rescue it hung in the air where it had been put.
+            const PxBounds3 wb = a->getWorldBounds(1.0f);
+            a->setGlobalPose(PxTransform(t.p + PxVec3(0.0f, hit.block.position.y + 0.02f - wb.minimum.y, 0.0f), t.q));
             a->setLinearVelocity(PxVec3(0.0f));
             a->setAngularVelocity(PxVec3(0.0f));
             ++stat_rescued;
+            const uint32_t again_steps = uint32_t(kRescueAgainS / std::max(dt, 1e-3f));
+            if (rescued_step[s] != kNeverRescued && step_index - rescued_step[s] <= again_steps && !freeze_pending[s]) {
+                freeze_pending[s] = 1;  // frozen with the next changes (the freeze pass, at rest by then)
+                freeze_list.push_back(s);
+                ++stat_rescued_frozen;
+            }
+            rescued_step[s] = step_index;
         }
     }
 
@@ -2742,6 +2975,7 @@ struct Host {
         run_cascade();
         run_pushers();
         rescue_fallen();
+        guard_terrain();
         while (!gentle.empty() && step_index >= gentle.front().second) {  // the usual speed again
             const auto [g, ends] = gentle.front();
             gentle.pop_front();
@@ -2924,8 +3158,17 @@ struct Host {
         if (stat_hull_thickened || stat_hull_boxes || stat_no_shape || stat_inertia_fixed || stat_born_frozen ||
             stat_rescued)
             logf("  hulls thickened to 4 mm %u, boxes for hulls that did not cook %u; bodies without a shape %u, with "
-                 "their inertia replaced %u, made frozen (at rest in Havok) %u; pieces put back on the ground %u",
-                 stat_hull_thickened, stat_hull_boxes, stat_no_shape, stat_inertia_fixed, stat_born_frozen, stat_rescued);
+                 "their inertia replaced %u, made frozen (at rest in Havok) %u; pieces put back on the ground %u (%u "
+                 "of them frozen there, put back again within %.0f s)",
+                 stat_hull_thickened, stat_hull_boxes, stat_no_shape, stat_inertia_fixed, stat_born_frozen, stat_rescued,
+                 stat_rescued_frozen, double(kRescueAgainS));
+        if (stat_terrain_caught || stat_terrain_floor)
+            logf("  terrain guard: %u pieces caught under the ground and put back (%u moving more than half their size "
+                 "in a step, %u within %.0f m of a height field's edge, %u caught again within %.0f s); %u left on a floor "
+                 "under the ground; %zu height fields", stat_terrain_caught, stat_terrain_fast, stat_terrain_edge,
+                 double(kTerrainEdgeReach), stat_terrain_again, double(kTerrainAgainS), stat_terrain_floor, terrains.size());
+        stat_terrain_caught = stat_terrain_fast = stat_terrain_edge = stat_terrain_again = stat_terrain_floor = 0;
+        stat_rescued_frozen = 0;
         stat_hull_thickened = stat_hull_boxes = stat_no_shape = stat_inertia_fixed = stat_born_frozen = 0;
         stat_rescued = 0;
         // The pushers that woke the most pieces in this window.

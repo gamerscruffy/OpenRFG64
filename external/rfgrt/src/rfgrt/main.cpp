@@ -175,6 +175,7 @@ void init() {
     rtlink::core_link().configure(link);
     // the materials' diffuse maps for the rays' hits: only where rays look at surfaces (GI, reflections), with the mirror
     textures::set_enabled(cfg.gi_textures && link.snapshots && (link.gi_rays > 0 || link.refl_enabled));
+    textures::set_emission(cfg.gi_emissive, cfg.gi_glow);  // OpenRFG64: lamps, screens and glow halos light the rays' hits
     LOG("textures: the materials' diffuse maps %s", textures::enabled() ? "go to the core for the rays' hits (GI.Textures)"
                                                                         : "stay the game's (every hit a plain grey)");
     if (!lights::install(cfg)) LOG("lights hooks failed: no shadows for the dynamic lights");

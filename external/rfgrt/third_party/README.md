@@ -14,3 +14,6 @@ exported `InitializeASI`.
 The DLSS SDK is not kept in the repository either: `tools/fetch_dlss.ps1` downloads it, and the build uses it when it
 is there (DLSS Ray Reconstruction, `[GI] Denoiser=2`). The release archives include its runtime, `nvngx_dlssd.dll`, with
 NVIDIA's license text.
+
+In OpenRFG64 the SDKs may instead sit next to the OpenRFG-main folder (for example `../DLSS-310.9.16/DLSS-310.9.16`,
+`../streamline-sdk-v2.14.16`): `cmake/openrfg_sdks.cmake` uses an in-tree copy first, then those.

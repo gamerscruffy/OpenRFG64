@@ -90,9 +90,14 @@ struct MaterialEntry {
     uint32_t texture;          // the diffuse map: the core's texture id (TextureAdd), or kNoTexture
     float tiling[2];           // Diffuse_Map_TilingU, _TilingV (1 without)
     float color[3];            // Diffuse_Color's rgb (1 without)
-    float self_illumination;   // Self_Illumination: the lit colour goes from albedo x light to albedo x 4 (0 without)
-    uint32_t flags;            // none yet
+    float self_illumination;   // Self_Illumination: the lit colour goes from albedo x light to albedo x 4 (0 without);
+                               // with kMaterialEmitter, the light it gives off instead (GI.Emissive, GI.Glow)
+    uint32_t flags;            // kMaterial*
 };
+// OpenRFG64: a material that gives off light of its own (rfg-lightsource: lamps, screens, signs; the rfg-vfx-glow
+// shaders: the halos drawn over them): its texture times its colour times self_illumination, for the rays. Solid, it is
+// what a ray hitting it brings back; transparent (the halos), what a ray crossing it gathers (trace_common.hlsli panes).
+constexpr uint32_t kMaterialEmitter = 1u;
 
 // A material's texture for the rays (mirror/textures.cpp): a copy of the game's, its mips from at most 256 texels down,
 // shared with the core (an NT handle duplicated into its process: the core closes it), for the core's table at `id`
