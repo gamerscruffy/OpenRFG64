@@ -340,7 +340,8 @@ struct GiConstants {
     float fog3[4];       // x, y: froxels across the screen; z: 1 when the previous frame's grid is there; w: frames averaged
     float glass[4];      // the clear glass's reflections: x its reflectance at normal incidence; y 1 when they are on
     float probe[4];      // xy: where the probe aims, fractions of the screen (Test.ProbePixel)
-    float terrain[4];    // rgb: the albedo of a surface whose material is not known, the terrain (GI.TerrainAlbedo)
+    float terrain[4];    // rgb: the albedo of a surface whose material is not known, the terrain (GI.TerrainAlbedo); w:
+                         // GI.Clamp
     // DLSS (dlss.h) upscaling: xy the render size the GI's rays and Ray Reconstruction's guides run at (0: the frame's),
     // the top-left part of their textures; zw the sample's offset from each render pixel's centre (render pixels, y down):
     // each traces from the frame's pixel under that point
@@ -637,7 +638,7 @@ int run(const RunParams& p) {
             // as a root CBV (b0), and the geometry pool's pages (t0-t63, space1) in a table.
             D3D12_DESCRIPTOR_RANGE giRanges[2] = {{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0, 0, 0}, {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 5}};
             D3D12_DESCRIPTOR_RANGE pageRange = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaxGeoPages, 0, 1, 0};
-            D3D12_ROOT_PARAMETER gp[16]{};
+            D3D12_ROOT_PARAMETER gp[17]{};
             gp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
             gp[0].DescriptorTable = {2, giRanges};
             gp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
@@ -670,6 +671,9 @@ int run(const RunParams& p) {
             // OpenRFG64 b2: the frame's emitters (gi_trace.hlsl; the other passes leave it unset)
             gp[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
             gp[15].Descriptor = {2, 0};
+            // the frame's particles that give light (tlas.h ScreenQuads, trace_common.hlsli screens_along): root SRV t8
+            gp[16].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+            gp[16].Descriptor = {8, 0};
             // s0: linear, clamped (the fog reads its froxels between their centres); s1: linear, wrapping (the materials'
             // textures)
             D3D12_STATIC_SAMPLER_DESC samplers[2]{};
@@ -681,7 +685,7 @@ int run(const RunParams& p) {
             samplers[1] = samplers[0];
             samplers[1].AddressU = samplers[1].AddressV = samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
             samplers[1].ShaderRegister = 1;
-            giRs = make_root_signature(dev, {16, gp, 2, samplers, D3D12_ROOT_SIGNATURE_FLAG_NONE});
+            giRs = make_root_signature(dev, {17, gp, 2, samplers, D3D12_ROOT_SIGNATURE_FLAG_NONE});
             if (!giRs) return fail("GI root signature", E_FAIL);
             pd.pRootSignature = giRs;
             pd.CS = {g_gi_trace_cs, sizeof(g_gi_trace_cs)};
@@ -952,6 +956,16 @@ int run(const RunParams& p) {
     if (use_tlas) logf("TLAS: rebuilt every frame, for %s (Mirror.TlasFastTrace)", b->tlas_fast_trace ? "fast tracing" : "a fast build");
     Skinning skinning;
     if (use_tlas) skinning.init(dev5, kRing, b->max_skins, b->max_bones, b->max_instances, p.log);
+    // the particles that give light (GI.ScreenLight; tlas.h ScreenQuads)
+    ScreenQuads screenQuads;
+    const bool use_screens = use_tlas && b->gi_rays > 0 && b->gi_screen_light > 0.0f && screenQuads.init(dev5, kRing, p.log);
+    if (use_tlas && b->gi_rays > 0)
+        logf("screens: %s", use_screens ? "the particles that give light (the screens') light what is around them through the GI's rays "
+                                            "(GI.ScreenLight)"
+                                          : b->gi_screen_light > 0.0f ? "none (their buffers failed)" : "none (GI.ScreenLight 0)");
+    if (use_screens)
+        logf("screens: their light %.2f times what the game draws them with, up to %u quads a frame (GI.ScreenLight)", b->gi_screen_light,
+             rfgrt_frame::kMaxScreenQuads);
 
     b->host_state = rfgrt_ipc::kHostReady;
     logf("ready: mode %d (%s), scene ring %llu MB, %s", mode,
@@ -1666,7 +1680,9 @@ int run(const RunParams& p) {
                 const int64_t sk0 = qpcNow();  // OpenRFG64 timing
                 skinning.record(cl, k, h, b->max_instances, b->max_skins, scene, next);
                 const int64_t sk1 = qpcNow();
-                inTlas = tlas.record(cl, k, rfgrt_frame::slot_instances(h), count, scene, skinning.overrides());
+                // the screens' picture quads (GI.ScreenLight), their BLAS built before the TLAS that holds it
+                const D3D12_GPU_VIRTUAL_ADDRESS screenBlas = use_screens ? screenQuads.record(cl, k, h, b->gi_screen_light) : 0;
+                inTlas = tlas.record(cl, k, rfgrt_frame::slot_instances(h), count, scene, skinning.overrides(), screenBlas);
                 st.skin_ms += qpcMs(sk0, sk1);
                 st.tlas_ms += qpcMs(sk1, qpcNow());
                 probeFrame[k] = 0;
@@ -1893,7 +1909,8 @@ int run(const RunParams& p) {
                         // already be recorded by now (this list is recorded at the frame scene, often later), hence >=.
                         const bool radianceOk = radiance && historyValid && rfgrt_ipc::load64(&b->radiance_frame) >= next - 1;
                         if (radianceOk) ++radianceFrames;
-                        g.base.flags = depthFlag | historyFlag | (radianceOk ? 16u : 0u) | frostedFlag | tintFlag | (giCensus ? 128u : 0u);
+                        g.base.flags = depthFlag | historyFlag | (radianceOk ? 16u : 0u) | frostedFlag | tintFlag | (giCensus ? 128u : 0u) |
+                                    (screenQuads.count(k) ? 256u : 0u);  // the screens' picture quads (screens_along)
                         g.base.shadow[1] = uint32_t(b->gi_filter_radius >= 0 ? b->gi_filter_radius : 0);
                         memcpy(g.ambient, h->ambient, sizeof(g.ambient));
                         memcpy(g.back_ambient, h->back_ambient, sizeof(g.back_ambient));
@@ -2022,6 +2039,7 @@ int run(const RunParams& p) {
                             if (count) memcpy(ec + kTexAt, h->emitter_texture, sizeof(uint32_t) * count);
                             cl->SetComputeRootConstantBufferView(15, emitterCb->GetGPUVirtualAddress() + uint64_t(k) * kEmitterCbBytes);
                         }
+                        if (const D3D12_GPU_VIRTUAL_ADDRESS eva = screenQuads.data(k)) cl->SetComputeRootShaderResourceView(16, eva);
                         if (probeFrame[k] == next && probePso) {  // the crosshair probe (Test.ProbeKey)
                             cl->SetPipelineState(probePso);
                             cl->SetComputeRootDescriptorTable(0, table(kTableGiTrace));
@@ -2524,6 +2542,12 @@ int run(const RunParams& p) {
                          double(tlas.stats.glass_partial) / double(tlas.stats.frames),
                          double(tlas.stats.glass_translucent) / double(tlas.stats.frames),
                          double(tlas.stats.glass_by_mesh) / double(tlas.stats.frames));
+                if (use_screens && tlas.stats.frames)
+                    logf("screens: the particles that give light in the TLAS in %llu of %llu frames, %.1f quads in those (%llu at "
+                         "most), %llu left out (not finite)",
+                         static_cast<unsigned long long>(tlas.stats.screen_frames), static_cast<unsigned long long>(tlas.stats.frames),
+                         screenQuads.stats.frames ? double(screenQuads.stats.quads) / double(screenQuads.stats.frames) : 0.0,
+                         static_cast<unsigned long long>(screenQuads.stats.most), static_cast<unsigned long long>(screenQuads.stats.skipped));
                 if (tlas.stats.frames) {
                     const double f = double(tlas.stats.frames);
                     logf("TLAS materials: per frame instances whose mesh has none (a plain grey for the rays): meshes %.1f, "
@@ -2676,6 +2700,7 @@ int run(const RunParams& p) {
     scene.shutdown(500);
     skinning.release();
     tlas.release();
+    screenQuads.release();
     if (!lost) b->host_state = rfgrt_ipc::kHostExited;  // a lost device keeps kHostFailed and its message
     CloseHandle(fenceEvent);
     if (sceneEvent) CloseHandle(sceneEvent);

@@ -34,7 +34,8 @@ cbuffer Frame : register(b0) {
     float4 sun;           // xyz: toward the sun; w: 1 when there is a sun
     uint2 size;
     float tolerance;
-    uint flags;           // 2: reversed depth; 16: the previous frame's lit colour and depth are there
+    uint flags;           // 2: reversed depth; 16: the previous frame's lit colour and depth are there; 256: the screens'
+                          // picture quads are in the TLAS (screens_along)
     uint4 shadow;         // w: frame
     float4 reproject[4];  // render-offset space now -> the previous frame's clip space (row-vector)
     float4 prev;          // the previous frame's P22, P32, depth range end
@@ -60,7 +61,8 @@ cbuffer Frame : register(b0) {
     float4 glass;         // the clear glass's reflections (glass_light.hlsl): x its reflectance at normal incidence
                           // (Reflections.GlassReflectance), y 1 when they are on (Reflections.Glass)
     float4 probe;         // xy: where the probe aims (probe.hlsl), fractions of the screen (Test.ProbePixel)
-    float4 terrain;       // rgb: the albedo of a surface whose material is not known, the terrain (GI.TerrainAlbedo)
+    float4 terrain;       // rgb: the albedo of a surface whose material is not known, the terrain (GI.TerrainAlbedo); w:
+                          // GI.Clamp (ray_clamp)
     float4 upscale;       // DLSS (dlss.h): xy the GI's render size (0: the frame's), zw the sample's offset from each of its
                           // pixels' centres (its pixels, y down); gi_size, gi_source
     float4 fog4;          // the volumetric fog: x the rays from each froxel a frame (Fog.Rays), y 1 when the froxels' light
@@ -189,6 +191,50 @@ bool seen_radiance(float3 hp, out float3 L) {
     if (!all(isfinite(c3))) return false;
     L = clamp(c3, 0.0, 1024.0) / PI;
     return true;
+}
+
+// The frame's particles that give light (GI.ScreenLight: the screens' particles; the core's tlas.h ScreenQuads), two a quad: its
+// bitmap's rectangle (u0 v0 u1 v1), then its colour x alpha x GI.ScreenLight and its bitmap's id + 1 (w's bits; 0 none). Their
+// quads are in the TLAS in mask 0x04 alone, non-opaque: no other ray meets them.
+StructuredBuffer<float4> screen_data : register(t8);
+static const uint kMaxScreenCrossings = 32;
+
+// The light of those particles along a ray from o along d, up to tmax (where it hits a surface): each quad it crosses adds
+// what the game draws there, min(its bitmap's colour x the bitmap's alpha x its colour, 1) (the particles' pixel shader,
+// without the sun's and the ambient's share), as radiance (over pi, the core's units; frame_scene.h ScreenQuad). They add up
+// in any order, and stop nothing. The bitmap is read two mips down (the light of a screen's picture, not its pixels).
+float3 screens_along(float3 o, float3 d, float tmax) {
+    if ((flags & 256u) == 0u) return 0.0;
+    RayDesc ray;
+    ray.Origin = o;
+    ray.Direction = d;
+    ray.TMin = 0.0;
+    ray.TMax = tmax;
+    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
+    q.TraceRayInline(scene, RAY_FLAG_NONE, 0x04, ray);
+    float3 L = 0.0;
+    uint crossings = 0;
+    while (q.Proceed()) {
+        if (q.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
+        const uint p = q.CandidatePrimitiveIndex();
+        const uint e = p >> 1;
+        // where across the quad: its corners (u, v) 0 (0, 0), 1 (1, 0), 2 (0, 1), 3 (1, 1); triangle 0 is corners 0 1 2,
+        // triangle 1 corners 2 1 3 (the barycentrics weigh the second and the third)
+        const float2 b = q.CandidateTriangleBarycentrics();
+        const float2 uv = (p & 1u) == 0u ? b : float2(b.x + b.y, 1.0 - b.x);
+        const float4 rect = screen_data[e * 2u];
+        const float4 c = screen_data[e * 2u + 1u];
+        const uint tex = asuint(c.w);
+        float4 t = float4(1.0, 1.0, 1.0, 1.0);
+        if (tex != 0u && tex <= kMaterialTextures)
+            t = material_textures[NonUniformResourceIndex(tex - 1u)].SampleLevel(material_sampler, lerp(rect.xy, rect.zw, uv), 2.0);
+        L += min(t.rgb * t.a * c.rgb, 1.0);
+        if (++crossings >= kMaxScreenCrossings) {
+            q.Abort();
+            break;
+        }
+    }
+    return L / PI;
 }
 
 // How much of the light from direction d gets to o: 0 behind anything opaque, the translucent glass's share for each

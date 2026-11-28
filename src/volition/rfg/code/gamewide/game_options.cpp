@@ -39,6 +39,7 @@ int Ambient_spawn_mult = 1; // OpenRFG: ambient pedestrian and traffic count mul
 char Coop_join_address[64] = "127.0.0.1";
 int Coop_port = 27420;
 extern bool Cheats_allow_saving; // OpenRFG: the cheats menu's "Allow saving with cheats" (stats.cpp), kept in the ini below
+extern int Vfx_screen_lights; // OpenRFG (VOM): the screens' light while path tracing (vfx_effect.cpp), kept in the ini below
 #include "volition/rfg/code/control/control_map.h"
 #include "volition/rfg/code/interface/option_menus/option_menu_system.h"
 
@@ -187,6 +188,9 @@ void game_options_ini_file_read_writer<0>::parse_display_settings(keen::FilePath
     lod.m_ssao_quality = (unsigned char)keen::readIniFileInt(path, "graphics", "ssao_quality", rl_lod_get_ssao_level(lod) > 0 ? rl_lod_get_ssao_level(lod) : 2);
     // OpenRFG: the Dynamic Lights level (0 off .. 4 very high, rl_dynamic_lights.h).
     rl_lod_set_dynamic_lights_level(lod, keen::readIniFileInt(path, "graphics", "dynamic_lights", rl_lod_get_dynamic_lights_level(lod)));
+    // OpenRFG (VOM): the screens' light while path tracing (0 the path tracer's from their particles, 1 game lights as in
+    // STANDARD; vfx_effect.cpp Vfx_screen_lights).
+    Vfx_screen_lights = keen::readIniFileInt(path, "graphics", "screen_lights", Vfx_screen_lights) != 0 ? 1 : 0;
     // OpenRFG: World Detail Distance (0 normal, 1 high, 2 ultra; stream_world_detail_level_radius).
     rl_lod_set_world_detail_level(lod, keen::readIniFileInt(path, "graphics", "world_detail_distance", rl_lod_get_world_detail_level(lod)));
     // OpenRFG: LOD Detail and Draw Distance (0 normal, 1 high, 2 very high; rl_lod_detail_distance, rl_draw_distance).
@@ -371,6 +375,7 @@ extern int Ambient_range_pct; // OpenRFG: defined in the non-audio half above (r
 extern int Ambient_spawn_mult; // OpenRFG: likewise
 extern char Coop_join_address[64]; // OpenRFG: likewise (co-op)
 extern int Coop_port; // OpenRFG: likewise (co-op)
+extern int Vfx_screen_lights; // OpenRFG (VOM): the screens' light while path tracing (vfx_effect.cpp), written below
 
 #include "volition/rfg/code/gamewide/game_options.h"
 #include "volition/audio_lib/code/audiolib_api.h"
@@ -968,6 +973,7 @@ void game_options_ini_file_read_writer<1>::parse_display_settings(keen::FilePath
         keen::writeIniFileInt(path, "graphics", "ssao_quality", (ssao_quality < 1 || ssao_quality > 4) ? 1 : ssao_quality);
     }
     keen::writeIniFileInt(path, "graphics", "dynamic_lights", rl_lod_get_dynamic_lights_level(lod)); // OpenRFG
+    keen::writeIniFileInt(path, "graphics", "screen_lights", Vfx_screen_lights); // OpenRFG (VOM)
     keen::writeIniFileInt(path, "graphics", "world_detail_distance", rl_lod_get_world_detail_level(lod)); // OpenRFG
     keen::writeIniFileInt(path, "graphics", "lod_detail", rl_lod_get_lod_detail_level(lod)); // OpenRFG
     keen::writeIniFileInt(path, "graphics", "draw_distance", rl_lod_get_draw_distance_level(lod)); // OpenRFG

@@ -160,6 +160,10 @@ private:
     linked_list_p<rl_renderable_instance> m_renderable_mesh_insts; // 0xB0
     linked_list_p<rl_light> m_lights; // 0xB8
     rl_renderable_particles_instance_group* m_renderable_particles_instance_group_p; // 0xC0
+    // OpenRFG (VOM): whether the effect is a screen (a synthetic light profile of one: vfx_effect.cpp), worked out once
+    // for the template it was for (update_render: its particles give the path tracer their light).
+    const vfx_effect_template* m_screen_template_p;
+    bool m_is_screen;
 };
 
 vfx_effect* vfx_effect_create(vfx_effect_template* effect_template_p); // 0x00CBA700 (:1220)

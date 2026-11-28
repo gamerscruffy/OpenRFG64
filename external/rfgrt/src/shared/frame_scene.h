@@ -103,6 +103,25 @@ struct Emitter {
 };
 static_assert(sizeof(Emitter) == 32, "fixed layout");
 
+// A screen's particle that gives light (GI.ScreenLight: the screens' particles, as VOM's particle renderer draws them;
+// mirror/screen_quads.h): a quad, its corner at u, v (0..1 across its bitmap's rectangle) at center + (2u - 1) axis_u +
+// (2v - 1) axis_v. Where the game draws it, it adds min(its bitmap's colour x the bitmap's alpha x alpha x color, 1)
+// (rl_particle_standard_billboard's pixel shader, without the sun's and the ambient's share: the particle's own light);
+// the radiance it sends is that over pi, in the core's units, both ways.
+constexpr uint32_t kMaxScreenQuads = 512;
+struct ScreenQuad {
+    float center[3];   // render-offset space
+    uint32_t texture;  // its bitmap: the core's texture id + 1 (mirror/textures.h); 0 none (its colour alone)
+    float axis_u[3];
+    float alpha;       // the particle's alpha, the effect's opacity in it
+    float axis_v[3];
+    uint32_t flags;    // bit 0: drawn additive
+    float color[3];    // the particle's colour, the effect's tint in it
+    float pad;
+    float uv[4];       // the bitmap's rectangle (its animation frame's): u0, v0, u1, v1
+};
+static_assert(sizeof(ScreenQuad) == 80, "fixed layout");
+
 struct SlotHeader {
     volatile int64_t frame;  // the frame this slot holds; 0 while the plugin writes it
     uint32_t instance_count;
@@ -150,6 +169,11 @@ struct SlotHeader {
     // OpenRFG64: each emitter's texture for its light's colour, the core's texture id + 1 (0: none): a glowing mesh's
     // diffuse map (a screen's picture), whose average colour tints its light (gi_trace.hlsl emitter_light)
     uint32_t emitter_texture[kMaxEmitters];
+    // The particles that give light, drawn in the frame before (mirror/screen_quads.h).
+    uint32_t screen_quad_count;
+    uint32_t screen_quads_dropped;  // more than kMaxScreenQuads: the last left out
+    uint32_t pad7[2];
+    ScreenQuad screen_quads[kMaxScreenQuads];
 };
 
 // A slot: the header, then max_instances Instance records, max_skins Skin records and max_bones Bone matrices.

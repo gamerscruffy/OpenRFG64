@@ -157,6 +157,8 @@ void main(uint3 id : SV_DispatchThreadID) {
             l += through * gi2.x * shade_hit(origin, dir, q.CommittedRayT(), q.CommittedInstanceID(), q.CommittedGeometryIndex(),
                                                q.CommittedPrimitiveIndex(), q.CommittedTriangleBarycentrics(),
                                                q.CommittedObjectToWorld3x4(), h2 ^ 0x68E31DA4u);
+        // the screens' pictures it crosses before that (GI.ScreenLight: screens_along), under GI.Clamp with the rest
+        l += screens_along(origin, dir, hit ? q.CommittedRayT() : gi.y);
         sum += ray_clamp(l);  // OpenRFG64: GI.Clamp
     }
     float3 e = PI * sum / float(rays);  // cosine-weighted: E = pi * the mean radiance

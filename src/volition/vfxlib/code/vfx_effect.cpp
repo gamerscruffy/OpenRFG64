@@ -34,6 +34,7 @@ void openrfg_log(const char* text); // crash_early.cpp
 #include "volition/vfxlib/code/vfx_particle_system_emitter.h"
 #include "volition/vfxlib/code/vfx_particle_system_filter.h"
 #include "volition/vlib/code/math/quaternion.h"
+#include "backends/backends.h" // OpenRFG (VOM): the screens' light while path tracing
 
 #include <new>
 
@@ -274,6 +275,8 @@ void vfx_effect::init()
 
     vfx_effect_template::vfx_data* data_p = m_effect_template_p->m_vfx_data_p;
 
+    m_screen_template_p = nullptr; // OpenRFG (VOM): worked out at the first update_render
+    m_is_screen = false;
     m_emitters.init();
     m_renderable_particles_instance_group_p = rl_renderable_particles_instance_group::create();
     m_renderable_particles_instance_group_p->set_sort_priority((unsigned short)group_sort_priority);
@@ -749,6 +752,19 @@ static const vfx_synthetic_light_profile* vfx_synthetic_light_profile_find(const
     return nullptr;
 }
 
+// OpenRFG (VOM): the screens' light while path tracing ([graphics] screen_lights; game_options.cpp): 0 the path
+// tracer's, the screens' particles giving it from what they show (rl_particle_renderer.cpp Rl_rt_screens_sink;
+// research/docs/05-particle-emission-plan.md); 1 the game lights above, as in STANDARD.
+int Vfx_screen_lights = 0;
+struct rfgrt_screen_quad;
+extern void (*Rl_rt_screens_sink)(const rfgrt_screen_quad* quads, unsigned int count);
+
+// Whether the screens' particles give the path tracer their light now, in place of their game lights.
+static bool vfx_screens_path_traced()
+{
+    return Vfx_screen_lights == 0 && Rl_rt_screens_sink != nullptr && openrfg_backends_effective_renderer() == OPENRFG_RENDERER_PATH_TRACED;
+}
+
 // 0x00CA3CC0 (:450)
 void vfx_effect::kill_lights()
 {
@@ -1043,6 +1059,15 @@ void vfx_effect::update_render(float delta_time, bool is_visible, rl_renderer* p
     group_p->m_effect_material_tint = m_effect_material_tint;
     group_p->update_partition_system();
 
+    // OpenRFG (VOM): a screen's particles give the path tracer their light while it traces (vfx_screens_path_traced).
+    if (m_screen_template_p != m_effect_template_p)
+    {
+        m_screen_template_p = m_effect_template_p;
+        const vfx_synthetic_light_profile* profile_p = vfx_synthetic_light_profile_find(m_effect_template_p->m_vfx_data_p->effect_name.to_pointer());
+        m_is_screen = profile_p != nullptr && profile_p->hue_from_screen;
+    }
+    const float rt_emission = m_is_screen && vfx_screens_path_traced() ? 1.0f : 0.0f;
+
     // Emitters: render state, and the parametric constants once the expressions changed them.
     vfx_particle_system_emitter_instance* instance_p = m_emitters.first();
     while (instance_p != nullptr)
@@ -1070,6 +1095,7 @@ void vfx_effect::update_render(float delta_time, bool is_visible, rl_renderer* p
             }
             renderable_instance_p->m_is_visible = m_is_visible && instance_p->m_is_visible;
             renderable_instance_p->m_has_alternate_view = instance_p->m_has_alternate_view;
+            renderable_instance_p->m_rt_screen_light = rt_emission; // OpenRFG (VOM)
             if (!emitter_p->is_iterative && constants_p != nullptr)
             {
                 constants_p->m_time = instance_p->current_elapsed_time;
@@ -1382,7 +1408,8 @@ void vfx_effect::update_dynamic_lights()
     {
         // OpenRFG: the synthetic light (see vfx_synthetic_light_profile).
         const vfx_synthetic_light_profile* profile_p = vfx_synthetic_light_profile_find(m_effect_template_p->m_vfx_data_p->effect_name.to_pointer());
-        if (profile_p == nullptr || Rl_dynamic_lights_level <= 0)
+        // (a screen's light is the path tracer's while it traces: vfx_screens_path_traced)
+        if (profile_p == nullptr || Rl_dynamic_lights_level <= 0 || (profile_p->hue_from_screen && vfx_screens_path_traced()))
         {
             light_p->set_is_visible(false);
             return;

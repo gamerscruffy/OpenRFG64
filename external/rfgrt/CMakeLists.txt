@@ -166,6 +166,7 @@ add_library(rfgrt SHARED
     src/rfgrt/render/emitters.cpp
     src/rfgrt/menu/display_rows.cpp
     src/rfgrt/rt/link.cpp
+    src/rfgrt/mirror/screen_quads.cpp
     src/rfgrt/mirror/geometry.cpp
     src/rfgrt/mirror/geometry_census.cpp
     src/rfgrt/mirror/instances.cpp

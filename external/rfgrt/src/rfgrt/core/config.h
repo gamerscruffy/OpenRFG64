@@ -78,6 +78,10 @@ struct Config {
     // sunlit surfaces' (at most 32 times); at most 0.5, as those bounces feed back; 0: as the game draws them. Equal to
     // GI.SunBounceAlbedo, the rays need not ask whether the sun reaches what they hit.
     double gi_shade_bounce_albedo = 0.2;
+    // The particles that give light (GI.ScreenLight: the screens' particles, as a game with that seam hands them, OpenRFG64
+    // VOM's particle renderer; mirror/screen_quads.h): their light in the GI, times what the game draws them with (1 as drawn;
+    // 0: they light nothing, and none are taken).
+    double gi_screen_light = 1.0;
     double gi_sky_drawn = 1.0;    // the sky rays that get out see: 0 the game's ambient colour, 1 the drawn sky's colour at
                                   // the ambient's brightness, 2 the drawn sky as it is (about 4x darker); between: blends
     int gi_denoiser = 2;          // the GI's denoiser: 0 one 7x7 pass, 1 an edge-avoiding wavelet over ~61 x 61 pixels, 2 DLSS
