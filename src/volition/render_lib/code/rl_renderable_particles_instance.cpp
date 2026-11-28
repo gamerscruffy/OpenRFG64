@@ -52,6 +52,7 @@ rl_renderable_particles_instance::rl_renderable_particles_instance()
     m_is_visible = true;
     m_effect_material_tint.blue = 0.0f;
     m_effect_material_tint.alpha = 0.0f;
+    m_rt_emission = 0.0f; // OpenRFG (VOM)
 }
 
 // 0x0052CF70 (:38): the parametric constant block goes back to its pool (the particle arrays belong to the renderer's

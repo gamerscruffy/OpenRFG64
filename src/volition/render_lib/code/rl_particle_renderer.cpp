@@ -35,6 +35,7 @@ static bool dbg_part_key(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; 
 #include <stdio.h>
 #include "volition/render_lib/code/rl_renderer_core.h"
 #include "volition/render_lib/code/rl_screen_info.h"
+#include "../../../../external/rfgrt/src/rfgrt/hooks/binding.h" // OpenRFG (VOM): rfgrt_emitter_quad
 #include "volition/render_lib/code/rl_shader_library.h"
 #include "volition/vlib/code/math/crc.h"
 #include "volition/vlib/code/memory/vmemory.h"
@@ -742,6 +743,101 @@ static void particle_set_color_correction(keen::ParticleFragmentShaderConstants&
 // constant block (the shader runs the curves); the material's constants and texture, the blend state, the lighting
 // (or none in the distortion pass) and the technique (parametric, soft) are set, the filler of the render type fills
 // at most 499 particles, and the instance's particle lists are emptied for the next frame.
+// OpenRFG (VOM): the path tracer's particles that give light (rfgrt's rfgrt_particle_emitters; research/docs/05): set by
+// the path tracing backend (backends/rt/rt_backend.cpp) when it takes them, null otherwise.
+void (*Rl_rt_emitters_sink)(const rfgrt_emitter_quad* quads, unsigned int count) = nullptr;
+
+// OpenRFG (VOM): an instance's particles that give light (rl_renderable_particles_instance::m_rt_emission) to the path
+// tracer as the game draws them: each billboard's quad as rl_particle_standard_billboard's vertex shader places it, about
+// the eye orientation it is drawn with (`eye`: an alternate view's, a screen's, or the camera's): its corner at uv (u, v)
+// is the particle's position + (u - 0.5) width A + (v - 0.5) length B, A = cos(rotation) right + sin(rotation) up,
+// B = sin(rotation) right - cos(rotation) up; its bitmap's rectangle the animation frame's (frame int(time x frames) mod
+// frames of the strip's `tiling`, column frame mod its width, row frame / its width); its colour the vertex colour with
+// the effect's tint in it and its alpha the effect's opacity's (the vertex and pixel shaders, without the ambient's and
+// the sun's shares: the particle's own light). Iterative billboards only (the screens' layers).
+static void rl_rt_emitters_capture(rl_renderable_particles_instance* instance_p, rl_renderable_particles* renderable_p, const matrix& eye,
+                                   float opacity, const rl_color_float& tint, float material_percent, int bitmap, bool additive, float tiles_x, float tiles_y)
+{
+    if (!renderable_p->get_is_iterative() || renderable_p->get_particle_type() != rl_particle_base::RENDER_TYPE_BILLBOARD)
+    {
+        return;
+    }
+    // Magic number: a screen has a particle a layer; at most 64 an instance.
+    static const int MAX_QUADS = 64;
+    rfgrt_emitter_quad quads[MAX_QUADS];
+    unsigned int n = 0;
+    const int count = instance_p->get_particle_iterative_list().size();
+    const bool local_space = renderable_p->get_local_space_emission();
+    const int columns = tiles_x >= 1.0f ? (int)tiles_x : 1;
+    const float rows = tiles_y >= 1.0f ? tiles_y : 1.0f;
+    const int frames = (int)((float)columns * rows);
+    const float red = 1.0f + (tint.red - 1.0f) * material_percent;
+    const float green = 1.0f + (tint.green - 1.0f) * material_percent;
+    const float blue = 1.0f + (tint.blue - 1.0f) * material_percent;
+    for (int i = 0; i < count && n < (unsigned int)MAX_QUADS; i++)
+    {
+        const rl_particle_iterative& particle = instance_p->get_particle_iterative_list()[i];
+        const float alpha = particle.current_color.alpha * opacity;
+        // Magic number: the vertex shader moves a particle this faint off the screen.
+        if (!(alpha >= 1e-05f))
+        {
+            continue;
+        }
+        vector position = particle.position;
+        if (local_space)
+        {
+            const matrix& rotation = instance_p->get_local_emission_rotation();
+            const vector& origin = instance_p->get_local_emission_position();
+            const vector local = position;
+            position.x = rotation.rvec.x * local.x + rotation.uvec.x * local.y + rotation.fvec.x * local.z + origin.x;
+            position.y = rotation.rvec.y * local.x + rotation.uvec.y * local.y + rotation.fvec.y * local.z + origin.y;
+            position.z = rotation.rvec.z * local.x + rotation.uvec.z * local.y + rotation.fvec.z * local.z + origin.z;
+        }
+        const float s = sinf(particle.rotation_angle);
+        const float c = cosf(particle.rotation_angle);
+        const float half_width = 0.5f * particle.current_size;
+        const float half_length = 0.5f * particle.current_length;
+        rfgrt_emitter_quad& q = quads[n];
+        q.center[0] = position.x;
+        q.center[1] = position.y;
+        q.center[2] = position.z;
+        q.axis_u[0] = (c * eye.rvec.x + s * eye.uvec.x) * half_width;
+        q.axis_u[1] = (c * eye.rvec.y + s * eye.uvec.y) * half_width;
+        q.axis_u[2] = (c * eye.rvec.z + s * eye.uvec.z) * half_width;
+        q.axis_v[0] = (s * eye.rvec.x - c * eye.uvec.x) * half_length;
+        q.axis_v[1] = (s * eye.rvec.y - c * eye.uvec.y) * half_length;
+        q.axis_v[2] = (s * eye.rvec.z - c * eye.uvec.z) * half_length;
+        q.bitmap = bitmap;
+        q.alpha = alpha;
+        q.flags = additive ? 1u : 0u;
+        q.color[0] = particle.current_color.red * red;
+        q.color[1] = particle.current_color.green * green;
+        q.color[2] = particle.current_color.blue * blue;
+        q.pad = 0.0f;
+        int frame = 0;
+        if (frames > 1)
+        {
+            // get_uv_anim_time's: the particle's age over its lifetime (clamped), times the rate, plus its random frame
+            float age = (instance_p->get_current_elapsed_time() - particle.time_created) / (particle.lifetime + 1e-06f);
+            age = age < 0.0f ? 0.0f : (age > 1.0f ? 1.0f : age);
+            const float random = renderable_p->get_texture_anim_random_frames() ? particle.random.w : 0.0f;
+            frame = (int)((instance_p->get_texture_anim_rate() * age + random) * (float)frames) % frames;
+            frame = frame < 0 ? frame + frames : frame;
+        }
+        const float column = (float)(frame % columns);
+        const float row = (float)(frame / columns);
+        q.uv[0] = column / (float)columns;
+        q.uv[1] = row / rows;
+        q.uv[2] = (column + 1.0f) / (float)columns;
+        q.uv[3] = (row + 1.0f) / rows;
+        n++;
+    }
+    if (n != 0)
+    {
+        Rl_rt_emitters_sink(quads, n);
+    }
+}
+
 void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera, rl_renderable_particles_instance* instance_p, const rl_particle_lighting_state& lighting_state, const bool is_distortion_pass)
 {
     rl_renderable_particles* renderable_p = instance_p->get_renderable_particles();
@@ -924,6 +1020,14 @@ void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera
     if (!renderer.set_active_shader(material_p->effect_ref, rl_shader_technique_user, m_particle_shader_techniques[render_type].m_technique_refs[technique].get_ref()))
     {
         return;
+    }
+    // OpenRFG (VOM): the particles that give light, to the path tracer as drawn here (rl_rt_emitters_capture).
+    if (instance_p->m_rt_emission > 0.0f && Rl_rt_emitters_sink != nullptr && !is_distortion_pass)
+    {
+        const int bitmap = -1 < textures_p[0].tex_stage ? textures_p[0].tex_ref : -1;
+        rl_rt_emitters_capture(instance_p, renderable_p, has_alternate_view ? alternate_view.m_rotation : camera.get_rotation(), opacity, tint,
+                               renderable_p->get_effect_material_percent(), bitmap, (flags & rl_particle_material_data::MATERIAL_FLAG_ADDITIVE) != 0,
+                               m_vertexData.effectUvAnimTiling.x, m_vertexData.effectUvAnimTiling.y);
     }
     unsigned int num_verts = 0;
     unsigned int num_prims = 0;
