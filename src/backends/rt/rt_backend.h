@@ -16,3 +16,6 @@ bool openrfg_rt_set_active(bool on);
 void openrfg_rt_set_dlss_mode(int mode);
 // DLSS Frame Generation on or off, anywhere: from the next present (the plugin's presenter).
 void openrfg_rt_set_frame_generation(bool on);
+// OpenRFG64: a glowing thing lights the rays this frame (backends.h openrfg_backends_add_emitter); nothing with a plugin
+// without emitters.
+void openrfg_rt_add_emitter(const float position[3], const float color[3], float radius, float range, const void* key);

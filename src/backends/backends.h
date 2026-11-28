@@ -122,6 +122,10 @@ bool openrfg_backends_keep_debris_resolved(int keep_debris);
 
 // What runs (or will, at the next openrfg_backends_apply).
 int openrfg_backends_effective_renderer();
+// OpenRFG64: a glowing thing (an additive particle emitter, a corona) lights the path tracer's rays this frame: a sphere
+// at `position` (world space) of `radius` metres giving off `color` (the game's light units, its irradiance at 1 m),
+// reaching `range` metres. `key` names it from frame to frame (the game's object). Does nothing unless path tracing runs.
+void openrfg_backends_add_emitter(const float position[3], const float color[3], float radius, float range, const void* key);
 int openrfg_backends_effective_physics();
 bool openrfg_backends_effective_keep_debris();
 // KEEP DEBRIS right now: PhysX runs or is starting, and KEEP DEBRIS is on. Cheap, for the game's hot paths

@@ -65,6 +65,7 @@ inline uint32_t rl_scene__remove_renderable_instance = 0x00137640;  // Steam 0x0
 inline uint32_t matrix__set_angles = 0x001756E0;  // Steam 0x001757E0; matrix::set, 479 bytes: void __thiscall matrix::(float, float, float)
 inline uint32_t resolve_material_handle = 0x000E8ED0;  // Steam 0x000E8F50; resolve_material_handle, 70 bytes: rl_material_base* __cdecl(uint, bool)
 inline uint32_t Material_getTextureDataByName = 0x00111170;  // Steam 0x00111220; rl_material::get_texture_data, 65 bytes: bool __thiscall rl_material::(int*, rchar*)
+inline uint32_t bm_get_entry = 0x0;  // OpenRFG64 only (by hand; tools/symbols.txt): bitmap_entry* __cdecl(int, bool)
 inline uint32_t get_dev_texture = 0x000F1DB0;  // Steam 0x000F1E50; get_dev_texture, 115 bytes: rl_dev_texture __cdecl(int)
 inline uint32_t Material_getConstantDataByName = 0x000E8CF0;  // Steam 0x000E8D70; rl_material::get_constant_data, 91 bytes: bool __thiscall rl_material::(float*, rchar*, int)
 inline uint32_t Material_getConstantLocByName = 0x000E8E20;  // Steam 0x000E8EA0; rl_material::get_constant_loc, 49 bytes: int __thiscall rl_material::(rchar*)
@@ -251,6 +252,11 @@ inline uint32_t MaterialMapData_num = 0x4;  // rl_material_map_data_runtime::num
 inline uint32_t Material_data = 0x18;  // rl_material::m_data: rl_material_data*
 inline uint32_t MaterialData_flags = 0x8;  // rl_material_data::mat_flags: uint
 inline uint32_t MaterialData_shader = 0x0;  // rl_material_data::shader_handle: uint
+inline uint32_t BitmapEntry_filename = 0x0;  // bitmap_entry::filename_ptr: char* (OpenRFG64 by hand)
+inline uint32_t BitmapEntry_peg = 0x4;  // bitmap_entry::current_peg_entry: peg_entry*
+inline uint32_t BitmapEntry_frame = 0x8;  // bitmap_entry::frame_number: ushort
+inline uint32_t PegEntry_frames = 0x10;  // peg_entry::num_frames: ushort
+inline uint32_t PegEntry_fps = 0x1A;  // peg_entry::fps: uchar
 inline uint32_t Scene_renderOffset = 0x18C;  // rl_scene::m_render_offset: vector
 inline uint32_t Scene_largestLight = 0x130;  // rl_scene::m_largest_light_p: rl_light*
 inline uint32_t Scene_largestLightDefault = 0x12C;  // rl_scene::m_largest_light_default_p: rl_light*
@@ -321,6 +327,7 @@ inline constexpr RvaEntry kRvaTable[] = {
     {&rva::matrix__set_angles, {0x001756E0, 0x001757E0}},
     {&rva::resolve_material_handle, {0x000E8ED0, 0x000E8F50}},
     {&rva::Material_getTextureDataByName, {0x00111170, 0x00111220}},
+    {&rva::bm_get_entry, {0x0, 0x0}},
     {&rva::get_dev_texture, {0x000F1DB0, 0x000F1E50}},
     {&rva::Material_getConstantDataByName, {0x000E8CF0, 0x000E8D70}},
     {&rva::Material_getConstantLocByName, {0x000E8E20, 0x000E8EA0}},
@@ -502,6 +509,11 @@ inline constexpr RvaEntry kRvaTable[] = {
     {&off::Material_data, {0x18, 0x18}},
     {&off::MaterialData_flags, {0x8, 0x8}},
     {&off::MaterialData_shader, {0x0, 0x0}},
+    {&off::BitmapEntry_filename, {0x0, 0x0}},
+    {&off::BitmapEntry_peg, {0x4, 0x4}},
+    {&off::BitmapEntry_frame, {0x8, 0x8}},
+    {&off::PegEntry_frames, {0x10, 0x10}},
+    {&off::PegEntry_fps, {0x1A, 0x1A}},
     {&off::Scene_renderOffset, {0x18C, 0x18C}},
     {&off::Scene_largestLight, {0x130, 0x130}},
     {&off::Scene_largestLightDefault, {0x12C, 0x12C}},
@@ -568,6 +580,7 @@ inline uint32_t rl_scene__remove_renderable_instance = 97;
 inline uint32_t matrix__set_angles = 479;
 inline uint32_t resolve_material_handle = 70;
 inline uint32_t Material_getTextureDataByName = 65;
+inline uint32_t bm_get_entry = 0;
 inline uint32_t get_dev_texture = 115;
 inline uint32_t Material_getConstantDataByName = 91;
 inline uint32_t Material_getConstantLocByName = 49;

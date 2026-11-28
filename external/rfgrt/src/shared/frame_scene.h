@@ -91,6 +91,18 @@ struct Light {
 };
 static_assert(sizeof(Light) == 48, "fixed layout");
 
+// OpenRFG64: a glowing thing that lights the path tracer's rays (render/emitters.h): additive particles (sparks, fire,
+// the jetpack's flame), coronas (the glow over a street light) and glowing meshes. A sphere of `radius` giving off
+// `color` (the game's light units: its irradiance at 1 m, straight on); the GI samples one a pixel (gi_trace.hlsl).
+constexpr uint32_t kMaxEmitters = 64;
+struct Emitter {
+    float position[3];  // render-offset space
+    float radius;       // the sphere it gives off its light from (at least 5 cm)
+    float color[3];
+    float range;        // it lights nothing beyond this
+};
+static_assert(sizeof(Emitter) == 32, "fixed layout");
+
 struct SlotHeader {
     volatile int64_t frame;  // the frame this slot holds; 0 while the plugin writes it
     uint32_t instance_count;
@@ -128,6 +140,14 @@ struct SlotHeader {
     uint32_t lights_dropped;  // more lights than masks: the farthest go without
     uint32_t pad4[2];
     Light lights[kMaxLights];
+    // OpenRFG64: the emitters (render/emitters.h), the brightest kMaxEmitters near the camera
+    uint32_t emitter_count;
+    uint32_t emitters_dropped;
+    uint32_t pad6[2];
+    Emitter emitters[kMaxEmitters];
+    // OpenRFG64: each emitter's texture for its light's colour, the core's texture id + 1 (0: none): a glowing mesh's
+    // diffuse map (a screen's picture), whose average colour tints its light (gi_trace.hlsl emitter_light)
+    uint32_t emitter_texture[kMaxEmitters];
 };
 
 // A slot: the header, then max_instances Instance records, max_skins Skin records and max_bones Bone matrices.

@@ -51,6 +51,6 @@ void main(uint3 id : SV_DispatchThreadID) {
                              q.CommittedPrimitiveIndex(), q.CommittedTriangleBarycentrics(), q.CommittedObjectToWorld3x4(),
                              h2 ^ 0x68E31DA4u);
     // OpenRFG64: the glow halos it crossed on the way (GI.Glow); nothing not finite kept for the history
-    const float3 r = through * env + PI * panes_glow(panes, hit ? q.CommittedRayT() : gi.y);
+    const float3 r = ray_clamp(through * env + PI * panes_glow(panes, hit ? q.CommittedRayT() : gi.y));  // OpenRFG64: GI.Clamp
     traced[id.xy] = float4(all(isfinite(r)) ? r : float3(0.0, 0.0, 0.0), 1.0);
 }

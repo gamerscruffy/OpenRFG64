@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -21,6 +22,7 @@
 #include "mirror/geometry.h"
 #include "mirror/textures.h"
 #include "render/gi.h"
+#include "render/emitters.h"
 #include "render/lights.h"
 #include "rt/link.h"
 #include "scene_ring.h"
@@ -243,6 +245,52 @@ void fill_clouds(rfgrt_frame::SlotHeader* h) {
 }
 
 // Telemetry: the shaders a skinned mesh's (a character's) material map draws with, each map's entries once.
+// OpenRFG64: a mesh's light as an emitter (render/emitters.h): the brightest of its material map's emitter entries
+// (textures.cpp: kMaterialEmitter, its colour times its strength), by map; false for a map with none. Its materials are
+// read once (the game's lookups), the snapshot's thread alone.
+std::unordered_map<const uint8_t*, std::array<float, 4>> g_mesh_emission;
+std::unordered_map<const uint8_t*, std::pair<uint32_t, float>> g_mesh_emission_info;  // its texture, Self_Illumination (log)
+
+bool mesh_emission(const uint8_t* map, float out[3], uint32_t* texture = nullptr, float* self_lit = nullptr) {
+    if (!map) return false;
+    auto it = g_mesh_emission.find(map);
+    if (it == g_mesh_emission.end()) {
+        std::array<float, 4> v{0.0f, 0.0f, 0.0f, 0.0f};
+        const uint32_t* materials = nullptr;
+        uint32_t num = 0;
+        if (map_entries(map, &materials, &num) && materials && num <= 256) {
+            float best = 0.0f;
+            for (uint32_t i = 0; i < num; ++i) {
+                rfgrt_scene::MaterialEntry e;
+                if (!textures::material_entry(materials[i], &e) || !(e.flags & rfgrt_scene::kMaterialEmitter)) continue;
+                const float c[3] = {e.color[0] * e.self_illumination, e.color[1] * e.self_illumination,
+                                    e.color[2] * e.self_illumination};
+                const float l = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+                if (l > best && std::isfinite(l)) {
+                    best = l;
+                    v = {c[0], c[1], c[2], 1.0f};
+                    g_mesh_emission_info[map] = {e.texture, e.self_illumination};
+                }
+            }
+        }
+        if (g_mesh_emission.size() > 65536) {
+            g_mesh_emission.clear();
+            g_mesh_emission_info.clear();
+        }
+        it = g_mesh_emission.emplace(map, v).first;
+    }
+    if (it->second[3] == 0.0f) return false;
+    if (texture || self_lit) {
+        const auto info = g_mesh_emission_info.find(map);
+        if (texture) *texture = info != g_mesh_emission_info.end() ? info->second.first : 0u;
+        if (self_lit) *self_lit = info != g_mesh_emission_info.end() ? info->second.second : 0.0f;
+    }
+    out[0] = it->second[0];
+    out[1] = it->second[1];
+    out[2] = it->second[2];
+    return true;
+}
+
 void count_skinned_shaders(const uint8_t* map) {
     const uint32_t* materials = nullptr;
     uint32_t num = 0;
@@ -364,7 +412,7 @@ bool write_mesh_materials(uint32_t mesh, const MaterialsWaiting& w, bool partial
     if (partial) ++g_materials_partial;
     return true;
 }
-void send_mesh_materials(uint32_t mesh, const uint8_t* map, uint32_t clear, uint32_t translucent) {
+void send_mesh_materials(uint32_t mesh, const uint8_t* map, uint32_t clear, uint32_t translucent, bool skinned = false) {
     if (mesh < g_mesh_materials.size() && g_mesh_materials[mesh] == kMatDone) return;
     if (mesh >= (1u << 24)) return;
     if (mesh >= g_mesh_materials.size()) g_mesh_materials.resize(size_t(mesh) + 1024, kMatNew);
@@ -381,6 +429,12 @@ void send_mesh_materials(uint32_t mesh, const uint8_t* map, uint32_t clear, uint
             w.entries.resize(n);
             for (uint32_t i = 0; i < n; ++i) {
                 if (!textures::material_entry(materials[i], &w.entries[i])) ++g_materials_unread;
+                // OpenRFG64: a character's materials never give off light: its self-illuminated cloth (GI.SelfLit) lit
+                // up bright as a lamp (the yellow trousers)
+                if (skinned && (w.entries[i].flags & rfgrt_scene::kMaterialEmitter)) {
+                    w.entries[i].flags &= ~rfgrt_scene::kMaterialEmitter;
+                    w.entries[i].self_illumination = 0.0f;
+                }
                 ++g_material_entries;
                 if (w.entries[i].texture != textures::kNone) ++g_material_textured;
             }
@@ -1051,9 +1105,15 @@ void snapshot(uint8_t* renderer, uint8_t* scene, uint8_t* camera, int64_t frame)
                 uint8_t* const mmap = rfg::field<uint8_t*>(inst, rfg::off::MeshInstance_matMap);
                 const uint32_t gw = glass_of(mmap, &mclear, &mtranslucent);
                 if (cls == g_class.skin_instance) count_skinned_shaders(mmap);
-                send_mesh_materials(mesh, mmap, mclear, mtranslucent);
+                send_mesh_materials(mesh, mmap, mclear, mtranslucent, cls == g_class.skin_instance);
                 emit(world, mesh, rfg::field<uint32_t>(inst, rfg::off::MeshInstance_submeshIndex),
                      cls == g_class.skin_instance ? rfgrt_frame::kKindSkinned : rfgrt_frame::kKindMesh, pass, gw);
+                float glow[3];  // OpenRFG64: a lamp's or a screen's mesh lights the rays (not characters' self-lit parts)
+                uint32_t glow_texture = 0;
+                float glow_si = 0.0f;
+                if (cls == g_class.mesh_instance && n > before && emitters::enabled() &&
+                    mesh_emission(mmap, glow, &glow_texture, &glow_si))
+                    emitters::add_mesh(world.t, glow, glow_texture, glow_si);
                 if (cls == g_class.skin_instance && skins && n > before) {
                     if (!add_palette(inst, n - 1, skins, bones, max_skins, max_bones, skin_n, bone_n)) ++skins_dropped;
                     if (sample && skin_checks < 3 && check_skin(inst, mesh, world, offset)) ++skin_checks;
@@ -1210,6 +1270,7 @@ void snapshot(uint8_t* renderer, uint8_t* scene, uint8_t* camera, int64_t frame)
     h->skins_dropped = skins_dropped;
     h->pad2 = 0;
     lights::write(h);  // the dynamic lights collected for this frame (render/lights.h)
+    emitters::write(h, offset, cam.t);  // OpenRFG64: the glowing things that light the rays (render/emitters.h)
     rfgrt_ipc::store64(&h->frame, frame);
     link.frame_published(frame);
     std::lock_guard<std::mutex> lock(g_stats_mutex);

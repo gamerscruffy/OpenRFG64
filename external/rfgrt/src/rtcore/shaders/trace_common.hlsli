@@ -74,6 +74,15 @@ cbuffer Frame : register(b0) {
 
 static const float PI = 3.14159265;
 
+// OpenRFG64 GI.Clamp (terrain.w): the radiance one GI or reflection ray brings back, scaled down to at most this
+// luminance (0: as traced). A small bright emitter met by one ray in thousands lit its pixel for a frame: fireflies the
+// denoiser smeared into flicker, and the eye's adaptation followed them.
+float3 ray_clamp(float3 l) {
+    if (!all(isfinite(l))) return float3(0.0, 0.0, 0.0);
+    const float y = dot(l, float3(0.2126, 0.7152, 0.0722));
+    return terrain.w > 0.0 && y > terrain.w ? l * (terrain.w / y) : l;
+}
+
 // The game's fog's transmittance from the camera to a point v away from it (render-offset space, y up; fog_common.hlsli):
 // the game's leaves out the fog within its start (its first fog.z of optical depth: 15 to 30 m of its daytime fog), of
 // which the share fog.w stays (Fog.Near: 0 the game's, 1 the fog from the camera on). 1 without the fog's constants
@@ -563,12 +572,16 @@ float3 panes_through(Panes p, float tmax) {
 }
 
 // OpenRFG64: the light the glow halos before `tmax` give the ray (as panes_through, those beyond its hit left out).
+// A halo is a sprite far larger than its light, and one on a character (a light on Mason's gear) covered his clothes:
+// rays leaving them crossed it at once, and his clothes flashed its colour. A halo's light fades in over the first
+// kGlowNear metres of the ray.
+static const float kGlowNear = 1.0;
 float3 panes_glow(Panes p, float tmax) {
     float3 l = float3(0.0, 0.0, 0.0);
-    if (p.n > 0u && p.t.x < tmax) l += p.e0;
-    if (p.n > 1u && p.t.y < tmax) l += p.e1;
-    if (p.n > 2u && p.t.z < tmax) l += p.e2;
-    if (p.n > 3u && p.t.w < tmax) l += p.e3;
+    if (p.n > 0u && p.t.x < tmax) l += p.e0 * saturate(p.t.x / kGlowNear);
+    if (p.n > 1u && p.t.y < tmax) l += p.e1 * saturate(p.t.y / kGlowNear);
+    if (p.n > 2u && p.t.z < tmax) l += p.e2 * saturate(p.t.z / kGlowNear);
+    if (p.n > 3u && p.t.w < tmax) l += p.e3 * saturate(p.t.w / kGlowNear);
     return l;
 }
 
@@ -602,9 +615,11 @@ float3 shade_hit2(float3 origin, float3 dir, float t, uint instance, uint geomet
     if (hit_translucent(instance, geometry))
         return pane_radiance(origin + dir * t, hit_surface(instance, geometry, primitive, bary, to_world, dir, kDiffuseSpread * t), t);
     float3 seen;
-    if (seen_radiance(origin + dir * t, seen)) return seen;
+    if (seen_radiance(origin + dir * t, seen))
+        return seen;
     const float3 nh = hit_normal(instance, geometry, primitive, to_world, dir);
-    if (cache_radiance(origin + dir * t, nh, seen)) return seen;
+    if (cache_radiance(origin + dir * t, nh, seen))
+        return seen;
     const Surface s = hit_surface(instance, geometry, primitive, bary, to_world, dir, kDiffuseSpread * t);
     const float3 hp = origin + dir * t + s.n * (0.02 + 0.002 * t);
     float3 e = sun_at(hp, s.n);
@@ -681,7 +696,8 @@ float3 shade_hit(float3 origin, float3 dir, float t, uint instance, uint geometr
     if (hit_translucent(instance, geometry))
         return pane_radiance(origin + dir * t, hit_surface(instance, geometry, primitive, bary, to_world, dir, kDiffuseSpread * t), t);
     float3 seen;
-    if (seen_radiance(origin + dir * t, seen)) return seen * bounce_scale(origin + dir * t, dir, t, instance, geometry);
+    if (seen_radiance(origin + dir * t, seen))
+        return seen * bounce_scale(origin + dir * t, dir, t, instance, geometry);
     const float3 nh = hit_normal(instance, geometry, primitive, to_world, dir);
     if (cache_radiance(origin + dir * t, nh, seen))  // seen before, out of view now
         return seen * bounce_scale(origin + dir * t, dir, t, instance, geometry);

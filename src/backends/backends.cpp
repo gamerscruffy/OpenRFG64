@@ -389,6 +389,22 @@ int openrfg_backends_effective_renderer()
     return g_rt_on ? OPENRFG_RENDERER_PATH_TRACED : OPENRFG_RENDERER_STANDARD;
 }
 
+void openrfg_backends_add_emitter(const float position[3], const float color[3], float radius, float range, const void* key)
+{
+#if defined(OPENRFG_BACKEND_RT)
+    if (g_rt_on)
+    {
+        openrfg_rt_add_emitter(position, color, radius, range, key);
+    }
+#else
+    (void)position;
+    (void)color;
+    (void)radius;
+    (void)range;
+    (void)key;
+#endif
+}
+
 int openrfg_backends_effective_physics()
 {
     return physics_fallback_reason(g_settings.physics) == nullptr ? g_settings.physics : OPENRFG_PHYSICS_HAVOK;

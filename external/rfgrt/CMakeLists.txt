@@ -97,6 +97,9 @@ if(RFGRT_X64)
     # DLSS Ray Reconstruction (GI.Denoiser=2): NVIDIA's DLSS SDK in third_party/dlss, fetched by tools/fetch_dlss.ps1
     # (out of git). Without it the core builds without Ray Reconstruction and the GI keeps its own denoiser.
     set(RFGRT_DLSS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/dlss")
+    if(DEFINED OPENRFG_DLSS_SDK_RESOLVED)  # inside OpenRFG64: its cmake/openrfg_sdks.cmake found the SDK (maybe outside the tree)
+        set(RFGRT_DLSS_DIR "${OPENRFG_DLSS_SDK_RESOLVED}")
+    endif()
     set(RFGRT_DLSS_RUNTIME "${RFGRT_DLSS_DIR}/lib/Windows_x86_64/rel/nvngx_dlssd.dll")
     if(EXISTS "${RFGRT_DLSS_DIR}/include/nvsdk_ngx.h" AND EXISTS "${RFGRT_DLSS_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_s.lib"
        AND EXISTS "${RFGRT_DLSS_RUNTIME}")
@@ -159,6 +162,7 @@ add_library(rfgrt SHARED
     src/rfgrt/render/gi.cpp
     src/rfgrt/render/lights.cpp
     src/rfgrt/render/sky_particles.cpp
+    src/rfgrt/render/emitters.cpp
     src/rfgrt/menu/display_rows.cpp
     src/rfgrt/rt/link.cpp
     src/rfgrt/mirror/geometry.cpp
@@ -194,6 +198,9 @@ endif()
 # third_party/streamline, out of git, fetched by tools/fetch_streamline.ps1. Its runtime DLLs go next to the plugin,
 # which loads them from there; without them the plugin builds with frame generation unavailable.
 set(RFGRT_STREAMLINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/streamline")
+if(DEFINED OPENRFG_STREAMLINE_SDK_RESOLVED)  # inside OpenRFG64: its cmake/openrfg_sdks.cmake found the SDK (maybe outside the tree)
+    set(RFGRT_STREAMLINE_DIR "${OPENRFG_STREAMLINE_SDK_RESOLVED}")
+endif()
 set(RFGRT_STREAMLINE_RUNTIMES sl.interposer.dll sl.common.dll sl.dlss_g.dll sl.reflex.dll sl.pcl.dll nvngx_dlssg.dll)
 set(RFGRT_STREAMLINE_FOUND ${RFGRT_X64})
 if(NOT EXISTS "${RFGRT_STREAMLINE_DIR}/include/sl.h")

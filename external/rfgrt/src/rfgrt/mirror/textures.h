@@ -5,6 +5,7 @@
 // bindless table at the id given here (scene_ring.h kTextureAdd). Reflections and the GI's hits off screen then show the
 // surface's own colour instead of a plain grey (mirror/instances.cpp sends each mesh's materials, kMeshMaterials).
 #include <cstdint>
+#include <string>
 
 #include "scene_ring.h"
 
@@ -21,7 +22,9 @@ void set_enabled(bool on);
 bool enabled();
 // OpenRFG64: the light the emitters' materials give the rays (GI.Emissive: rfg-lightsource; GI.Glow: the rfg-vfx-glow
 // halos), in the game's units; 0 leaves them plain materials. Before the first material is read.
-void set_emission(double emissive, double glow);
+void set_emission(double emissive, double glow, double self_lit);
+// OpenRFG64: the screens' texture names (GI.Screens: pieces of names, comma-separated, any case); before the first scene
+void set_screens(const std::string& names);
 // The core's id for a game texture handle (rl_texture_desc's): the texture is copied and sent at a later seam. kNone
 // for no texture, textures off, or past the table's end. Any thread.
 uint32_t id_of(uint32_t handle);

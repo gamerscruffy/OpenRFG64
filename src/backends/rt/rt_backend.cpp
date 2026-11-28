@@ -41,6 +41,7 @@ namespace
     int (*g_set_active)(int) = nullptr;
     void (*g_set_dlss_mode)(int) = nullptr; // (a plugin without DLSS's modes has none)
     void (*g_set_frame_generation)(int) = nullptr; // (nor one without frame generation)
+    void (*g_add_emitter)(const float*, const float*, float, float, const void*) = nullptr; // (nor one without emitters)
 }
 
 bool openrfg_rt_start(bool on, int dlss_mode, bool frame_generation)
@@ -60,6 +61,8 @@ bool openrfg_rt_start(bool on, int dlss_mode, bool frame_generation)
     g_set_active = reinterpret_cast<int (*)(int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_active")));
     g_set_dlss_mode = reinterpret_cast<void (*)(int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_dlss_mode")));
     g_set_frame_generation = reinterpret_cast<void (*)(int)>(reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_set_frame_generation")));
+    g_add_emitter = reinterpret_cast<void (*)(const float*, const float*, float, float, const void*)>(
+        reinterpret_cast<void*>(GetProcAddress(module, "rfgrt_add_emitter")));
     if (set_binding == nullptr || initialize == nullptr || state == nullptr || g_set_active == nullptr)
     {
         return false;
@@ -91,5 +94,13 @@ void openrfg_rt_set_frame_generation(bool on)
     if (g_set_frame_generation != nullptr)
     {
         g_set_frame_generation(on ? 1 : 0);
+    }
+}
+
+void openrfg_rt_add_emitter(const float position[3], const float color[3], float radius, float range, const void* key)
+{
+    if (g_add_emitter != nullptr)
+    {
+        g_add_emitter(position, color, radius, range, key);
     }
 }

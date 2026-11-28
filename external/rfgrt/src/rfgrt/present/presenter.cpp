@@ -24,6 +24,7 @@
 #include "hooks/hooks.h"
 #include "present/framegen.h"
 #include "render/d3d_state.h"
+#include "render/seam.h"
 #if defined(RFGRT_STREAMLINE)
 #include "fg_motion_cs.h"  // dxc: g_fg_motion_cs
 #include "fg_ui_cs.h"      // dxc: g_fg_ui_cs
@@ -321,6 +322,16 @@ LRESULT CALLBACK parent_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     if (message == kCreateMessage) {
         make_child();
         return 0;
+    }
+    // OpenRFG64: tabbing out and back in, timed in the log (two GPU resets came near a tab-out: cause or effect?)
+    if (message == WM_ACTIVATEAPP) LOG("presenter: the game %s the foreground", wparam ? "came to" : "left");
+    else if (message == WM_SIZE) {
+        static bool minimized = false;
+        if ((wparam == SIZE_MINIMIZED) != minimized) {
+            minimized = wparam == SIZE_MINIMIZED;
+            LOG("presenter: the game's window %s (%ux%u)", minimized ? "minimized" : "restored", unsigned(LOWORD(lparam)),
+                unsigned(HIWORD(lparam)));
+        }
     }
     return CallWindowProcW(s.parent_proc, window, message, wparam, lparam);
 }
@@ -863,6 +874,20 @@ bool present_ours(IDXGISwapChain* game, UINT sync_interval, HRESULT& result) {
         s.broken = true;
         return false;
     }
+    // OpenRFG64: a GPU reset (a hang anywhere on the adapter: the driver resets it) removes our device. Its fences then
+    // read as done and its Present fails quietly, so our window stayed over the game's showing the last frame while the
+    // game ran on under it (a "freeze"). Ours hidden and dropped; the game's own chain, which survives, presents.
+    if (s.d3d12) {
+        const HRESULT removed = s.d3d12->GetDeviceRemovedReason();
+        if (removed != S_OK) {
+            LOG("presenter: our device was removed (0x%08lX, a GPU reset): the game's swap chain presents from now on",
+                static_cast<unsigned long>(removed));
+            ++s.stats.failed;
+            release_ours();
+            s.broken = true;
+            return false;
+        }
+    }
     ask_child();
     const HWND child = s.child.load();
     if (!child) return false;  // until the game window's thread made it
@@ -987,7 +1012,7 @@ bool present_ours(IDXGISwapChain* game, UINT sync_interval, HRESULT& result) {
         }
     }
     ++s.frames;
-    if (FAILED(result) && result != DXGI_ERROR_DEVICE_REMOVED && result != DXGI_ERROR_DEVICE_RESET) {
+    if (FAILED(result)) {  // OpenRFG64: a removed or reset device too (it was taken for a success: see above)
         LOG("presenter: our Present failed (0x%08lX): the game's swap chain presents from now on",
             static_cast<unsigned long>(result));
         ++s.stats.failed;
@@ -1016,6 +1041,7 @@ HRESULT STDMETHODCALLTYPE d_present(IDXGISwapChain* self, UINT sync_interval, UI
     // the game's chain (the one its frames end with) is taken over, ours and test presents go through as they are.
     if (s.on_seam) s.game = self;
     if (self == s.game && (flags & DXGI_PRESENT_TEST) == 0) {
+        seam::gpu_frame_end();  // OpenRFG64 timing: the game's GPU frame split (logged with the seam's numbers)
         if (active() && !s.broken) {
             HRESULT result = S_OK;
             if (present_ours(self, sync_interval, result)) {

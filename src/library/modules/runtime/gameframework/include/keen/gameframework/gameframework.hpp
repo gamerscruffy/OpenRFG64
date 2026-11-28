@@ -144,6 +144,8 @@ namespace keen
         bool wantsToQuit(const GameFrameworkSystem* pGameFramework); // 0x00C0F520
         bool getGameFrameworkWindowInfo(GameFrameworkWindowInfo* pWindowInfo, const GameFrameworkSystem* pGameFramework); // 0x00C0FC30
         void quitGame(GameFrameworkSystem* pFramework); // 0x00C0F560
+        // OpenRFG64: the window's close button calls this (once; a second click closes the window as before).
+        void setCloseRequestHandler(void (*pHandler)());
         void minimizeGameWindow(GameFrameworkSystem* pFramework); // 0x00C0F570
 
         // Crash reporting (backtraceuploader.cpp). rfg::Application registers the publisher's Backtrace endpoint here.
