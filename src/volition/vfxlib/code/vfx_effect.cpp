@@ -602,9 +602,25 @@ struct vfx_synthetic_light_profile
     bool fades; // a one-shot (explosion): dims over the effect's duration
     bool follows_corona; // blinks with the effect's first corona (radius, color alpha and intensity keys)
     bool hue_from_particles; // no corona color: use the first emitter's start color
+    bool hue_from_screen; // a screen: the mean of all its emitters' start colors (vfx_screen_hue)
+    float forward; // out of the effect along its facing (its fvec), so a screen on a wall lights the wall around it
+    float cluster; // the cluster rule's distance (0: 3 m)
+    bool toward_view; // forward to whichever side of the effect faces the camera (a computer's effect faces either way)
+    float pale; // 0..1: how far a hue the effect gives goes toward white (its colors are deeper than the light it casts)
 };
 
 static const vfx_synthetic_light_profile Vfx_synthetic_light_profiles[] = {
+    // Screens (the propaganda kiosks' env_news_kiosk_*, the EDF's computers' env_edf_screen_*, the machines'
+    // env_*_screen_* and _scrn_): particle effects, layers of images, text and scanlines over a backing, that light
+    // nothing around them by themselves. Their light takes the screen's own colors (vfx_screen_hue), so it changes with
+    // what the screen shows (a kiosk's idle, alert and news effects). The light sits a little in front of the screen: a
+    // kiosk's screens face out along their effects' fvec, a computer's effect faces either way (toward the camera then:
+    // a screen on a wall is seen from its room). A kiosk's screens back to back are 1.4 m apart, its small and large
+    // screen on one side 1.2 m: one light a side. A screen's light is paler than its tinted layers (their images and
+    // text are white): a third of the way to white.
+    {"news_kiosk", 0.45f, 0.65f, 1.0f, 0.5f, 5.0f, 0.0f, 0.12f, false, false, false, true, 0.35f, 1.3f, false, 0.35f},
+    {"_screen_", 0.45f, 0.65f, 1.0f, 0.35f, 3.5f, 0.0f, 0.12f, false, false, false, true, 0.35f, 1.3f, true, 0.35f},
+    {"_scrn_", 0.45f, 0.65f, 1.0f, 0.35f, 3.5f, 0.0f, 0.12f, false, false, false, true, 0.35f, 1.3f, true, 0.35f},
     // The color is only the fallback: an effect's own corona (or emitter) color is used when it has one.
     {"explosion", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true, false, true},
     {"expl", 1.0f, 0.55f, 0.2f, 6.0f, 30.0f, 1.0f, 0.2f, true, false, true},
@@ -615,7 +631,9 @@ static const vfx_synthetic_light_profile Vfx_synthetic_light_profiles[] = {
     {"flame", 1.0f, 0.45f, 0.12f, 1.5f, 7.0f, 0.6f, 0.45f, false, false, false},
     {"burn", 1.0f, 0.45f, 0.12f, 1.4f, 6.0f, 0.6f, 0.45f, false, false, false},
     {"molotov", 1.0f, 0.45f, 0.12f, 1.8f, 8.0f, 0.6f, 0.45f, false, false, false},
-    {"welding", 0.6f, 0.75f, 1.0f, 2.5f, 7.0f, 0.5f, 0.7f, false, false, false},
+    // A weld's arc: its corona is deep blue (env_welding_a), the light it casts near white; dimmer and shorter than it
+    // was, as the safehouse's welder lit the whole room blue (when this light did show: rl_scene::add_light).
+    {"welding", 0.6f, 0.75f, 1.0f, 1.0f, 5.0f, 0.5f, 0.7f, false, false, false, false, 0.0f, 0.0f, false, 0.5f},
     {"flare_blue", 0.3f, 0.5f, 1.0f, 2.0f, 9.0f, 0.8f, 0.1f, false, false, false},
     {"flare", 1.0f, 0.25f, 0.15f, 2.0f, 9.0f, 0.8f, 0.1f, false, false, false},
     {"barracade_light", 1.0f, 0.6f, 0.2f, 0.5f, 4.0f, 0.4f, 0.0f, false, true, false}, // construction light: small, dim, blinks with its corona
@@ -673,6 +691,39 @@ static bool vfx_effect_hue(vfx_effect_template::vfx_data* data_p, bool use_parti
     float highest = r > g ? r : g;
     highest = highest > b ? highest : b;
     if (!found || highest < 0.05f)
+    {
+        return false;
+    }
+    red = r / highest;
+    green = g / highest;
+    blue = b / highest;
+    return true;
+}
+
+// A screen's color: its emitters' start colors weighted by how much each covers (its start alpha times its first size,
+// squared), the hue only as vfx_effect_hue gives it. Its glitch and static layers (faint) count little, its backing and
+// images most. False: nothing visible to weigh.
+static bool vfx_screen_hue(vfx_effect_template::vfx_data* data_p, float& red, float& green, float& blue)
+{
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+    for (int i = 0; i < data_p->num_emitters; i++)
+    {
+        const vfx_effect_template::emitter& emitter_r = data_p->emitters.to_pointer()[i];
+        const float size = emitter_r.num_size_start_keys > 0 ? emitter_r.size_start_keys.to_pointer()[0].value : 0.0f;
+        const float weight = emitter_r.color_start.alpha * size * size;
+        if (!(weight > 0.0f))
+        {
+            continue;
+        }
+        r += emitter_r.color_start.red * weight;
+        g += emitter_r.color_start.green * weight;
+        b += emitter_r.color_start.blue * weight;
+    }
+    float highest = r > g ? r : g;
+    highest = highest > b ? highest : b;
+    if (!(highest > 0.0f))
     {
         return false;
     }
@@ -1371,7 +1422,15 @@ void vfx_effect::update_dynamic_lights()
         float hue_r = profile_p->red;
         float hue_g = profile_p->green;
         float hue_b = profile_p->blue;
-        vfx_effect_hue(m_effect_template_p->m_vfx_data_p, profile_p->hue_from_particles, progress, hue_r, hue_g, hue_b);
+        const bool own_hue = profile_p->hue_from_screen
+                                 ? vfx_screen_hue(m_effect_template_p->m_vfx_data_p, hue_r, hue_g, hue_b)
+                                 : vfx_effect_hue(m_effect_template_p->m_vfx_data_p, profile_p->hue_from_particles, progress, hue_r, hue_g, hue_b);
+        if (own_hue)
+        {
+            hue_r += (1.0f - hue_r) * profile_p->pale;
+            hue_g += (1.0f - hue_g) * profile_p->pale;
+            hue_b += (1.0f - hue_b) * profile_p->pale;
+        }
         const float intensity = profile_p->intensity * strength;
         if (intensity < VFX_EFFECT_LIGHT_MIN_INTENSITY)
         {
@@ -1379,8 +1438,9 @@ void vfx_effect::update_dynamic_lights()
             return;
         }
         const float radius = profile_p->range;
-        // A fixture often has several glow effects (a floodlight tower has four): within 3 m of a light of the same kind
-        // already shown this frame, this one stays off, so a cluster is lit once, not four times over.
+        // A fixture often has several glow effects (a floodlight tower has four): within 3 m (the profile's cluster
+        // distance) of a light of the same kind already shown this frame, this one stays off, so a cluster is lit once,
+        // not four times over.
         if (!profile_p->fades)
         {
             struct cluster_entry
@@ -1401,7 +1461,8 @@ void vfx_effect::update_dynamic_lights()
                 const float dx = s_clusters[i].pos.x - m_position.x;
                 const float dy = s_clusters[i].pos.y - m_position.y;
                 const float dz = s_clusters[i].pos.z - m_position.z;
-                if (s_clusters[i].profile_p == profile_p && dx * dx + dy * dy + dz * dz < 9.0f)
+                const float cluster = profile_p->cluster > 0.0f ? profile_p->cluster : 3.0f;
+                if (s_clusters[i].profile_p == profile_p && dx * dx + dy * dy + dz * dz < cluster * cluster)
                 {
                     light_p->set_is_visible(false);
                     return;
@@ -1416,7 +1477,17 @@ void vfx_effect::update_dynamic_lights()
         }
         light_p->set_is_visible(true);
         light_p->set_light_type(rl_light::LIGHT_TYPE_POINT);
-        light_p->set_position(vector(m_position.x, m_position.y + profile_p->height, m_position.z));
+        float forward = profile_p->forward;
+        if (profile_p->toward_view && forward != 0.0f)
+        {
+            const vector& view = vfx_system::get_view_position();
+            const float to_view = (view.x - m_position.x) * m_rotation.fvec.x + (view.y - m_position.y) * m_rotation.fvec.y +
+                                  (view.z - m_position.z) * m_rotation.fvec.z;
+            forward = to_view < 0.0f ? -forward : forward;
+        }
+        light_p->set_position(vector(m_position.x + m_rotation.fvec.x * forward,
+                                     m_position.y + m_rotation.fvec.y * forward + profile_p->height,
+                                     m_position.z + m_rotation.fvec.z * forward));
         light_p->set_rotation(IDENTITY_MATRIX);
         light_p->set_local_bounding_sphere(rl_sphere(ZERO_VECTOR, radius));
         light_p->set_clip_min(vector(-radius, -radius, -radius));
