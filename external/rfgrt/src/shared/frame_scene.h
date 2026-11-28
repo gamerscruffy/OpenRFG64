@@ -143,7 +143,9 @@ struct SlotHeader {
     // OpenRFG64: the emitters (render/emitters.h), the brightest kMaxEmitters near the camera
     uint32_t emitter_count;
     uint32_t emitters_dropped;
-    uint32_t pad6[2];
+    float emitter_grey;  // OpenRFG64: how far the emitters' light (after a mesh's texture tint) goes to grey at the
+                         // same luminance, 0 their own colour (GI.EmitterSaturation 1), 1 grey
+    uint32_t pad6;
     Emitter emitters[kMaxEmitters];
     // OpenRFG64: each emitter's texture for its light's colour, the core's texture id + 1 (0: none): a glowing mesh's
     // diffuse map (a screen's picture), whose average colour tints its light (gi_trace.hlsl emitter_light)

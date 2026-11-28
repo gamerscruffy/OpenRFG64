@@ -21,6 +21,7 @@
 #include "gi_trace_cs.h"     // g_gi_trace_cs (dxc, cs_6_5)
 #include "light_shadow_cs.h"  // g_light_shadow_cs (dxc, cs_6_5)
 #include "reflect_trace_cs.h"  // g_reflect_trace_cs (dxc, cs_6_5)
+#include "refl_temporal_cs.h"  // g_refl_temporal_cs (dxc, cs_6_0)
 #include "cache_update_cs.h"   // g_cache_update_cs (dxc, cs_6_5)
 #include "cache_resolve_cs.h"  // g_cache_resolve_cs (dxc, cs_6_5)
 #include "sky_update_cs.h"     // g_sky_update_cs (dxc, cs_6_5)
@@ -606,6 +607,7 @@ int run(const RunParams& p) {
     ID3D12Resource* emitterCb = nullptr;
     uint8_t* emitterCbCpu = nullptr;
     ID3D12PipelineState* reflTracePso = nullptr;
+    ID3D12PipelineState* reflTemporalPso = nullptr;  // OpenRFG64: their own temporal pass (refl_temporal.hlsl)
     ID3D12Resource* reflCb = nullptr;  // upload: kRing x 512 bytes of GiConstants (the reflections')
     uint8_t* reflCbCpu = nullptr;
     ID3D12RootSignature* lightRs = nullptr;
@@ -812,6 +814,9 @@ int run(const RunParams& p) {
             if (b->refl_enabled > 0) {
                 pd.CS = {g_reflect_trace_cs, sizeof(g_reflect_trace_cs)};
                 if (FAILED(hr = dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&reflTracePso)))) return fail("reflection pipeline", hr);
+                pd.CS = {g_refl_temporal_cs, sizeof(g_refl_temporal_cs)};
+                if (FAILED(hr = dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&reflTemporalPso))))
+                    return fail("reflection temporal pipeline", hr);
                 reflCb = make_buffer(dev, D3D12_HEAP_TYPE_UPLOAD, uint64_t(kRing) * 512, D3D12_RESOURCE_FLAG_NONE,
                                      D3D12_RESOURCE_STATE_GENERIC_READ);
                 D3D12_RANGE rnone{0, 0};
@@ -2006,7 +2011,9 @@ int run(const RunParams& p) {
                         if (emitterCbCpu) {  // OpenRFG64: the frame's emitters (b2)
                             uint8_t* ec = emitterCbCpu + uint64_t(k) * kEmitterCbBytes;
                             const uint32_t count = h && h->emitter_count <= rfgrt_frame::kMaxEmitters ? h->emitter_count : 0u;
-                            const uint32_t head[4] = {count, 0u, 0u, 0u};
+                            uint32_t grey = 0u;  // OpenRFG64: GI.EmitterSaturation (gi_trace.hlsl emitter_head.y)
+                            if (h) memcpy(&grey, &h->emitter_grey, sizeof(grey));
+                            const uint32_t head[4] = {count, grey, 0u, 0u};
                             memcpy(ec, head, sizeof(head));
                             if (count) memcpy(ec + 16, h->emitters, sizeof(rfgrt_frame::Emitter) * count);
                             // their textures (gi_trace.hlsl emitter_tex), after the 64 emitters' room
@@ -2328,7 +2335,7 @@ int run(const RunParams& p) {
                             transition(set.refl_history[1 - histOut], D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)};
                         cl->ResourceBarrier(2, rToTemporal);
-                        cl->SetPipelineState(giTemporalPso);
+                        cl->SetPipelineState(reflTemporalPso);
                         cl->SetComputeRootDescriptorTable(0, table(kTableReflTemporal + 6 * UINT(histOut)));
                         cl->Dispatch(gx, gy, 1);
                         const D3D12_RESOURCE_BARRIER rToFilter =
@@ -2461,7 +2468,7 @@ int run(const RunParams& p) {
                 for (uint64_t c : st.classes) px += c;
                 logf("frames: %llu answered; GPU per frame: TLAS %.0f us, pass %.0f us (GI %.0f us, lights' shadows %.0f us, "
                      "reflections %.0f us of it); TLAS %.0f of %.0f scene instances (left out: %.0f with no mesh here, %.0f with "
-                     "their submesh's BLAS not built, %.0f with a submesh beyond their mesh as sent), the nearest %.1f m from the "
+                     "their submesh's BLAS not built, %.0f with a submesh beyond their mesh as sent, %.2f skinned not posed), the nearest %.1f m from the "
                      "camera; scenes skipped: %llu read while overwritten, %llu before the frame textures",
                      static_cast<unsigned long long>(st.frames), st.tlas_us / f, st.pass_us / f, st.gi_us / f, st.light_us / f,
                      st.refl_us / f,
@@ -2470,6 +2477,7 @@ int run(const RunParams& p) {
                      tlas.stats.frames ? double(tlas.stats.missing_mesh) / double(tlas.stats.frames) : 0.0,
                      tlas.stats.frames ? double(tlas.stats.missing_blas) / double(tlas.stats.frames) : 0.0,
                      tlas.stats.frames ? double(tlas.stats.submesh_beyond) / double(tlas.stats.frames) : 0.0,
+                     tlas.stats.frames ? double(tlas.stats.unposed) / double(tlas.stats.frames) : 0.0,
                      tlas.stats.frames ? tlas.stats.nearest_sum / double(tlas.stats.frames) : -1.0,
                      static_cast<unsigned long long>(torn), static_cast<unsigned long long>(skippedNoSet));
                 if (rrOn) logf("GI denoiser: DLSS Ray Reconstruction denoised %llu frames so far", static_cast<unsigned long long>(rrFrames));
@@ -2736,6 +2744,7 @@ int run(const RunParams& p) {
     release(rrFinalizePso);
     release(rrGuidesRs);
     release(giTemporalPso);
+    release(reflTemporalPso);
     release(giFilterPso);
     release(giAtrousPso);
     release(giRs);

@@ -463,9 +463,10 @@ bool material_entry(uint32_t material_handle, rfgrt_scene::MaterialEntry* out) {
     char name[kNameCap];
     uint32_t frames = 0;
     bitmap_info(diffuse, name, kNameCap, &frames);
-    // OpenRFG64: a screen (by its picture's name) gives off light, half a light-source material's (GI.Emissive)
-    if (name[0] && is_screen(name) && !(out->flags & rfgrt_scene::kMaterialEmitter) && g_emissive.load() > 0.0f &&
-        g_self_lit.load() > 0.0f) {
+    // OpenRFG64: a screen (by its picture's name, or a picture of more than one frame: the animated ones, which no
+    // name list caught) gives off light, half a light-source material's (GI.Emissive)
+    if (name[0] && (is_screen(name) || frames > 1) && !(out->flags & rfgrt_scene::kMaterialEmitter) &&
+        g_emissive.load() > 0.0f && g_self_lit.load() > 0.0f) {
         out->flags |= rfgrt_scene::kMaterialEmitter;
         out->self_illumination = g_emissive.load() * 0.5f;
         g_screen_materials.fetch_add(1);

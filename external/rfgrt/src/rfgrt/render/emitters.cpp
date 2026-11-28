@@ -20,6 +20,11 @@ namespace {
 bool g_on = false;
 float g_scale = 1.0f;       // GI.EmitterLight: every emitter's light
 float g_mesh_scale = 1.0f;  // the glowing meshes' (their material's strength is GI.Emissive's)
+// OpenRFG64: GI.EmitterSaturation (as 1 - it, for the core) and GI.EmitterMinRadius. A blue corona came through as
+// (0.13 0.67 10.6) and a blue-white screen at its texture's colour: the room around them went blue. Sparks 0.1 m across
+// lit a bench 0.2 m away at 25 times their light (1 / d^2 down to their radius): a white blow-out.
+float g_grey = 0.5f;
+float g_min_radius = 0.3f;
 
 // The game's emitters as its renderer pushed them (world space), until the next frame's scene takes them.
 struct Pushed {
@@ -63,9 +68,13 @@ void install(const Config& cfg) {
     g_scale = float(cfg.gi_emitter_light > 0.0 ? cfg.gi_emitter_light : 0.0);
     g_mesh_scale = float(cfg.gi_emitter_mesh > 0.0 ? cfg.gi_emitter_mesh : 0.0);
     if (g_scale <= 0.0f) g_on = false;
-    LOG("emitters: %s (GI.Emitters %d, GI.EmitterLight %.2f, GI.EmitterMesh %.2f): additive particles, coronas and "
-        "glowing meshes light the rays, the brightest %u near the camera a frame",
-        g_on ? "on" : "off", int(cfg.gi_emitters), g_scale, g_mesh_scale, rfgrt_frame::kMaxEmitters);
+    const double sat = cfg.gi_emitter_saturation;
+    g_grey = float(1.0 - (sat < 0.0 ? 0.0 : sat > 1.0 ? 1.0 : sat));
+    g_min_radius = float(cfg.gi_emitter_min_radius > 0.0 ? cfg.gi_emitter_min_radius : 0.0);
+    LOG("emitters: %s (GI.Emitters %d, GI.EmitterLight %.2f, GI.EmitterMesh %.2f, GI.EmitterSaturation %.2f, "
+        "GI.EmitterMinRadius %.2f m): additive particles, coronas and glowing meshes light the rays, the brightest %u near "
+        "the camera a frame",
+        g_on ? "on" : "off", int(cfg.gi_emitters), g_scale, g_mesh_scale, 1.0 - g_grey, g_min_radius, rfgrt_frame::kMaxEmitters);
     session::add_flush_handler(&report);
 }
 
@@ -88,7 +97,8 @@ void write(rfgrt_frame::SlotHeader* h, const float offset[3], const float camera
     if (!h) return;
     h->emitter_count = 0;
     h->emitters_dropped = 0;
-    h->pad6[0] = h->pad6[1] = 0;
+    h->emitter_grey = g_grey;
+    h->pad6 = 0;
     std::vector<rfgrt_frame::Emitter> meshes;
     meshes.swap(g_meshes);
     std::vector<std::pair<uint32_t, float>> mesh_info;
@@ -145,7 +155,7 @@ void write(rfgrt_frame::SlotHeader* h, const float offset[3], const float camera
             e.position[k] = held.p.position[k] - offset[k];
             e.color[k] = held.p.color[k] * g_scale * fade;
         }
-        e.radius = std::max(held.p.radius, 0.05f);
+        e.radius = std::max({held.p.radius, 0.05f, g_min_radius});
         e.range = std::max(held.p.range, e.radius * 2.0f);
         consider(e);
     }
@@ -153,6 +163,7 @@ void write(rfgrt_frame::SlotHeader* h, const float offset[3], const float camera
     for (size_t i = 0; i < meshes.size(); ++i) {
         rfgrt_frame::Emitter& e = meshes[i];
         for (float& c : e.color) c *= g_scale;
+        e.radius = std::max(e.radius, g_min_radius);
         what = i < mesh_info.size() ? int(i) : -2;
         consider(e);
     }

@@ -45,7 +45,7 @@ void census(int2 px, float3 n, float3 origin, float3 e) {
 // OpenRFG64: the frame's emitters (frame_scene.h Emitter; render/emitters.h): additive particles, coronas, glowing
 // meshes. x: how many; then two float4 each: position and radius, light colour and range.
 cbuffer Emitters : register(b2) {
-    uint4 emitter_head;
+    uint4 emitter_head;     // x: the count; y: asfloat, how far their light goes to grey (GI.EmitterSaturation)
     float4 emitter_data[128];
     uint4 emitter_tex[16];  // each emitter's texture id + 1 (0: none), four to a row
 };
@@ -117,6 +117,8 @@ float3 emitter_light(float3 p, float3 n, uint seed) {
         const float4 m = material_textures[NonUniformResourceIndex(tex - 1u)].SampleLevel(material_sampler, float2(0.5, 0.5), 16.0);
         if (any(m != 0.0) && all(m == m)) e *= saturate(m.rgb);
     }
+    // OpenRFG64: toward grey at the same luminance (a blue screen or corona turned the whole room blue)
+    e = lerp(e, dot(e, float3(0.2126, 0.7152, 0.0722)), saturate(asfloat(emitter_head.y)));
     return all(isfinite(e)) ? e : 0.0;
 }
 

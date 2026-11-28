@@ -102,6 +102,12 @@ uint32_t Tlas::record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_fram
         if (posed && posed[i]) {
             blas = posed[i];
             ++stats.posed;
+        } else if (s.kind == rfgrt_frame::kKindSkinned) {
+            // OpenRFG64: a skinned instance not posed this frame (its Skin record malformed or missing, its mesh's bind
+            // pose not on the GPU yet, the palette slot full) is left out for the frame: its mesh's BLAS is the bind pose,
+            // and a T-posed character flashed in the shadows, reflections and GI for a frame
+            ++stats.unposed;
+            continue;
         }
         if (!scene.has_materials(s.mesh_id)) ++stats.no_materials[s.kind < 6 ? s.kind : 0];
         // Glass (frame_scene.h): which material map entries are clear glass and which translucent, as the BLAS's geometries

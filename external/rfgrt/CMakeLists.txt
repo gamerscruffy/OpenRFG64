@@ -69,6 +69,7 @@ if(RFGRT_X64)
     dxc_shader(CORE_SHADERS gi_atrous_cs cs_6_0 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/gi_atrous.hlsl)
     dxc_shader(CORE_SHADERS light_shadow_cs cs_6_5 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/light_shadow.hlsl)
     dxc_shader(CORE_SHADERS reflect_trace_cs cs_6_5 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/reflect_trace.hlsl)
+    dxc_shader(CORE_SHADERS refl_temporal_cs cs_6_0 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/refl_temporal.hlsl)
     dxc_shader(CORE_SHADERS cache_update_cs cs_6_5 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/cache_update.hlsl)
     dxc_shader(CORE_SHADERS cache_resolve_cs cs_6_5 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/cache_resolve.hlsl)
     dxc_shader(CORE_SHADERS sky_update_cs cs_6_5 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/sky_update.hlsl)
@@ -179,6 +180,7 @@ add_library(rfgrt SHARED
     src/rfgrt/patch/rim_light.cpp
     src/rfgrt/patch/fog.cpp
     src/rfgrt/patch/eye_adaption.cpp
+    src/rfgrt/patch/filmic.cpp
     src/rfgrt/present/presenter.cpp
     src/rfgrt/present/remote.cpp
     src/rfgrt/present/framegen.cpp

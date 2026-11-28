@@ -618,14 +618,43 @@ uint32_t skin_key(const uint8_t* inst) {
     return uint32_t(v) ^ uint32_t(v >> 32);
 }
 
+// OpenRFG64: a palette all identity is the bind pose (the bones are in the instance's space: check_skin's log). A rig
+// of kBindPoseBones bones or more showing it is taken as not exported yet this frame (a new or swapped instance read
+// before the animation wrote it) and left out, up to kBindPoseFrames scenes in a row (then it is its real pose: an
+// unanimated rig); a T-posed character flashed in the traced shadows for a frame. Fewer bones: props, kept.
+constexpr int32_t kBindPoseBones = 16;
+constexpr uint32_t kBindPoseFrames = 30;
+std::unordered_map<uint32_t, uint32_t> g_bind_pose_run;  // skin key -> scenes in a row it showed its bind pose
+
+bool is_bind_pose(const rfgrt_frame::Bone* b, uint32_t count) {
+    static const float kIdentity[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+    for (uint32_t i = 0; i < count; ++i)
+        for (int k = 0; k < 12; ++k)
+            if (std::fabs(b[i].m[k] - kIdentity[k]) > 1e-4f) return false;
+    return true;
+}
+
 // rl_skin_instance::m_bone_matrices_p (matrix43 a bone) and m_num_bones_matrices. False when it has none readable or
-// the slot is full (the core then leaves the instance in its bind pose).
+// the slot is full (the core then leaves the instance out of the scene this frame), or `bind_pose` set (above).
 bool add_palette(uint8_t* inst, uint32_t index, rfgrt_frame::Skin* skins, rfgrt_frame::Bone* bones, uint32_t max_skins,
-                 uint32_t max_bones, uint32_t& skin_n, uint32_t& bone_n) {
+                 uint32_t max_bones, uint32_t& skin_n, uint32_t& bone_n, bool& bind_pose) {
+    bind_pose = false;
     const uint8_t* palette = rfg::field<const uint8_t*>(inst, rfg::off::SkinInstance_boneMatrices);
     const int32_t count = rfg::field<int32_t>(inst, rfg::off::SkinInstance_numBones);
     if (!palette || count <= 0 || count > 1024 || skin_n >= max_skins || bone_n + uint32_t(count) > max_bones) return false;
     if (!copy_palette(bones + bone_n, palette, uint32_t(count))) return false;
+    if (count >= kBindPoseBones) {
+        const uint32_t key = skin_key(inst);
+        if (is_bind_pose(bones + bone_n, uint32_t(count))) {
+            if (g_bind_pose_run.size() > 4096) g_bind_pose_run.clear();
+            if (++g_bind_pose_run[key] <= kBindPoseFrames) {
+                bind_pose = true;
+                return false;
+            }
+        } else if (!g_bind_pose_run.empty()) {
+            g_bind_pose_run.erase(key);
+        }
+    }
     rfgrt_frame::Skin& sk = skins[skin_n++];
     sk.instance = index;
     sk.key = skin_key(inst);
@@ -741,7 +770,7 @@ struct Stats {
     uint64_t snapshots = 0, instances = 0, dropped = 0, no_mesh = 0, other_renderable = 0, other_class = 0, stale = 0;
     uint64_t culled = 0, cut_frames = 0;  // left out for being far (over the cap), frame scenes that cut
     double cut_m = 0.0;                   // the distance they were cut at, summed over those
-    uint64_t hidden = 0, faded = 0, skins = 0, skins_dropped = 0, bones = 0;
+    uint64_t hidden = 0, faded = 0, skins = 0, skins_dropped = 0, skins_bind_pose = 0, bones = 0;
     uint64_t kinds[8] = {};
     uint64_t buildings_reused = 0, buildings_remade = 0;
     uint64_t skirts = 0, vehicles = 0;  // terrain skirts left out; deformable (vehicle) instances traced
@@ -761,7 +790,8 @@ void log_stats(Stats st) {
     LOG("instances: %zu registered; %llu frame scenes, %.0f instances each (%u in the last): meshes %.0f, skinned %.0f, "
         "Geo-Mod pieces %.0f, terrain %.0f; %.1f us per scene; per scene left out: hidden %.0f, no mesh in the mirror %.0f, not an "
         "rl_mesh %.0f, other classes %.0f, stale %.1f; opacity 0 (kept) %.0f; dropped %llu; buildings per scene: %.0f "
-        "reused, %.1f remade; skinned instances posed by the core %.1f a scene (%.0f bones), without a palette %.1f",
+        "reused, %.1f remade; skinned instances posed by the core %.1f a scene (%.0f bones), without a palette %.1f (of them a rig in its bind pose, "
+        "taken as not posed yet, %.2f)",
         st.registered, static_cast<unsigned long long>(st.snapshots), double(st.instances) / f, st.last_count,
         double(st.kinds[rfgrt_frame::kKindMesh]) / f, double(st.kinds[rfgrt_frame::kKindSkinned]) / f,
         double(st.kinds[rfgrt_frame::kKindCompoundPiece]) / f, double(st.kinds[rfgrt_frame::kKindTerrain]) / f,
@@ -769,7 +799,7 @@ void log_stats(Stats st) {
         double(st.hidden) / f, double(st.no_mesh) / f, double(st.other_renderable) / f, double(st.other_class) / f,
         double(st.stale) / f, double(st.faded) / f, static_cast<unsigned long long>(st.dropped),
         double(st.buildings_reused) / f, double(st.buildings_remade) / f, double(st.skins) / f, double(st.bones) / f,
-        double(st.skins_dropped) / f);
+        double(st.skins_dropped) / f, double(st.skins_bind_pose) / f);
     if (st.cut_frames)
         LOG("instances: over the cap (%u): %.0f a scene left out for being farthest, beyond %.0f m on average, in %llu of %llu scenes",
             g_cap_logged, double(st.culled) / double(st.cut_frames), st.cut_m / double(st.cut_frames),
@@ -940,7 +970,7 @@ void snapshot(uint8_t* renderer, uint8_t* scene, uint8_t* camera, int64_t frame)
     const uint32_t max_skins = link.max_skins(), max_bones = link.max_bones();
     rfgrt_frame::Skin* skins = max_skins ? rfgrt_frame::slot_skins(h, cap) : nullptr;
     rfgrt_frame::Bone* bones = max_skins ? rfgrt_frame::slot_bones(h, cap, max_skins) : nullptr;
-    uint32_t skin_n = 0, bone_n = 0, skins_dropped = 0;
+    uint32_t skin_n = 0, bone_n = 0, skins_dropped = 0, skins_bind_pose = 0;
     int skin_checks = 0;
     uint32_t n = 0, dropped = 0;
     uint32_t counts[8] = {};
@@ -1115,7 +1145,11 @@ void snapshot(uint8_t* renderer, uint8_t* scene, uint8_t* camera, int64_t frame)
                     mesh_emission(mmap, glow, &glow_texture, &glow_si))
                     emitters::add_mesh(world.t, glow, glow_texture, glow_si);
                 if (cls == g_class.skin_instance && skins && n > before) {
-                    if (!add_palette(inst, n - 1, skins, bones, max_skins, max_bones, skin_n, bone_n)) ++skins_dropped;
+                    bool bind_pose = false;
+                    if (!add_palette(inst, n - 1, skins, bones, max_skins, max_bones, skin_n, bone_n, bind_pose)) {
+                        ++skins_dropped;
+                        if (bind_pose) ++skins_bind_pose;
+                    }
                     if (sample && skin_checks < 3 && check_skin(inst, mesh, world, offset)) ++skin_checks;
                 }
             } else if (cls == g_class.compound || cls == g_class.destroyable || (g_class.deformable && cls == g_class.deformable)) {
@@ -1302,6 +1336,7 @@ void snapshot(uint8_t* renderer, uint8_t* scene, uint8_t* camera, int64_t frame)
     g_stats.skins += skin_n;
     g_stats.bones += bone_n;
     g_stats.skins_dropped += skins_dropped;
+    g_stats.skins_bind_pose += skins_bind_pose;
     for (int k = 0; k < 8; ++k) g_stats.kinds[k] += counts[k];
     g_stats.ticks += session::qpc() - t0;
     g_stats.last_count = n;

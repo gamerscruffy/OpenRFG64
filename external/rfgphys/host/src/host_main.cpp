@@ -338,7 +338,9 @@ struct Body {
 struct Host {
     Shared sh;
     uint32_t max_bodies = 0;
-    float dt = 1.0f / 60.0f;
+    float dt = 1.0f / 60.0f;       // this step's time (base_dt, longer when the steps fall behind: the main loop)
+    float base_dt = 1.0f / 60.0f;  // OpenRFG64: 1 / StepHz
+    uint32_t stat_stretched = 0;   // steps since the last report that covered more than base_dt
 
     PxFoundation* foundation = nullptr;
     PxPhysics* physics = nullptr;
@@ -360,6 +362,7 @@ struct Host {
     // becomes kinematic until an explosion or the player comes near it. That cuts the pile's island apart, so the
     // rest can sleep, and the game stops moving its render instance.
     static constexpr float kFreezeSeconds = 1.0f;
+    static constexpr float kMaxStretch = 2.0f;  // OpenRFG64: a late step covers at most this many steps' time
     static constexpr float kCalmSpeed = 0.15f, kCalmSpin = 0.5f;
     // Or a piece that went nowhere for as long (less than kStillDist, turned less than 12 degrees): one rocking in
     // place in a pile never slows down enough to be calm (a thousand of them rocked in a Wrecking Crew match, the
@@ -3093,6 +3096,8 @@ struct Host {
              uint32_t(awake_slots.size()), frozen_count, stat_frozen, stat_frozen_still, stat_thawed, stat_unsupported,
              stat_unsupported_bodies, stat_cascade, stat_cascade_moved, stat_cascade_looked, stat_cascade_late, pusher_slots.size(), stat_pushed_awake, stat_impulses, stat_commands,
              stat_cmd_latency_n ? stat_cmd_latency_ms / stat_cmd_latency_n : 0.0);
+        if (stat_stretched) logf("  %u steps ran late and covered more time (up to %.0fx)", stat_stretched, double(kMaxStretch));
+        stat_stretched = 0;
         if (stat_wakes_waited || stat_hurried_steps)
             logf("  wakes waited in %u steps (%zu moved pieces and %zu removals still to tell now); pieces hurried to freeze in %u", stat_wakes_waited,
                  resting_on_later.size(), unsupported_later.size(), stat_hurried_steps);
@@ -3235,7 +3240,7 @@ int run_host(const std::wstring& map_name, const std::wstring& log_path, const s
     }
     host.max_bodies = ctl->max_bodies;
     host.in_process = in_process;
-    host.dt = ctl->step_hz > 0 ? 1.0f / ctl->step_hz : 1.0f / 60.0f;
+    host.base_dt = host.dt = ctl->step_hz > 0 ? 1.0f / ctl->step_hz : 1.0f / 60.0f;
     host.ensure_slots(4096);  // OpenRFG64: the player's capsule and the vehicles' proxies; they grow from there
     host.change_every = std::max(ctl->change_every, 1u);
     host.rest_strength = std::max(ctl->chunk_rest_strength, 1.0f);
@@ -3292,6 +3297,7 @@ int run_host(const std::wstring& map_name, const std::wstring& log_path, const s
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     const double period_ms = 1000.0 / (ctl->step_hz > 0 ? ctl->step_hz : 60.0);
     double next_step = now_ms();
+    double last_step = -1.0;  // when the previous step began
     double next_stats = now_ms() + 5000.0;
     double next_vram = now_ms();  // OpenRFG64: the GPU's memory for the game (its slots grow while there is room)
     const char* reason = "quit requested";
@@ -3317,6 +3323,14 @@ int run_host(const std::wstring& map_name, const std::wstring& log_path, const s
                 exit_code = 3;
                 break;
             }
+            // OpenRFG64: a step that starts late covers the real time since the previous one (at most kMaxStretch steps'
+            // worth), so heavy destruction plays at full speed, a little less precisely, instead of in slow motion (a 43 ms
+            // step at 45 Hz was half speed). A step only slightly late keeps the fixed time: TGS likes a steady dt.
+            const double since = last_step >= 0.0 ? t - last_step : period_ms;
+            last_step = t;
+            const double stretch = since > period_ms * 1.25 ? std::min(since / period_ms, double(Host::kMaxStretch)) : 1.0;
+            host.dt = float(double(host.base_dt) * stretch);
+            host.stat_stretched += stretch > 1.0;
             host.step();
             if (host.gpu_failed()) {
                 host.log_stats();
@@ -3328,6 +3342,9 @@ int run_host(const std::wstring& map_name, const std::wstring& log_path, const s
 #if RFGPHYS_HOST_ZONES
             g_zones.end_step(now_ms() - t);
 #endif
+            // a stretched step paid for the time up to its start: the next is due a period after it (else the steps that
+            // follow, cheap again, would catch up the schedule and simulate that time twice: a lurch as the load ends)
+            if (stretch > 1.0) next_step = t;
             next_step += period_ms;
             if (now_ms() - next_step > 3 * period_ms) next_step = now_ms();  // fell behind: no catch-up burst
         } else {
