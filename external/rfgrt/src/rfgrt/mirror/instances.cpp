@@ -18,6 +18,7 @@
 #include "frame_scene.h"
 #include "game/rfg.h"
 #include "hooks/hooks.h"
+#include "mirror/emitters.h"
 #include "mirror/geometry.h"
 #include "mirror/textures.h"
 #include "render/gi.h"
@@ -748,6 +749,7 @@ void log_stats(Stats st) {
         g_materials_waiting_n.load(), static_cast<unsigned long long>(g_material_entries),
         static_cast<unsigned long long>(g_material_textured), static_cast<unsigned long long>(g_materials_unread));
     textures::log_stats();
+    emitters::log_stats();
     LOG("instances: the lighting constants of the lit passes in %llu of %llu scenes; render()'s renderer held others in %llu "
         "of them (the fog off or of another colour in %llu)",
         static_cast<unsigned long long>(st.lit_taken), static_cast<unsigned long long>(st.snapshots),
@@ -1210,6 +1212,7 @@ void snapshot(uint8_t* renderer, uint8_t* scene, uint8_t* camera, int64_t frame)
     h->skins_dropped = skins_dropped;
     h->pad2 = 0;
     lights::write(h);  // the dynamic lights collected for this frame (render/lights.h)
+    emitters::write(h);  // the particles that gave light in the frame before (mirror/emitters.h)
     rfgrt_ipc::store64(&h->frame, frame);
     link.frame_published(frame);
     std::lock_guard<std::mutex> lock(g_stats_mutex);

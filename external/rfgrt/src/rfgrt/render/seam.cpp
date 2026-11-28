@@ -16,6 +16,7 @@
 #include "game/rfg.h"
 #include "harness/screenshot.h"
 #include "hooks/hooks.h"
+#include "mirror/emitters.h"
 #include "mirror/geometry.h"
 #include "mirror/instances.h"
 #include "mirror/textures.h"
@@ -695,6 +696,7 @@ void __fastcall d_scene_render(RFG_THIS(void*, self), void* renderer, void* sim_
         t_frame = ++g_frame;
         g_frame_rendering.store(t_frame, std::memory_order_release);
         lights::collect(static_cast<uint8_t*>(self), static_cast<uint8_t*>(scene), static_cast<uint8_t*>(camera));
+        emitters::collect();  // the particles that gave light in the frame before (mirror/emitters.h)
         if (g_worker.thread) {
             g_worker.renderer = static_cast<uint8_t*>(renderer);
             g_worker.scene = static_cast<uint8_t*>(scene);

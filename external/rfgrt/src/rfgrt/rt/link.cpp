@@ -169,6 +169,8 @@ bool Link::create_region() {
     block_->gi_bounce = opt_.gi_bounce;
     block_->gi_sun_bounce_albedo = opt_.gi_sun_bounce_albedo;
     block_->gi_shade_bounce_albedo = opt_.gi_shade_bounce_albedo;
+    block_->gi_emitters = opt_.gi_emitters;
+    block_->pad_emitters = 0.0f;
     block_->gi_sky = opt_.gi_sky;
     block_->gi_cache = opt_.gi_cache ? 1 : 0;
     block_->gi_denoiser = opt_.gi_denoiser;

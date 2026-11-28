@@ -16,3 +16,18 @@ struct rfgrt_binding {
     // (hooks::caller).
     const void* (*caller)(const void* return_address);
 };
+
+// A particle that gives light, as the game's particle renderer hands it to rfgrt_particle_emitters (main.cpp) while it
+// draws it: a quad in world space, its corner at u, v (0..1 across the bitmap's rectangle) at center + (2u - 1) axis_u +
+// (2v - 1) axis_v, and what the game multiplies its bitmap by (rfgrt_frame::Emitter, with the game's bitmap handle).
+struct rfgrt_emitter_quad {
+    float center[3];
+    int bitmap;      // the game's bitmap handle (bm_get_entry's), -1 none
+    float axis_u[3];
+    float alpha;     // the particle's alpha, the effect's opacity in it
+    float axis_v[3];
+    unsigned int flags;  // bit 0: drawn additive
+    float color[3];  // the particle's colour, the effect's tint in it
+    float pad;
+    float uv[4];     // the bitmap's rectangle (its animation frame's): u0, v0, u1, v1
+};

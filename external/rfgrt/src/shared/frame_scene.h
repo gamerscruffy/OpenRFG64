@@ -91,6 +91,25 @@ struct Light {
 };
 static_assert(sizeof(Light) == 48, "fixed layout");
 
+// A particle that gives light (GI.Emitters: the screens' particles, as VOM's particle renderer draws them;
+// mirror/emitters.h): a quad, its corner at u, v (0..1 across its bitmap's rectangle) at center + (2u - 1) axis_u +
+// (2v - 1) axis_v. Where the game draws it, it adds min(its bitmap's colour x the bitmap's alpha x alpha x color, 1)
+// (rl_particle_standard_billboard's pixel shader, without the sun's and the ambient's share: the particle's own light);
+// the radiance it sends is that over pi, in the core's units, both ways.
+constexpr uint32_t kMaxEmitters = 512;
+struct Emitter {
+    float center[3];   // render-offset space
+    uint32_t texture;  // its bitmap: the core's texture id + 1 (mirror/textures.h); 0 none (its colour alone)
+    float axis_u[3];
+    float alpha;       // the particle's alpha, the effect's opacity in it
+    float axis_v[3];
+    uint32_t flags;    // bit 0: drawn additive
+    float color[3];    // the particle's colour, the effect's tint in it
+    float pad;
+    float uv[4];       // the bitmap's rectangle (its animation frame's): u0, v0, u1, v1
+};
+static_assert(sizeof(Emitter) == 80, "fixed layout");
+
 struct SlotHeader {
     volatile int64_t frame;  // the frame this slot holds; 0 while the plugin writes it
     uint32_t instance_count;
@@ -128,6 +147,11 @@ struct SlotHeader {
     uint32_t lights_dropped;  // more lights than masks: the farthest go without
     uint32_t pad4[2];
     Light lights[kMaxLights];
+    // The particles that give light, drawn in the frame before (mirror/emitters.h).
+    uint32_t emitter_count;
+    uint32_t emitters_dropped;  // more than kMaxEmitters: the last left out
+    uint32_t pad6[2];
+    Emitter emitters[kMaxEmitters];
 };
 
 // A slot: the header, then max_instances Instance records, max_skins Skin records and max_bones Bone matrices.

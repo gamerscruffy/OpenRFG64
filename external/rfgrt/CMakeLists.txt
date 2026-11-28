@@ -161,6 +161,7 @@ add_library(rfgrt SHARED
     src/rfgrt/render/sky_particles.cpp
     src/rfgrt/menu/display_rows.cpp
     src/rfgrt/rt/link.cpp
+    src/rfgrt/mirror/emitters.cpp
     src/rfgrt/mirror/geometry.cpp
     src/rfgrt/mirror/geometry_census.cpp
     src/rfgrt/mirror/instances.cpp
