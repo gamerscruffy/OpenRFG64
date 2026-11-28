@@ -11,6 +11,7 @@
 // frame (the muzzle flash washing out the sky and distant terrain).
 
 #include "volition/render_lib/code/rl_hdr_compositor.h"
+#include "backends/backends.h" // OpenRFG64: openrfg_backends_effective_renderer
 
 #include "volition/render_lib/code/rl_camera.h"
 #include "volition/render_lib/code/rl_color.h"
@@ -553,6 +554,14 @@ void rl_hdr_compositor::measure_luminance(rl_renderer& renderer, rl_compositor& 
     draw_fullscreen_pass(renderer, m_luminance_stage_1.get_dev_render_target(), LUM_STAGE_1_WIDTH, LUM_STAGE_1_HEIGHT, pass_state, 8);
 
     float adapt_time = hdr_state.m_iris_rate * Frametime;
+    // OpenRFG64: while path tracing, the eye adapts kPath_traced_iris times as fast. Its meter sees the whole frame: a
+    // flashing beacon's glow, sparks and the path tracer's noise in a dark room swung the exposure (the glows and the
+    // bloom pulsed with the camera still); slower, it follows the scene and not them.
+    const float kPath_traced_iris = 0.25f;
+    if (openrfg_backends_effective_renderer() == OPENRFG_RENDERER_PATH_TRACED)
+    {
+        adapt_time *= kPath_traced_iris;
+    }
     if (first_time)
     {
         adapt_time = 10000.0f;

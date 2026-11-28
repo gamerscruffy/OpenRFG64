@@ -62,6 +62,10 @@ const char* name(Result r);
 
 // `fog`: the core's fog at the glass (t21) over the output too; the caller leaves the game's fog out with fog::patch on
 // t21 (without that, the glass would be fogged twice)
-Result patch(const void* bytes, size_t size, std::vector<uint8_t>* out, Report* report, bool fog = false);
+// `opacity` (Reflections.GlassOpacity): where there is a reflection (t19's F > 0: the core answering), the output's alpha
+// times this first (below 1: more of what is behind shows through, less of the glass's own lit colour, which made the
+// windows milky): after the ld of t19,
+//   mul rS.z, rO.w, l(opacity);  movc rO.w, rR.w, rS.z, rO.w
+Result patch(const void* bytes, size_t size, std::vector<uint8_t>* out, Report* report, bool fog = false, float opacity = 1.0f);
 
 }  // namespace glass

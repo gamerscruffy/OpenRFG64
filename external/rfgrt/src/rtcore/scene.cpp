@@ -41,16 +41,18 @@ float finite_or(float v, float fallback, float lo, float hi) {
 }
 
 // A material entry as the shaders read it (trace_common.hlsli): x the texture + 1 (0: none) and bit 31 (known), y the
-// tiling, z the colour's r and g, w its b and the self-illumination, halves.
+// tiling, z the colour's r and g, w its b and the self-illumination, halves. OpenRFG64: bit 30 of x an emitter
+// (kMaterialEmitter), its self-illumination then the light it gives off (up to 256).
 void pack_material(const MaterialEntry& e, bool texture_ok, uint32_t out[4]) {
     const bool tex = texture_ok && e.texture < kMaxTextures;
-    out[0] = 0x80000000u | (tex ? (e.texture + 1u) & 0xFFFFu : 0u);
+    const bool emitter = (e.flags & kMaterialEmitter) != 0;
+    out[0] = 0x80000000u | (emitter ? 0x40000000u : 0u) | (tex ? (e.texture + 1u) & 0xFFFFu : 0u);
     float tu = finite_or(e.tiling[0], 1.0f, -4096.0f, 4096.0f), tv = finite_or(e.tiling[1], 1.0f, -4096.0f, 4096.0f);
     if (tu == 0.0f) tu = 1.0f;
     if (tv == 0.0f) tv = 1.0f;
     out[1] = to_half(tu) | (to_half(tv) << 16);
     out[2] = to_half(finite_or(e.color[0], 1.0f, 0.0f, 16.0f)) | (to_half(finite_or(e.color[1], 1.0f, 0.0f, 16.0f)) << 16);
-    out[3] = to_half(finite_or(e.color[2], 1.0f, 0.0f, 16.0f)) | (to_half(finite_or(e.self_illumination, 0.0f, 0.0f, 1.0f)) << 16);
+    out[3] = to_half(finite_or(e.color[2], 1.0f, 0.0f, 16.0f)) | (to_half(finite_or(e.self_illumination, 0.0f, 0.0f, emitter ? 256.0f : 1.0f)) << 16);
 }
 
 constexpr uint64_t kUploadBytes = 64ull << 20;   // positions and indices waiting for their builds

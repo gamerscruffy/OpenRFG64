@@ -4,6 +4,7 @@
 #include <d3d11.h>
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -203,19 +204,168 @@ bool constant(const uint8_t* material, const char* name, float* out, int count) 
     return rfg::fn<Get>(rfg::rva::Material_getConstantDataByName)(material, out, name, count);
 }
 
-bool read_material(uint32_t handle, rfgrt_scene::MaterialEntry* out, int* diffuse) {
+// OpenRFG64: the emitters (scene_ring.h kMaterialEmitter). Their shaders' handles from the shader library, once (by
+// name: a name the library does not know gives what a made-up one gives, and matches nothing then).
+std::atomic<float> g_emissive{0.0f}, g_glow{0.0f};
+// GI.SelfLit: a material at least this self-illuminated (Self_Illumination) is a solid emitter as well, its light
+// GI.Emissive times its self-illumination: the screens, signs and lit panels, which use the game's ordinary shaders
+// (in a level's first minutes only 1 rfg-lightsource material was read). 0: none.
+std::atomic<float> g_self_lit{0.0f};
+std::atomic<uint64_t> g_self_lit_materials{0};
+std::atomic<bool> g_self_lit_logged{false};
+constexpr const char* kSolidEmitters[] = {"rfg-lightsource"};
+constexpr const char* kGlowEmitters[] = {"rfg-vfx-glow", "rfg-vfx-glow2", "rfg-vfx-light-cone"};
+constexpr size_t kSolidCount = sizeof(kSolidEmitters) / sizeof(kSolidEmitters[0]);
+constexpr size_t kEmitterCount = kSolidCount + sizeof(kGlowEmitters) / sizeof(kGlowEmitters[0]);
+uint32_t g_emitter_shaders[kEmitterCount];
+std::once_flag g_emitters_looked;
+std::atomic<uint64_t> g_emitter_materials[kEmitterCount];  // materials read, by emitter shader
+std::atomic<uint32_t> g_emitter_logged{0};                 // by bit: the first of each emitter shader logged
+// OpenRFG64: each core texture id's material shader (handle + 1, 0: not seen), for texture_shaders.txt in the run's
+// folder: the Insert probe names a surface's texture id, and this names the shader behind it (the screens' shader, to
+// make it a light)
+std::atomic<uint32_t> g_texture_shader[kMaxTextures];
+// and which of these maps (bits 0-15) and constants (bits 16-31) its material has, to find what makes a screen glow
+constexpr const char* kTraitMaps[] = {"Glow_Map", "Illumination_Map", "Self_Illumination_Map", "Emissive_Map", "Specular_Map",
+                                      "Normal_Map", "Detail_Map", "Decal_Map", "Environment_Map", "Mask_Map", "Alpha_Map",
+                                      "Light_Map", "Base_Map", "Texture_Map", "Illum_Map", "Screen_Map"};
+constexpr const char* kTraitConstants[] = {"Self_Illumination", "illum_cycle", "Illum_Cycle", "Self_Illumination_Color",
+                                           "Glow_Color", "Emissive_Color", "Glow_Intensity", "Emissive", "Illumination",
+                                           "Illum_Color", "Scroll_Rate", "UV_Scroll", "Diffuse_Map_ScrollU", "Diffuse_Map_ScrollV",
+                                           "Anim_Rate", "Frame_Rate"};
+static_assert(sizeof(kTraitMaps) / sizeof(kTraitMaps[0]) == 16 && sizeof(kTraitConstants) / sizeof(kTraitConstants[0]) == 16,
+              "16 of each");
+std::atomic<uint32_t> g_texture_traits[kMaxTextures];
+// and its file name and frames (the bitmap manager's entry): the screens are told by name. Their materials are the
+// buildings' ordinary ones, Self_Illumination 0, and the game drew them dark too: its flat fill made them look lit.
+constexpr size_t kNameCap = 48;
+char g_texture_name[kMaxTextures][kNameCap];
+uint16_t g_texture_frames[kMaxTextures];
+std::atomic<uint64_t> g_screen_materials{0};
+std::atomic<bool> g_screen_logged{false};
+std::vector<std::string> g_screen_names;  // GI.Screens, lower case
+
+// The texture's file name and frame count; false for a dynamic texture (bit 24) or one the bitmap manager has not got.
+bool bitmap_info(int handle, char* name, size_t cap, uint32_t* frames) {
+    name[0] = 0;
+    *frames = 0;
+    if (handle == -1 || (handle & 0x1000000) || !rfg::rva::bm_get_entry) return false;
+    __try {
+        using Get = uint8_t*(__cdecl*)(int, bool);
+        const uint8_t* e = rfg::fn<Get>(rfg::rva::bm_get_entry)(handle, false);
+        if (!e) return false;
+        const char* s = *reinterpret_cast<const char* const*>(e + rfg::off::BitmapEntry_filename);
+        if (s) {
+            size_t i = 0;
+            for (; i + 1 < cap && s[i]; ++i) name[i] = s[i];
+            name[i] = 0;
+        }
+        const uint8_t* p = *reinterpret_cast<const uint8_t* const*>(e + rfg::off::BitmapEntry_peg);
+        if (p) *frames = *reinterpret_cast<const uint16_t*>(p + rfg::off::PegEntry_frames);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        name[0] = 0;
+        return false;
+    }
+}
+
+bool is_screen(const char* name) {
+    char low[kNameCap];
+    size_t i = 0;
+    for (; i + 1 < kNameCap && name[i]; ++i) low[i] = char(name[i] >= 'A' && name[i] <= 'Z' ? name[i] + 32 : name[i]);
+    low[i] = 0;
+    for (const std::string& k : g_screen_names)
+        if (strstr(low, k.c_str())) return true;
+    return false;
+}
+// The emitters' map, when Diffuse_Map is not one of their shader's textures (the names tried in turn).
+constexpr const char* kEmitterMaps[] = {"Diffuse_Map", "Glow_Map", "Illumination_Map", "Self_Illumination_Map",
+                                        "Emissive_Map", "Base_Map", "Texture_Map", "Light_Map"};
+
+void look_up_emitters() {
+    for (uint32_t& h : g_emitter_shaders) h = 0xFFFFFFFEu;
+    __try {
+        using Instance = uint8_t*(__cdecl*)();
+        using Lookup = uint32_t(__thiscall*)(uint8_t*, const char*);
+        uint8_t* lib = rfg::fn<Instance>(rfg::rva::ShaderLibrary_instance)();
+        if (!lib) return;
+        const Lookup lookup = rfg::fn<Lookup>(rfg::rva::ShaderLibrary_lookup);
+        const uint32_t none = lookup(lib, "rfgrt-no-such-shader");
+        for (size_t i = 0; i < kEmitterCount; ++i) {
+            const uint32_t h = lookup(lib, i < kSolidCount ? kSolidEmitters[i] : kGlowEmitters[i - kSolidCount]);
+            g_emitter_shaders[i] = h == none ? 0xFFFFFFFEu : h;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        for (uint32_t& h : g_emitter_shaders) h = 0xFFFFFFFEu;
+    }
+}
+
+// Which emitter shader `shader` is (an index into g_emitter_shaders), -1 none.
+int emitter_of(uint32_t shader) {
+    if (g_emissive.load() <= 0.0f && g_glow.load() <= 0.0f) return -1;
+    std::call_once(g_emitters_looked, look_up_emitters);
+    for (size_t i = 0; i < kEmitterCount; ++i)
+        if (g_emitter_shaders[i] == shader) return int(i);
+    return -1;
+}
+
+bool read_material(uint32_t handle, rfgrt_scene::MaterialEntry* out, int* diffuse, uint32_t* shader, uint32_t* traits) {
     __try {
         using Resolve = uint8_t*(__cdecl*)(uint32_t handle, bool);
         const uint8_t* m = rfg::fn<Resolve>(rfg::rva::resolve_material_handle)(handle, false);
         if (!m) return false;
         using TextureByName = bool(__thiscall*)(const uint8_t*, int*, const char*);
+        const TextureByName texture_by_name = rfg::fn<TextureByName>(rfg::rva::Material_getTextureDataByName);
         int tex = -1;
-        if (rfg::fn<TextureByName>(rfg::rva::Material_getTextureDataByName)(m, &tex, "Diffuse_Map")) *diffuse = tex;
+        if (texture_by_name(m, &tex, "Diffuse_Map")) *diffuse = tex;
         float v[4] = {};
         if (constant(m, "Diffuse_Color", v, 3)) memcpy(out->color, v, sizeof(float) * 3);
         if (constant(m, "Diffuse_Map_TilingU", v, 1)) out->tiling[0] = v[0];
         if (constant(m, "Diffuse_Map_TilingV", v, 1)) out->tiling[1] = v[0];
         if (constant(m, "Self_Illumination", v, 1)) out->self_illumination = v[0];
+        for (uint32_t i = 0; i < 16; ++i) {  // (texture_shaders.txt)
+            int t = -1;
+            float c[4] = {};
+            if (texture_by_name(m, &t, kTraitMaps[i]) && t != -1) *traits |= 1u << i;
+            if (constant(m, kTraitConstants[i], c, 1)) *traits |= 1u << (16 + i);
+        }
+        // OpenRFG64: an emitter's light, from its own map when it has no Diffuse_Map (the first of kEmitterMaps it has)
+        const uint8_t* d = *reinterpret_cast<const uint8_t* const*>(m + rfg::off::Material_data);
+        if (d) *shader = *reinterpret_cast<const uint32_t*>(d + rfg::off::MaterialData_shader);
+        const int e = d ? emitter_of(*shader) : -1;
+        if (e >= 0) {
+            const char* map = *diffuse != -1 ? "Diffuse_Map" : nullptr;
+            for (const char* name : kEmitterMaps) {
+                if (map) break;
+                int t = -1;
+                if (texture_by_name(m, &t, name) && t != -1) {
+                    *diffuse = t;
+                    map = name;
+                }
+            }
+            const float strength = size_t(e) < kSolidCount ? g_emissive.load() : g_glow.load();
+            if (strength > 0.0f) {
+                out->flags |= rfgrt_scene::kMaterialEmitter;
+                out->self_illumination = strength;
+            }
+            g_emitter_materials[e].fetch_add(1);
+            const uint32_t bit = 1u << e;
+            if (!(g_emitter_logged.fetch_or(bit) & bit))
+                LOG("textures: the first %s material: its map %s, colour (%.2f %.2f %.2f), light %.2f for the rays (%s)",
+                    size_t(e) < kSolidCount ? kSolidEmitters[e] : kGlowEmitters[e - kSolidCount], map ? map : "none found",
+                    out->color[0], out->color[1], out->color[2], strength,
+                    size_t(e) < kSolidCount ? "GI.Emissive" : "GI.Glow");
+        } else if (g_self_lit.load() > 0.0f && g_emissive.load() > 0.0f && *diffuse != -1 &&
+                   out->self_illumination >= g_self_lit.load() && out->self_illumination < 64.0f) {
+            out->flags |= rfgrt_scene::kMaterialEmitter;
+            out->self_illumination = g_emissive.load() * (out->self_illumination < 1.0f ? out->self_illumination : 1.0f);
+            g_self_lit_materials.fetch_add(1);
+            if (!g_self_lit_logged.exchange(true))
+                LOG("textures: the first self-illuminated material taken for an emitter (GI.SelfLit %.2f): shader 0x%08X, "
+                    "colour (%.2f %.2f %.2f), light %.2f for the rays",
+                    g_self_lit.load(), d ? *reinterpret_cast<const uint32_t*>(d + rfg::off::MaterialData_shader) : 0u,
+                    out->color[0], out->color[1], out->color[2], out->self_illumination);
+        }
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -226,6 +376,27 @@ bool read_material(uint32_t handle, rfgrt_scene::MaterialEntry* out, int* diffus
 
 void set_enabled(bool on) { g_enabled = on; }
 bool enabled() { return g_enabled.load(); }
+void set_screens(const std::string& names) {
+    g_screen_names.clear();
+    std::string cur;
+    for (size_t i = 0; i <= names.size(); ++i) {
+        const char ch = i < names.size() ? names[i] : ',';
+        if (ch == ',') {
+            while (!cur.empty() && cur.back() == ' ') cur.pop_back();
+            if (!cur.empty()) g_screen_names.push_back(cur);
+            cur.clear();
+        } else if (ch != ' ' || !cur.empty()) {
+            cur += char(ch >= 'A' && ch <= 'Z' ? ch + 32 : ch);
+        }
+    }
+    LOG("textures: screens that give off light (GI.Screens): %zu names", g_screen_names.size());
+}
+
+void set_emission(double emissive, double glow, double self_lit) {
+    g_emissive = float(emissive > 0.0 ? (emissive < 256.0 ? emissive : 256.0) : 0.0);
+    g_glow = float(glow > 0.0 ? (glow < 256.0 ? glow : 256.0) : 0.0);
+    g_self_lit = float(self_lit > 0.0 ? self_lit : 0.0);
+}
 
 uint32_t id_of(uint32_t handle) {
     if (handle == kNone || !g_enabled.load()) return kNone;
@@ -286,8 +457,29 @@ bool material_entry(uint32_t material_handle, rfgrt_scene::MaterialEntry* out) {
     out->tiling[0] = out->tiling[1] = 1.0f;
     out->color[0] = out->color[1] = out->color[2] = 1.0f;
     int diffuse = -1;
-    if (!read_material(material_handle, out, &diffuse)) return false;
+    uint32_t shader = 0xFFFFFFFFu, traits = 0;
+    if (!read_material(material_handle, out, &diffuse, &shader, &traits)) return false;
     if (diffuse != -1) out->texture = id_of(uint32_t(diffuse));
+    char name[kNameCap];
+    uint32_t frames = 0;
+    bitmap_info(diffuse, name, kNameCap, &frames);
+    // OpenRFG64: a screen (by its picture's name, or a picture of more than one frame: the animated ones, which no
+    // name list caught) gives off light, half a light-source material's (GI.Emissive)
+    if (name[0] && (is_screen(name) || frames > 1) && !(out->flags & rfgrt_scene::kMaterialEmitter) &&
+        g_emissive.load() > 0.0f && g_self_lit.load() > 0.0f) {
+        out->flags |= rfgrt_scene::kMaterialEmitter;
+        out->self_illumination = g_emissive.load() * 0.5f;
+        g_screen_materials.fetch_add(1);
+        if (!g_screen_logged.exchange(true))
+            LOG("textures: the first screen taken for an emitter (by its texture's name, %s; %u frames): light %.2f for "
+                "the rays", name, frames, out->self_illumination);
+    }
+    if (out->texture < kMaxTextures && shader != 0xFFFFFFFFu) {
+        if (!g_texture_name[out->texture][0]) memcpy(g_texture_name[out->texture], name, kNameCap);
+        g_texture_frames[out->texture] = uint16_t(frames);
+        g_texture_traits[out->texture].store(traits);
+        g_texture_shader[out->texture].store(shader + 1u);
+    }
     return true;
 }
 
@@ -391,6 +583,27 @@ void log_stats() {
     for (const auto& [f, n] : g_formats_left) left += (left.empty() ? "" : ", ") + std::to_string(f) + ": " + std::to_string(n);
     LOG("textures: their view formats (DXGI) taken {%s}, left out {%s}", taken.empty() ? "none" : taken.c_str(),
         left.empty() ? "none" : left.c_str());
+    std::string emitters;
+    for (size_t i = 0; i < kEmitterCount; ++i)
+        emitters += std::string(i ? ", " : "") + (i < kSolidCount ? kSolidEmitters[i] : kGlowEmitters[i - kSolidCount]) + " " +
+                    std::to_string(g_emitter_materials[i].load());
+    LOG("textures: emitters' materials read (light for the rays: GI.Emissive %.2f, GI.Glow %.2f): %s, self-illuminated "
+        "(GI.SelfLit %.2f) %llu, screens (by name) %llu", g_emissive.load(), g_glow.load(), emitters.c_str(), g_self_lit.load(),
+        (unsigned long long)g_self_lit_materials.load(), (unsigned long long)g_screen_materials.load());
+    FILE* t = nullptr;
+    if (_wfopen_s(&t, (session::run_dir() + L"\\texture_shaders.txt").c_str(), L"w") == 0 && t) {
+        fprintf(t, "core texture id -> the material shader (handle) it was last read with\n");
+        for (uint32_t i = 0; i < kMaxTextures; ++i)
+            if (const uint32_t s = g_texture_shader[i].load()) {
+                const uint32_t traits = g_texture_traits[i].load();
+                fprintf(t, "texture %u (%s, %u frames): shader 0x%08X;", i, g_texture_name[i][0] ? g_texture_name[i] : "?",
+                        unsigned(g_texture_frames[i]), s - 1u);
+                for (uint32_t b = 0; b < 32; ++b)
+                    if (traits & (1u << b)) fprintf(t, " %s", b < 16 ? kTraitMaps[b] : kTraitConstants[b - 16]);
+                fprintf(t, "\n");
+            }
+        fclose(t);
+    }
 }
 
 }  // namespace textures

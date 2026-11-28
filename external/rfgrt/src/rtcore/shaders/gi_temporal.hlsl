@@ -98,5 +98,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             }
         }
     }
+    // OpenRFG64: a history not finite starts over (it would stay so, the light tinted, until the pixel's history broke)
+    if (!all(isfinite(h))) h = float4(all(isfinite(v)) ? v : float3(0.0, 0.0, 0.0), 1.0);
     history[id.xy] = h;
 }

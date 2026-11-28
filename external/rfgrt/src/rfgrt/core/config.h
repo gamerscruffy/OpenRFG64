@@ -99,6 +99,18 @@ struct Config {
     bool gi_window_tint = true;   // the clear glass tints the sun's light through it, texel by texel (GI.WindowTint)
     bool gi_cloud_shadows = true; // the game's cloud shadows on the sunlight of the GI's hits, the fog and the glass (the
                                   // direct sunlight has them from the game's ClbTexture either way)
+    double gi_emissive = 6.0;     // OpenRFG64: the light the solid emitters (rfg-lightsource: lamps, screens) give the rays,
+                                  // times their texture (the game's units: 4 a fully self-lit rfg-standard; 0 none)
+    bool gi_emitters = true;        // OpenRFG64 GI.Emitters: glowing particles, coronas and meshes light the rays (render/emitters.h)
+    double gi_emitter_light = 1.0;  // GI.EmitterLight: their light's scale
+    double gi_emitter_mesh = 1.0;   // GI.EmitterMesh: the glowing meshes' (lamps, screens)
+    double gi_emitter_saturation = 0.5;  // GI.EmitterSaturation: their light's colour kept (0 grey, 1 their own)
+    double gi_emitter_min_radius = 0.3;  // GI.EmitterMinRadius: the least size (m) a light counts as (no blow-out beside it)
+    double gi_clamp = 16.0;       // OpenRFG64 GI.Clamp: the most luminance one GI or reflection ray brings back (0: none)
+    // OpenRFG64 GI.Screens: texture names (pieces of them, comma-separated, any case) of screens that give off light
+    std::string gi_screens = "screen,monitor,display,metal_wksgj001,metal_wkjhy001";
+    double gi_self_lit = 0.5;     // OpenRFG64 GI.SelfLit: materials at least this self-illuminated are emitters too (0: none)
+    double gi_glow = 0.0;         // the same for the glow halos the rays cross (rfg-vfx-glow, -glow2, -light-cone)
     double gi_rim_light = 0.0;    // the characters' cloth's rim light (a glow along their edges turned from the sun,
                                   // patch/rim_light.h) where the path tracer lights them: 0 none, 1 the game's
     bool gi_frosted_glass = true; // the patterned glass (rfg-eosglass) diffuses the light through it: no sunlight through
@@ -129,6 +141,11 @@ struct Config {
     // eyes do; below 0 the game's amount, 0.3 to 0.5, which a path-traced room 10 to 30 times darker than the game's flat
     // fill left nearly black); brighter scenes keep the game's (patch/eye_adaption.h)
     double tonemap_eye_adaptation_dark = 1.0;
+    // OpenRFG64: a filmic curve blended over the game's tone curve (patch/filmic.h): 0 the game's alone, 1 all filmic
+    // (deeper shadows, brighter mid-tones, the same white); FilmicExposure scales what the curve is fed (1: the game's
+    // y 0.3 kept)
+    double tonemap_filmic = 0.5;
+    double tonemap_filmic_exposure = 1.0;
 
     // [Particles] while path tracing, the particles the game draws over everything (always on top: the camera's wind
     // dust) drawn with the sky instead, behind every world object (render/sky_particles.h); false: the game's
@@ -143,6 +160,7 @@ struct Config {
     double refl_gloss = 32.0;      // the lobe's exponent around the mirror direction (higher: sharper)
     bool refl_glass = true;        // the clear glass reflects (a mirror, Fresnel-weighted; with GI.Glass)
     double refl_glass_f0 = 0.2;    // its reflectance at normal incidence (Schlick's F0: plain glass 0.04, a mirror 1)
+    double refl_glass_opacity = 0.8;  // its own lit colour's opacity, times the game's (1: the game's; less: clearer glass)
     int refl_history = 6;          // the most frames averaged
     int refl_filter_radius = 1;    // the spatial filter's radius in pixels
 
@@ -165,7 +183,7 @@ struct Config {
     double test_fog_density = 1.0;  // Test.FogDensity: the volumetric fog's density over the game's fog's (tests: the
                                     // fog's structure seen in thick fog; the sky, the landmarks and see-through things
                                     // keep the game's)
-    int probe_key = 0x79;         // Test.ProbeKey: the key (virtual-key code; F10) that logs what the rays under the
+    int probe_key = 0x2D;         // Test.ProbeKey: the key (virtual-key code; Insert) that logs what the rays under the
                                   // crosshair meet: what shadows that spot, what the rays see there (0: none)
     double probe_at_s = 0;        // Test.ProbeAt: one probe at this gameplay second (tests)
     int probe_at_frame = -1;      // Test.ProbeAtFrame: one probe at this gameplay frame (a replay's frame number)

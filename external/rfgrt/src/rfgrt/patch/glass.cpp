@@ -82,7 +82,7 @@ const char* name(Result r) {
     }
 }
 
-Result patch(const void* bytes, size_t size, std::vector<uint8_t>* out, Report* report, bool fog) {
+Result patch(const void* bytes, size_t size, std::vector<uint8_t>* out, Report* report, bool fog, float opacity) {
     Report local;
     Report& r = report ? *report : local;
     auto fail = [&](const std::string& why) {
@@ -319,6 +319,18 @@ Result patch(const void* bytes, size_t size, std::vector<uint8_t>* out, Report* 
         temp_src(swz(3, 3, 3, 3)), to,
     };
     constexpr size_t kReflectInstructions = 10;
+    // the glass's own colour clearer where there is a reflection (glass.h, `opacity`): after the ld of t19 (20 tokens in)
+    const bool thin = opacity >= 0.0f && opacity < 1.0f;
+    uint32_t opacity_bits = 0;
+    std::memcpy(&opacity_bits, &opacity, 4);
+    const std::vector<uint32_t> clearer = {
+        op_token(dxbc::kMul, 10), temp_dst(0x4), ts, temp_src(swz(3, 3, 3, 3)), to, kImm4, opacity_bits, opacity_bits,
+        opacity_bits, opacity_bits,
+        op_token(dxbc::kMovc, 9), temp_dst(0x8), to, temp_src(swz(3, 3, 3, 3)), tr, temp_src(swz(2, 2, 2, 2)), ts,
+        temp_src(swz(3, 3, 3, 3)), to,
+    };
+    std::vector<uint32_t> reflect_all = reflect;
+    if (thin) reflect_all.insert(reflect_all.begin() + 20, clearer.begin(), clearer.end());
     const std::vector<uint32_t> fogged = {  // then the core's fog at the glass, where it is there (glass.h)
         op_token(kFtoi, 5), temp_dst(0x3), tr, input_src(swz(0, 1, 0, 0)), position,
         op_token(dxbc::kMov, 8), temp_dst(0xC), tr, kImm4, 0, 0, 0, 0,
@@ -340,7 +352,7 @@ Result patch(const void* bytes, size_t size, std::vector<uint8_t>* out, Report* 
         if (int(i) == first_code) t.insert(t.end(), load.begin(), load.end());
         if (int(i) == combine) t.insert(t.end(), relight.begin(), relight.end());
         if (in.opcode == dxbc::kRet) {
-            t.insert(t.end(), reflect.begin(), reflect.end());
+            t.insert(t.end(), reflect_all.begin(), reflect_all.end());
             if (fog) t.insert(t.end(), fogged.begin(), fogged.end());
             t.insert(t.end(), write.begin(), write.end());
         }
@@ -378,7 +390,7 @@ Result patch(const void* bytes, size_t size, std::vector<uint8_t>* out, Report* 
                       reinterpret_cast<const uint8_t*>(program.data()) + program.size() * 4);
     dxbc::Program check;
     if (!dxbc::decode(*shdr, &check, &error)) return fail("the rewritten program does not decode: " + error);
-    const size_t added = 5 + 1 + 1 + 2 + (fog ? 1 : 0) + (first_input >= 0 ? 1 : 0) + rets * (kReflectInstructions + 1 + (fog ? kFogInstructions : 0));
+    const size_t added = 5 + 1 + 1 + 2 + (fog ? 1 : 0) + (first_input >= 0 ? 1 : 0) + rets * (kReflectInstructions + (thin ? 2 : 0) + 1 + (fog ? kFogInstructions : 0));
     if (check.code.size() != p.code.size() + added) return fail("the rewritten program has the wrong instruction count");
     if (out) *out = dxbc::serialize(c);
     r.result = Result::Patched;

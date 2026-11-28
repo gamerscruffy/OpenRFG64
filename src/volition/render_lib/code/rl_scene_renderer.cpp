@@ -60,6 +60,7 @@ extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vKey); // 
 #include <math.h>
 #include <string.h>
 #include "backends/seams.h"
+#include "backends/backends.h" // OpenRFG (VOM): Dynamic Lights on while path tracing
 #include "backends/dlss/dlss_frame.h" // OpenRFG (VOM): DLSS for the game's frame
 
 // <rl_scene_renderer::release> 0x004C7510 (:79)
@@ -738,8 +739,14 @@ void rl_scene_renderer::render_scene_part2(rl_renderer& deferredRenderer, rl_cam
         }
         s_spot_pass_key_was_down = pass_down;
     }
-    // OpenRFG: the Dynamic Lights budget of the options menu (the next frame's visible lights use it).
-    rl_dynamic_lights_apply_level(rl_lod_get_dynamic_lights_level(m_level_of_detail));
+    // OpenRFG: the Dynamic Lights budget of the options menu (the next frame's visible lights use it). While path tracing
+    // the menu's row is greyed out and the lights are on at High: the street lamps, fires and explosions light the scene
+    // through these lights, rfgrt traces their shadows (up to 16 masks: High's 14 fit) and its fog and lit colour hang off
+    // their passes; at Off a path-traced night had no lamps at all.
+    const int kPath_traced_lights_level = 3;
+    rl_dynamic_lights_apply_level(openrfg_backends_effective_renderer() == OPENRFG_RENDERER_PATH_TRACED
+                                      ? kPath_traced_lights_level
+                                      : rl_lod_get_dynamic_lights_level(m_level_of_detail));
     if (m_level_of_detail.m_ssao_enabled)
     {
         rl_ssao_apply_quality(rl_lod_get_ssao_level(m_level_of_detail)); // OpenRFG: the options menu's quality level
@@ -860,10 +867,10 @@ void rl_scene_renderer::render_scene_part2_passes(rl_renderer& deferredRenderer,
         deferredRenderer.clear(rl_color::BLACK, 4, 1.0f, 0);
         deferredRenderer.set_macro_state(saved_state, false);
     }
-    if (RL_enable_secondary_lights)
-    {
-        render_lighting_passes(deferredRenderer, camera, *light, *m_base_batched_pass, m_transparent_shadow_objects, m_num_transparent_shadow_objects, msaa_enabled);
-    }
+    // OpenRFG: called whatever the Dynamic Lights level (rfg.exe skips it when RL_enable_secondary_lights is off). With
+    // the lights off determine_visible_lights leaves m_visible_lights empty, so no light pass is drawn, but the seam
+    // still runs: the path tracer composites its volumetric fog and copies the lit colour for its rays there.
+    render_lighting_passes(deferredRenderer, camera, *light, *m_base_batched_pass, m_transparent_shadow_objects, m_num_transparent_shadow_objects, msaa_enabled);
     if (RL_enable_render_deferred)
     {
         float fade_end = scene.m_opacity_distance_end;

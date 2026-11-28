@@ -102,6 +102,12 @@ uint32_t Tlas::record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_fram
         if (posed && posed[i]) {
             blas = posed[i];
             ++stats.posed;
+        } else if (s.kind == rfgrt_frame::kKindSkinned) {
+            // OpenRFG64: a skinned instance not posed this frame (its Skin record malformed or missing, its mesh's bind
+            // pose not on the GPU yet, the palette slot full) is left out for the frame: its mesh's BLAS is the bind pose,
+            // and a T-posed character flashed in the shadows, reflections and GI for a frame
+            ++stats.unposed;
+            continue;
         }
         if (!scene.has_materials(s.mesh_id)) ++stats.no_materials[s.kind < 6 ? s.kind : 0];
         // Glass (frame_scene.h): which material map entries are clear glass and which translucent, as the BLAS's geometries
@@ -134,7 +140,9 @@ uint32_t Tlas::record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_fram
                 e[0] = 0xFFFFFFFFu;
             }
         }
-        D3D12_RAYTRACING_INSTANCE_DESC& d = descs[n++];
+        // OpenRFG64: built here and copied once: descs is an upload heap (write-combined), and reading it back below (the
+        // offset, the glass, the distance) cost ~20 ms of the core's CPU a frame with ~13,500 instances
+        D3D12_RAYTRACING_INSTANCE_DESC d;
         memcpy(d.Transform, s.object_to_world.m, sizeof(d.Transform));
         // the submesh's offset comes first: t' = t + R o
         for (int r = 0; r < 3; ++r)
@@ -185,6 +193,7 @@ uint32_t Tlas::record(ID3D12GraphicsCommandList4* cl, int slot, const rfgrt_fram
         const float dx = d.Transform[0][3] - camera_[0], dy = d.Transform[1][3] - camera_[1], dz = d.Transform[2][3] - camera_[2];
         const float d2 = dx * dx + dy * dy + dz * dz;
         nearest2 = d2 < nearest2 ? d2 : nearest2;
+        memcpy(&descs[n++], &d, sizeof(d));
     }
     if (n) stats.nearest_sum += double(std::sqrt(nearest2));
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC bd{};

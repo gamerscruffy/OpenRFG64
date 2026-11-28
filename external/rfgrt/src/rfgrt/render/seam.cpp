@@ -164,6 +164,114 @@ struct Stats {
     uint64_t intervals = 0;
 } g_stats;
 
+// OpenRFG64 timing: where the game's GPU frame goes, from D3D11 timestamps on the immediate context (render thread):
+// present -> the scene's start -> the seam's start (the game's depth and g-buffer done) -> the seam's end (the core's
+// frame waited for on fence B, our copies) -> the scene's end (the game's lighting, particles) -> present (HDR, post,
+// UI). Read back a few frames later without flushing; frames whose queries are not back by the time their slot comes
+// round again are dropped.
+struct GpuClock {
+    enum { kScene = 0, kSeam0, kSeam1, kSceneEnd, kPresent, kMarks };
+    static constexpr int kN = 8;
+    ID3D11Query* disjoint[kN] = {};
+    ID3D11Query* stamp[kN][kMarks] = {};
+    uint32_t marked[kN] = {};  // which marks the slot's frame got
+    bool pending[kN] = {};
+    int cur = -1;
+    bool failed = false;
+    uint64_t last_present = 0;  // the previous frame's present stamp (valid while the frames read back are consecutive)
+    bool last_valid = false;
+    // the sums since the last report (us)
+    double whole = 0, whole_max = 0, before_scene = 0, before_seam = 0, at_seam = 0, after_seam = 0, after_scene = 0;
+    uint64_t frames = 0, split = 0, dropped = 0, disjoints = 0;
+} g_clock;
+
+ID3D11DeviceContext* clock_context() {
+    if (!g_gpu.ready || !g_gpu.device || g_clock.failed) return nullptr;
+    if (!g_clock.disjoint[0]) {
+        D3D11_QUERY_DESC dq{D3D11_QUERY_TIMESTAMP_DISJOINT, 0}, tq{D3D11_QUERY_TIMESTAMP, 0};
+        for (int i = 0; i < GpuClock::kN; ++i) {
+            if (FAILED(g_gpu.device->CreateQuery(&dq, &g_clock.disjoint[i]))) g_clock.failed = true;
+            for (int m = 0; m < GpuClock::kMarks; ++m)
+                if (FAILED(g_gpu.device->CreateQuery(&tq, &g_clock.stamp[i][m]))) g_clock.failed = true;
+        }
+        if (g_clock.failed) {
+            LOG("timing: the D3D11 timestamp queries could not be made: no GPU split of the game's frame");
+            return nullptr;
+        }
+    }
+    ID3D11DeviceContext* ctx = nullptr;
+    g_gpu.device->GetImmediateContext(&ctx);
+    return ctx;  // (the device holds it: released by the caller)
+}
+
+// A mark in the open frame (the render thread, which owns the immediate context).
+void clock_mark(ID3D11DeviceContext* ctx, int mark) {
+    const int i = g_clock.cur;
+    if (!ctx || i < 0 || g_clock.pending[i] || (g_clock.marked[i] >> mark) & 1u) return;
+    ctx->End(g_clock.stamp[i][mark]);
+    g_clock.marked[i] |= 1u << mark;
+}
+
+// The finished frames back, oldest first, until one is not yet.
+void clock_resolve(ID3D11DeviceContext* ctx) {
+    for (int step = 1; step <= GpuClock::kN; ++step) {
+        const int i = (g_clock.cur + step) % GpuClock::kN;
+        if (!g_clock.pending[i]) continue;
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj{};
+        if (ctx->GetData(g_clock.disjoint[i], &dj, sizeof(dj), D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK) return;
+        uint64_t t[GpuClock::kMarks] = {};
+        for (int m = 0; m < GpuClock::kMarks; ++m)
+            if ((g_clock.marked[i] >> m) & 1u &&
+                ctx->GetData(g_clock.stamp[i][m], &t[m], sizeof(uint64_t), D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK)
+                return;
+        g_clock.pending[i] = false;
+        if (dj.Disjoint || !dj.Frequency) {
+            ++g_clock.disjoints;
+            g_clock.last_valid = false;
+            continue;
+        }
+        const uint32_t mk = g_clock.marked[i];
+        auto us = [&](uint64_t a, uint64_t z) { return z > a ? double(z - a) * 1e6 / double(dj.Frequency) : 0.0; };
+        if (g_clock.last_valid && (mk >> GpuClock::kPresent) & 1u) {
+            const double whole = us(g_clock.last_present, t[GpuClock::kPresent]);
+            if (whole < 250000.0) {  // (a loading screen or a pause left out)
+                g_clock.whole += whole;
+                g_clock.whole_max = whole > g_clock.whole_max ? whole : g_clock.whole_max;
+                ++g_clock.frames;
+                const uint32_t all = (1u << GpuClock::kMarks) - 1u;
+                if (mk == all) {
+                    g_clock.before_scene += us(g_clock.last_present, t[GpuClock::kScene]);
+                    g_clock.before_seam += us(t[GpuClock::kScene], t[GpuClock::kSeam0]);
+                    g_clock.at_seam += us(t[GpuClock::kSeam0], t[GpuClock::kSeam1]);
+                    g_clock.after_seam += us(t[GpuClock::kSeam1], t[GpuClock::kSceneEnd]);
+                    g_clock.after_scene += us(t[GpuClock::kSceneEnd], t[GpuClock::kPresent]);
+                    ++g_clock.split;
+                }
+            }
+        }
+        g_clock.last_valid = (mk >> GpuClock::kPresent) & 1u;
+        g_clock.last_present = t[GpuClock::kPresent];
+    }
+}
+
+void clock_report() {
+    GpuClock& c = g_clock;
+    if (c.frames) {
+        const double f = double(c.frames), s = c.split ? double(c.split) : 1.0;
+        LOG("timing: the game's GPU frame (D3D11 timestamps, present to present) %.2f ms on average (%.2f max) over %llu "
+            "frames; of %llu with every mark: before the scene (the previous frame's end, the cascades' setup) %.2f ms, "
+            "the scene to the seam (depth, g-buffer) %.2f ms, at the seam (waiting for the core's frame on fence B, our "
+            "copies) %.2f ms, the seam to the scene's end (the lighting passes, particles, glass) %.2f ms, the scene's end "
+            "to present (HDR, bloom, post, upscaling, UI) %.2f ms; %llu frames dropped (not back in time), %llu disjoint",
+            c.whole / f / 1000.0, c.whole_max / 1000.0, static_cast<unsigned long long>(c.frames),
+            static_cast<unsigned long long>(c.split), c.before_scene / s / 1000.0, c.before_seam / s / 1000.0,
+            c.at_seam / s / 1000.0, c.after_seam / s / 1000.0, c.after_scene / s / 1000.0,
+            static_cast<unsigned long long>(c.dropped), static_cast<unsigned long long>(c.disjoints));
+    }
+    c.whole = c.whole_max = c.before_scene = c.before_seam = c.at_seam = c.after_seam = c.after_scene = 0;
+    c.frames = c.split = c.dropped = c.disjoints = 0;
+}
+
 // The frame's scene is written on a worker thread while render() runs: the game's render data stays still for all of
 // render() (the sim thread changes it only inside the next handshake, which waits for render() to return), and
 // render() waits for the worker before it returns. The render thread only hands the job over.
@@ -173,6 +281,9 @@ struct SnapshotWorker {
     int64_t frame = 0;
     int64_t wait_ticks = 0;  // the render thread's waits for it, for the log
     uint64_t waits = 0;
+    // OpenRFG64 timing: the snapshot's own time on the worker, and from render()'s start to the seam (render thread)
+    int64_t snap_ticks = 0, snap_max = 0, render_start = 0, to_seam_ticks = 0;
+    uint64_t snaps = 0, seams = 0;
 } g_worker;
 
 // The seam follows one scene renderer, the first one seen (the main view). rl_scene_renderer::render is virtual, so
@@ -379,6 +490,15 @@ void log_stats(bool force) {
         g_worker.wait_ticks = 0;
         g_worker.waits = 0;
     }
+    if (g_worker.snaps || g_worker.seams) {  // OpenRFG64 timing
+        LOG("timing: the frame scene's snapshot took %.2f ms on its worker on average (%.2f max) over %llu frames; "
+            "render() reached the seam %.2f ms after its start",
+            g_worker.snaps ? session::ticks_to_ms(g_worker.snap_ticks) / double(g_worker.snaps) : 0.0,
+            session::ticks_to_ms(g_worker.snap_max), static_cast<unsigned long long>(g_worker.snaps),
+            g_worker.seams ? session::ticks_to_ms(g_worker.to_seam_ticks) / double(g_worker.seams) : 0.0);
+        g_worker.snap_ticks = g_worker.snap_max = g_worker.to_seam_ticks = 0;
+        g_worker.snaps = g_worker.seams = 0;
+    }
     if (g_stats.renders && g_stats.intervals) {
         LOG("seam: rl_scene_renderer::render took %.3f ms on the render thread on average (%.3f ms at most); frames %.3f ms "
             "apart (%.1f FPS); cascades %s",
@@ -407,6 +527,7 @@ void log_stats(bool force) {
         LOG("seam: %llu frames waited for the core to queue them, %.3f ms on average; %llu of them gave up after %g ms",
             static_cast<unsigned long long>(g_stats.waits), session::ticks_to_ms(g_stats.wait_ticks) / double(g_stats.waits),
             static_cast<unsigned long long>(g_stats.wait_timeouts), g_cfg.host_wait_ms);
+    clock_report();
     const int64_t last = g_stats.last_render_start;
     g_stats = Stats{};
     g_stats.since = now;
@@ -534,6 +655,11 @@ void on_seam(uint8_t* graphics, uint8_t* scene) {
         g_gpu.ready = true;
     }
     ++g_stats.seams;
+    clock_mark(ctx, GpuClock::kSeam0);  // OpenRFG64 timing
+    if (g_worker.render_start) {
+        g_worker.to_seam_ticks += session::qpc() - g_worker.render_start;
+        ++g_worker.seams;
+    }
 
     poll_vanilla_key();
     const double t = session::gameplay_seconds();
@@ -589,6 +715,7 @@ void on_seam(uint8_t* graphics, uint8_t* scene) {
     const bool covered = !g_vanilla && (clb_written || (!g_host_off && g_last.srv && g_since_answer <= kCoverMisses));
     g_skip_cascades = g_cfg.skip_cascades && covered;
     g_skip_ssao = g_ao && covered;
+    clock_mark(ctx, GpuClock::kSeam1);  // OpenRFG64 timing
     log_stats(false);
 }
 
@@ -639,7 +766,12 @@ void draw_overlay(uint8_t* graphics, IDXGISwapChain* sc) {
 DWORD WINAPI snapshot_worker_main(LPVOID) {
     for (;;) {
         if (WaitForSingleObject(g_worker.start, INFINITE) != WAIT_OBJECT_0) return 0;
+        const int64_t s0 = session::qpc();
         instances::snapshot(g_worker.renderer, g_worker.scene, g_worker.camera, g_worker.frame);
+        const int64_t s = session::qpc() - s0;  // OpenRFG64 timing (summed here, read by log_stats on the render thread)
+        g_worker.snap_ticks += s;
+        g_worker.snap_max = s > g_worker.snap_max ? s : g_worker.snap_max;
+        ++g_worker.snaps;
         SetEvent(g_worker.done);
     }
 }
@@ -707,9 +839,19 @@ void __fastcall d_scene_render(RFG_THIS(void*, self), void* renderer, void* sim_
         }
     }
     const bool main_scene = !g_main_scene || g_main_scene == self;
+    if (main_scene)
+        if (ID3D11DeviceContext* c = clock_context()) {  // OpenRFG64 timing
+            clock_mark(c, GpuClock::kScene);
+            c->Release();
+        }
     const int64_t r0 = session::qpc();
+    if (main_scene) g_worker.render_start = r0;  // OpenRFG64 timing
     o_scene_render(self, renderer, sim_renderer, scene, camera, hdr, color_correct);
     if (main_scene) {
+        if (ID3D11DeviceContext* c = clock_context()) {  // OpenRFG64 timing
+            clock_mark(c, GpuClock::kSceneEnd);
+            c->Release();
+        }
         const int64_t r1 = session::qpc();
         g_stats.render_ticks += r1 - r0;
         g_stats.render_max = r1 - r0 > g_stats.render_max ? r1 - r0 : g_stats.render_max;
@@ -769,6 +911,30 @@ void __fastcall d_shadow_pass(RFG_THIS(void*, self), void* renderer, void* camer
 }
 
 }  // namespace
+
+// OpenRFG64 timing: a frame's end (the game's Present, render thread): its marks closed, the finished frames read back,
+// the next frame's opened.
+void gpu_frame_end() {
+    ID3D11DeviceContext* ctx = clock_context();
+    if (!ctx) return;
+    GpuClock& c = g_clock;
+    if (c.cur >= 0 && !c.pending[c.cur]) {
+        clock_mark(ctx, GpuClock::kPresent);
+        ctx->End(c.disjoint[c.cur]);
+        c.pending[c.cur] = true;
+    }
+    clock_resolve(ctx);
+    const int next = (c.cur + 1) % GpuClock::kN;
+    if (c.pending[next]) {  // not back after kN frames: dropped
+        c.pending[next] = false;
+        c.last_valid = false;
+        ++c.dropped;
+    }
+    ctx->Begin(c.disjoint[next]);
+    c.marked[next] = 0;
+    c.cur = next;
+    ctx->Release();
+}
 
 bool install(const Config& cfg) {
     g_cfg = cfg;

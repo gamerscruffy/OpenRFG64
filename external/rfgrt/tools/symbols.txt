@@ -252,6 +252,15 @@ field rl_material_data::shader_handle as MaterialData_shader
 # first, -1 for those)
 fn rl_material::get_texture_data @00111170 as Material_getTextureDataByName
 fn get_dev_texture
+# OpenRFG64: a texture's bitmap entry (bitmap_entry* bm_get_entry(int handle, bool auto_animate)): its file name (the
+# screens' light, by name) and its animation (the frame shown, the frames and their rate). Added by hand while the GOG
+# PDB is not at hand: 0 in the two retail builds (missing there), found by name in OpenRFG64's PDB.
+fn bm_get_entry as bm_get_entry
+field bitmap_entry::filename_ptr as BitmapEntry_filename
+field bitmap_entry::current_peg_entry as BitmapEntry_peg
+field bitmap_entry::frame_number as BitmapEntry_frame
+field peg_entry::num_frames as PegEntry_frames
+field peg_entry::fps as PegEntry_fps
 fn rl_material::get_constant_data @000E8CF0 as Material_getConstantDataByName
 fn rl_material::get_constant_loc @000E8E20 as Material_getConstantLocByName
 fn rl_singleton<rl_shader_library>::get_instance as ShaderLibrary_instance

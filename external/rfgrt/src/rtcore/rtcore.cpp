@@ -21,6 +21,7 @@
 #include "gi_trace_cs.h"     // g_gi_trace_cs (dxc, cs_6_5)
 #include "light_shadow_cs.h"  // g_light_shadow_cs (dxc, cs_6_5)
 #include "reflect_trace_cs.h"  // g_reflect_trace_cs (dxc, cs_6_5)
+#include "refl_temporal_cs.h"  // g_refl_temporal_cs (dxc, cs_6_0)
 #include "cache_update_cs.h"   // g_cache_update_cs (dxc, cs_6_5)
 #include "cache_resolve_cs.h"  // g_cache_resolve_cs (dxc, cs_6_5)
 #include "sky_update_cs.h"     // g_sky_update_cs (dxc, cs_6_5)
@@ -172,6 +173,23 @@ void log_removed_device_data(ID3D12Device* dev) {
             logf("lost device: queue \"%s\", command list \"%s\": %u of its %u operations done; around the first not done "
                  "(>>): %s",
                  queue_name.c_str(), list_name.c_str(), done, node->BreadcrumbCount, ops.c_str());
+            // OpenRFG64: a list the GPU was part way through, whole (runs of one op counted), to place where it stopped
+            // (the SetMarkers around DLSS Ray Reconstruction among them)
+            if (done > 0) {
+                std::string all;
+                for (UINT i = 0; i < node->BreadcrumbCount;) {
+                    UINT j = i;
+                    while (j < node->BreadcrumbCount && node->pCommandHistory[j] == node->pCommandHistory[i] && (j == i || j != done)) ++j;
+                    const char* op = breadcrumb_op_name(node->pCommandHistory[i]);
+                    char item[96];
+                    snprintf(item, sizeof(item), "%s%s%s%s", all.empty() ? "" : ", ", i == done ? ">>" : "",
+                             op ? op : ("op " + std::to_string(int(node->pCommandHistory[i]))).c_str(),
+                             j - i > 1 ? (" x" + std::to_string(j - i)).c_str() : "");
+                    all += item;
+                    i = j;
+                }
+                logf("lost device:   that list whole: %s", all.c_str());
+            }
         }
         logf("lost device: %d command lists in the breadcrumbs, %d of them not finished", lists, unfinished);
     } else {
@@ -416,6 +434,15 @@ struct Stats {
     uint64_t shadow[9] = {};  // sun shadows: 0-3, 8 against the game's cascades (sun_shadow_filter.hlsl), 4-5 the history
     uint64_t glass_px = 0, glass_lit = 0;  // the glass's light (glass_light.hlsl): pixels with glass in front, in the sun
     float samples[96] = {};  // the last frame's 32 sample pixels: game depth value, mirror view depth, game view depth
+    // OpenRFG64 timing: the queue idle between one frame's end and the next one's start (GPU timestamps: the game's own
+    // GPU work before fence A, or no frame queued yet), and the frames that waited for their ring slot (CPU, ms)
+    double gap_us = 0, gap_max_us = 0, slot_wait_ms = 0, slot_wait_max_ms = 0;
+    uint64_t gaps = 0, slot_waits = 0;
+    // and the core thread's CPU (ms): the scene's and skinning's pump each turn of the loop; for each queued frame, from
+    // seeing it published to starting its lists, then recording list 1 (skinning, the TLAS) and list 2 (the pass)
+    double pump_ms = 0, pump_max_ms = 0, ready_ms = 0, rec1_ms = 0, rec1_max_ms = 0, rec2_ms = 0, rec2_max_ms = 0;
+    uint64_t pumps = 0, recorded = 0;
+    double skin_ms = 0, tlas_ms = 0;  // list 1's two parts (CPU)
     void clear() { *this = Stats{}; }
 };
 
@@ -574,7 +601,13 @@ int run(const RunParams& p) {
     int32_t probeSeen = b->probe_request;
     ID3D12Resource* giCb = nullptr;  // upload: kRing x 512 bytes of GiConstants
     uint8_t* giCbCpu = nullptr;
+    // OpenRFG64: the frame's emitters (frame_scene.h Emitter) for gi_trace.hlsl (b2): kRing x kEmitterCbBytes, a count
+    // then the emitters as they are
+    constexpr uint64_t kEmitterCbBytes = 4096;
+    ID3D12Resource* emitterCb = nullptr;
+    uint8_t* emitterCbCpu = nullptr;
     ID3D12PipelineState* reflTracePso = nullptr;
+    ID3D12PipelineState* reflTemporalPso = nullptr;  // OpenRFG64: their own temporal pass (refl_temporal.hlsl)
     ID3D12Resource* reflCb = nullptr;  // upload: kRing x 512 bytes of GiConstants (the reflections')
     uint8_t* reflCbCpu = nullptr;
     ID3D12RootSignature* lightRs = nullptr;
@@ -604,7 +637,7 @@ int run(const RunParams& p) {
             // as a root CBV (b0), and the geometry pool's pages (t0-t63, space1) in a table.
             D3D12_DESCRIPTOR_RANGE giRanges[2] = {{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0, 0, 0}, {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 5}};
             D3D12_DESCRIPTOR_RANGE pageRange = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaxGeoPages, 0, 1, 0};
-            D3D12_ROOT_PARAMETER gp[15]{};
+            D3D12_ROOT_PARAMETER gp[16]{};
             gp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
             gp[0].DescriptorTable = {2, giRanges};
             gp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
@@ -634,6 +667,9 @@ int run(const RunParams& p) {
             D3D12_DESCRIPTOR_RANGE textureRange = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, rfgrt_scene::kMaxTextures, 0, 2, 0};
             gp[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
             gp[14].DescriptorTable = {1, &textureRange};
+            // OpenRFG64 b2: the frame's emitters (gi_trace.hlsl; the other passes leave it unset)
+            gp[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+            gp[15].Descriptor = {2, 0};
             // s0: linear, clamped (the fog reads its froxels between their centres); s1: linear, wrapping (the materials'
             // textures)
             D3D12_STATIC_SAMPLER_DESC samplers[2]{};
@@ -645,7 +681,7 @@ int run(const RunParams& p) {
             samplers[1] = samplers[0];
             samplers[1].AddressU = samplers[1].AddressV = samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
             samplers[1].ShaderRegister = 1;
-            giRs = make_root_signature(dev, {15, gp, 2, samplers, D3D12_ROOT_SIGNATURE_FLAG_NONE});
+            giRs = make_root_signature(dev, {16, gp, 2, samplers, D3D12_ROOT_SIGNATURE_FLAG_NONE});
             if (!giRs) return fail("GI root signature", E_FAIL);
             pd.pRootSignature = giRs;
             pd.CS = {g_gi_trace_cs, sizeof(g_gi_trace_cs)};
@@ -771,9 +807,16 @@ int run(const RunParams& p) {
             giCb = make_buffer(dev, D3D12_HEAP_TYPE_UPLOAD, uint64_t(kRing) * 512, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ);
             D3D12_RANGE none{0, 0};
             if (!giCb || FAILED(giCb->Map(0, &none, reinterpret_cast<void**>(&giCbCpu)))) return fail("GI constants", E_OUTOFMEMORY);
+            emitterCb = make_buffer(dev, D3D12_HEAP_TYPE_UPLOAD, uint64_t(kRing) * kEmitterCbBytes, D3D12_RESOURCE_FLAG_NONE,
+                                    D3D12_RESOURCE_STATE_GENERIC_READ);
+            if (!emitterCb || FAILED(emitterCb->Map(0, &none, reinterpret_cast<void**>(&emitterCbCpu))))
+                return fail("emitter constants", E_OUTOFMEMORY);
             if (b->refl_enabled > 0) {
                 pd.CS = {g_reflect_trace_cs, sizeof(g_reflect_trace_cs)};
                 if (FAILED(hr = dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&reflTracePso)))) return fail("reflection pipeline", hr);
+                pd.CS = {g_refl_temporal_cs, sizeof(g_refl_temporal_cs)};
+                if (FAILED(hr = dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&reflTemporalPso))))
+                    return fail("reflection temporal pipeline", hr);
                 reflCb = make_buffer(dev, D3D12_HEAP_TYPE_UPLOAD, uint64_t(kRing) * 512, D3D12_RESOURCE_FLAG_NONE,
                                      D3D12_RESOURCE_STATE_GENERIC_READ);
                 D3D12_RANGE rnone{0, 0};
@@ -881,6 +924,16 @@ int run(const RunParams& p) {
     if (!readback || !counts) return fail("readback buffers", E_OUTOFMEMORY);
     UINT64 tsFreq = 1;
     queue->GetTimestampFrequency(&tsFreq);
+    uint64_t lastEndTick = 0;      // OpenRFG64 timing: the last read frame's end stamp (its slot's t[3])
+    LARGE_INTEGER qpcFreq{}, slotWaitStart{};  // when the frame to queue first found its ring slot busy
+    QueryPerformanceFrequency(&qpcFreq);
+    auto qpcNow = [] {
+        LARGE_INTEGER v;
+        QueryPerformanceCounter(&v);
+        return int64_t(v.QuadPart);
+    };
+    auto qpcMs = [&](int64_t a, int64_t z) { return double(z - a) * 1e3 / double(qpcFreq.QuadPart ? qpcFreq.QuadPart : 1); };
+    int64_t seenFrame = 0, seenAt = 0, recStart = 0, rec1End = 0;  // the frame being queued: when seen, its lists' times
     HANDLE fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
     Scene scene;
@@ -959,8 +1012,15 @@ int run(const RunParams& p) {
             break;
         }
         scene.set_frames(sig, done);
+        const int64_t pump0 = qpcNow();  // OpenRFG64 timing
         skinning.collect(n, done);
         bool did = scene.pump();
+        {
+            const double ms = qpcMs(pump0, qpcNow());
+            st.pump_ms += ms;
+            st.pump_max_ms = ms > st.pump_max_ms ? ms : st.pump_max_ms;
+            ++st.pumps;
+        }
         UINT64 waitFor = 0;
         const int k = int(queued % kRing);
 
@@ -969,6 +1029,10 @@ int run(const RunParams& p) {
         if (snapshots) {
             const int64_t pub = rfgrt_ipc::load64(&b->frame_published);
             if (pub > n) next = pub;
+        }
+        if (next && next != seenFrame) {  // OpenRFG64 timing: first seen
+            seenFrame = next;
+            seenAt = qpcNow();
         } else if (b->frame_generation != 0) {
             next = n + 1;
         }
@@ -1402,6 +1466,7 @@ int run(const RunParams& p) {
         if (next && slotFrame[k] && done < UINT64(slotFrame[k])) {
             waitFor = UINT64(slotFrame[k]);
             next = 0;
+            if (!slotWaitStart.QuadPart) QueryPerformanceCounter(&slotWaitStart);  // OpenRFG64 timing
         }
         if (next) {
             // The finished frame's numbers, from the slot's readback.
@@ -1424,6 +1489,17 @@ int run(const RunParams& p) {
                     st.glass_us += span(10, 11);   // the glass's light and reflections (glass_light, glass_filter)
                     st.tint_us += span(11, 7);     // the sun through clear glass (sun_tint.hlsl)
                     st.denoise_us += span(8, 6);   // Ray Reconstruction (or the temporal and wavelet passes)
+                    // the queue's idle time since the previous frame (slots are read in the order they were queued);
+                    // gaps past 100 ms (loading, a pause) left out
+                    if (lastEndTick && t[0] > lastEndTick) {
+                        const double gap = double(t[0] - lastEndTick) * 1e6 / double(tsFreq);
+                        if (gap < 100000.0) {
+                            st.gap_us += gap;
+                            st.gap_max_us = gap > st.gap_max_us ? gap : st.gap_max_us;
+                            ++st.gaps;
+                        }
+                    }
+                    if (t[3] > t[0]) lastEndTick = t[3];
                     st.tlas_us += tlasUs;
                     st.pass_us += passUs;
                     st.gi_us += giUs;
@@ -1570,6 +1646,7 @@ int run(const RunParams& p) {
                 }
                 slotFrame[k] = 0;  // read once
             }
+            recStart = qpcNow();  // OpenRFG64 timing
             alloc[k]->Reset();
             // List 1, no wait: the TLAS from the frame's scene, built while the game still renders the frame.
             const rfgrt_frame::SlotHeader* h = nullptr;
@@ -1586,8 +1663,12 @@ int run(const RunParams& p) {
                 const float camera[3] = {cm[0][3], cm[1][3], cm[2][3]};
                 tlas.set_camera(camera);
                 // skinned instances posed first: their BLAS replace their meshes' bind pose in this TLAS
+                const int64_t sk0 = qpcNow();  // OpenRFG64 timing
                 skinning.record(cl, k, h, b->max_instances, b->max_skins, scene, next);
+                const int64_t sk1 = qpcNow();
                 inTlas = tlas.record(cl, k, rfgrt_frame::slot_instances(h), count, scene, skinning.overrides());
+                st.skin_ms += qpcMs(sk0, sk1);
+                st.tlas_ms += qpcMs(sk1, qpcNow());
                 probeFrame[k] = 0;
                 if (b->probe_request != probeSeen && probePso) {
                     probeSeen = b->probe_request;
@@ -1616,6 +1697,7 @@ int run(const RunParams& p) {
             }
             ID3D12CommandList* lists[] = {cl};
             queue->ExecuteCommandLists(1, lists);
+            rec1End = qpcNow();  // OpenRFG64 timing
             skinning.commit();
             scene.commit_material_uploads();
             // List 2, after the plugin's depth copy (fence A): the pass.
@@ -1831,6 +1913,7 @@ int run(const RunParams& p) {
                         g.sky_probe[2] = b->gi_sky_drawn;
                         g.sky_probe[3] = std::tan(b->shadow_sun_angle_deg * 3.14159265f / 180.0f);  // the glass's sun
                         memcpy(g.terrain, b->terrain_albedo, sizeof(float) * 3);  // the terrain's albedo (GI.TerrainAlbedo)
+                        g.terrain[3] = b->gi_clamp;  // OpenRFG64 GI.Clamp (trace_common.hlsli ray_clamp)
                         const bool fogSet = fogApplyPso && set.fog && set.fog_ratio;
                         // the game's fog (frame_scene.h: fogDistance = (b, a, -, c)): the volumetric fog's, and what fades
                         // the glass's reflections
@@ -1925,6 +2008,20 @@ int run(const RunParams& p) {
                         cl->SetComputeRootUnorderedAccessView(10, countsVa);
                         if (const D3D12_GPU_VIRTUAL_ADDRESS mva = scene.materials_va()) cl->SetComputeRootShaderResourceView(13, mva);
                         cl->SetComputeRootDescriptorTable(14, table(kTableTextures));
+                        if (emitterCbCpu) {  // OpenRFG64: the frame's emitters (b2)
+                            uint8_t* ec = emitterCbCpu + uint64_t(k) * kEmitterCbBytes;
+                            const uint32_t count = h && h->emitter_count <= rfgrt_frame::kMaxEmitters ? h->emitter_count : 0u;
+                            uint32_t grey = 0u;  // OpenRFG64: GI.EmitterSaturation (gi_trace.hlsl emitter_head.y)
+                            if (h) memcpy(&grey, &h->emitter_grey, sizeof(grey));
+                            const uint32_t head[4] = {count, grey, 0u, 0u};
+                            memcpy(ec, head, sizeof(head));
+                            if (count) memcpy(ec + 16, h->emitters, sizeof(rfgrt_frame::Emitter) * count);
+                            // their textures (gi_trace.hlsl emitter_tex), after the 64 emitters' room
+                            constexpr size_t kTexAt = 16 + sizeof(rfgrt_frame::Emitter) * rfgrt_frame::kMaxEmitters;
+                            static_assert(kTexAt + sizeof(uint32_t) * rfgrt_frame::kMaxEmitters <= kEmitterCbBytes, "emitter cb");
+                            if (count) memcpy(ec + kTexAt, h->emitter_texture, sizeof(uint32_t) * count);
+                            cl->SetComputeRootConstantBufferView(15, emitterCb->GetGPUVirtualAddress() + uint64_t(k) * kEmitterCbBytes);
+                        }
                         if (probeFrame[k] == next && probePso) {  // the crosshair probe (Test.ProbeKey)
                             cl->SetPipelineState(probePso);
                             cl->SetComputeRootDescriptorTable(0, table(kTableGiTrace));
@@ -2092,7 +2189,10 @@ int run(const RunParams& p) {
                             dlssReset = false;
                             rri.frame_ms = float(ms < 1.0 ? 1.0 : ms > 100.0 ? 100.0 : ms);
                             rrGeneration = set.generation;
+                            static const char kRrIn[] = "DLSS RR in", kRrOut[] = "DLSS RR out";  // (a hang's breadcrumbs)
+                            cl->SetMarker(2, kRrIn, sizeof(kRrIn));
                             const bool evaluated = dlss::evaluate(cl, rri);
+                            cl->SetMarker(2, kRrOut, sizeof(kRrOut));
                             cl->SetDescriptorHeaps(1, &heap);  // NGX sets its own
                             const D3D12_RESOURCE_BARRIER r3[4] = {transition(set.rr_depth, srv, uav), transition(set.rr_motion, srv, uav),
                                                                   transition(set.rr_normal, srv, uav), transition(set.rr_albedo, srv, uav)};
@@ -2209,6 +2309,7 @@ int run(const RunParams& p) {
                         g.sky_probe[2] = b->gi_sky_drawn;
                         g.sky_probe[3] = std::tan(b->shadow_sun_angle_deg * 3.14159265f / 180.0f);  // the glass's sun
                         memcpy(g.terrain, b->terrain_albedo, sizeof(float) * 3);  // the terrain's albedo (GI.TerrainAlbedo)
+                        g.terrain[3] = b->gi_clamp;  // OpenRFG64 GI.Clamp (trace_common.hlsli ray_clamp)
                         memcpy(reflCbCpu + uint64_t(k) * 512, &g, sizeof(g));
                         const UINT gx = (set.width + 7) / 8, gy = (set.height + 7) / 8;
                         cl->SetComputeRootSignature(giRs);
@@ -2234,7 +2335,7 @@ int run(const RunParams& p) {
                             transition(set.refl_history[1 - histOut], D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)};
                         cl->ResourceBarrier(2, rToTemporal);
-                        cl->SetPipelineState(giTemporalPso);
+                        cl->SetPipelineState(reflTemporalPso);
                         cl->SetComputeRootDescriptorTable(0, table(kTableReflTemporal + 6 * UINT(histOut)));
                         cl->Dispatch(gx, gy, 1);
                         const D3D12_RESOURCE_BARRIER rToFilter =
@@ -2335,6 +2436,25 @@ int run(const RunParams& p) {
             n = sig = next;
             slotFrame[k] = next;
             ++queued;
+            {  // OpenRFG64 timing: this frame's CPU
+                const int64_t end = qpcNow();
+                const double r1 = qpcMs(recStart, rec1End), r2 = qpcMs(rec1End, end);
+                if (seenFrame == next && seenAt) st.ready_ms += qpcMs(seenAt, recStart);
+                st.rec1_ms += r1;
+                st.rec2_ms += r2;
+                st.rec1_max_ms = r1 > st.rec1_max_ms ? r1 : st.rec1_max_ms;
+                st.rec2_max_ms = r2 > st.rec2_max_ms ? r2 : st.rec2_max_ms;
+                ++st.recorded;
+            }
+            if (slotWaitStart.QuadPart) {  // OpenRFG64 timing: this frame waited for its ring slot
+                LARGE_INTEGER now;
+                QueryPerformanceCounter(&now);
+                const double ms = double(now.QuadPart - slotWaitStart.QuadPart) * 1e3 / double(qpcFreq.QuadPart ? qpcFreq.QuadPart : 1);
+                st.slot_wait_ms += ms;
+                st.slot_wait_max_ms = ms > st.slot_wait_max_ms ? ms : st.slot_wait_max_ms;
+                ++st.slot_waits;
+                slotWaitStart.QuadPart = 0;
+            }
             rfgrt_ipc::store64(&b->host_submitted, sig);  // queued; fence B reaches it when the GPU has run it
             did = true;
         }
@@ -2348,7 +2468,7 @@ int run(const RunParams& p) {
                 for (uint64_t c : st.classes) px += c;
                 logf("frames: %llu answered; GPU per frame: TLAS %.0f us, pass %.0f us (GI %.0f us, lights' shadows %.0f us, "
                      "reflections %.0f us of it); TLAS %.0f of %.0f scene instances (left out: %.0f with no mesh here, %.0f with "
-                     "their submesh's BLAS not built, %.0f with a submesh beyond their mesh as sent), the nearest %.1f m from the "
+                     "their submesh's BLAS not built, %.0f with a submesh beyond their mesh as sent, %.2f skinned not posed), the nearest %.1f m from the "
                      "camera; scenes skipped: %llu read while overwritten, %llu before the frame textures",
                      static_cast<unsigned long long>(st.frames), st.tlas_us / f, st.pass_us / f, st.gi_us / f, st.light_us / f,
                      st.refl_us / f,
@@ -2357,12 +2477,28 @@ int run(const RunParams& p) {
                      tlas.stats.frames ? double(tlas.stats.missing_mesh) / double(tlas.stats.frames) : 0.0,
                      tlas.stats.frames ? double(tlas.stats.missing_blas) / double(tlas.stats.frames) : 0.0,
                      tlas.stats.frames ? double(tlas.stats.submesh_beyond) / double(tlas.stats.frames) : 0.0,
+                     tlas.stats.frames ? double(tlas.stats.unposed) / double(tlas.stats.frames) : 0.0,
                      tlas.stats.frames ? tlas.stats.nearest_sum / double(tlas.stats.frames) : -1.0,
                      static_cast<unsigned long long>(torn), static_cast<unsigned long long>(skippedNoSet));
                 if (rrOn) logf("GI denoiser: DLSS Ray Reconstruction denoised %llu frames so far", static_cast<unsigned long long>(rrFrames));
                 logf("GI's parts per frame: before the rays (probe, drawn sky, radiance cache) %.0f us, the rays %.0f us, the "
                      "glass's light %.0f us, the sun through clear glass %.0f us, the fog %.0f us, the denoiser %.0f us",
                      st.prep_us / f, st.trace_us / f, st.glass_us / f, st.tint_us / f, st.fog_us / f, st.denoise_us / f);
+                logf("timing: the core's queue idle between frames %.2f ms on average (%.2f max; the game's own GPU work before "
+                     "fence A, or nothing queued) over %llu frames; %llu frames waited for their ring slot (the GPU %u frames "
+                     "behind), %.2f ms on average (%.2f max)",
+                     st.gaps ? st.gap_us / double(st.gaps) / 1000.0 : 0.0, st.gap_max_us / 1000.0,
+                     static_cast<unsigned long long>(st.gaps), static_cast<unsigned long long>(st.slot_waits), unsigned(kRing),
+                     st.slot_waits ? st.slot_wait_ms / double(st.slot_waits) : 0.0, st.slot_wait_max_ms);
+                {
+                    const double q = st.recorded ? double(st.recorded) : 1.0;
+                    logf("timing: the core's CPU per queued frame: published to its lists started %.2f ms, list 1 %.2f ms "
+                         "(%.2f max; skinning %.2f ms, the TLAS %.2f ms), list 2 (the pass) %.2f ms (%.2f max); the scene's "
+                         "pump %.3f ms a turn (%.2f max) over %llu turns",
+                         st.ready_ms / q, st.rec1_ms / q, st.rec1_max_ms, st.skin_ms / q, st.tlas_ms / q, st.rec2_ms / q,
+                         st.rec2_max_ms,
+                         st.pumps ? st.pump_ms / double(st.pumps) : 0.0, st.pump_max_ms, static_cast<unsigned long long>(st.pumps));
+                }
                 if (glassPso && set.glass_raw)
                     logf("glass: per frame %.0f pixels see glass in front of their surface, %.0f of them with the sun on it",
                          double(st.glass_px) / f, double(st.glass_lit) / f);
@@ -2591,6 +2727,8 @@ int run(const RunParams& p) {
     release(lightRs);
     if (giCb && giCbCpu) giCb->Unmap(0, nullptr);
     release(giCb);
+    if (emitterCb && emitterCbCpu) emitterCb->Unmap(0, nullptr);
+    release(emitterCb);
     release(giTracePso);
     release(cacheUpdatePso);
     release(cacheResolvePso);
@@ -2606,6 +2744,7 @@ int run(const RunParams& p) {
     release(rrFinalizePso);
     release(rrGuidesRs);
     release(giTemporalPso);
+    release(reflTemporalPso);
     release(giFilterPso);
     release(giAtrousPso);
     release(giRs);

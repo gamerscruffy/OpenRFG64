@@ -31,6 +31,9 @@ void main(uint3 id : SV_DispatchThreadID) {
     // The game clears its scene to pure green (0, 1, 0) and shows that where its sky is not drawn yet, its first seconds:
     // learnt, it lit everything green (and the directions not looked at again stayed so).
     if (lit.g > 0.5 && lit.r < 0.01 && lit.b < 0.01) return;
+    // OpenRFG64: nor a colour not finite or far past any sky (the game's colour around a focus change or a resize): an
+    // infinite channel came in as 255 and the sky, the mean for the directions not seen with it, went blue or pink
+    if (!all(isfinite(lit)) || any(lit > 256.0)) return;
     const float3 L = max(lit, 0.0) / PI;
     const uint t = sky_texel(dir);
     const uint3 q = uint3(min(L, 255.0) * 256.0 + 0.5);

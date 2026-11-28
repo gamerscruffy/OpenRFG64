@@ -196,6 +196,13 @@ namespace keen
         return true;
     }
 
+    // OpenRFG64: the window's close button asks the game to shut down (GameFramework::setCloseRequestHandler: the game's
+    // GS_SHUTDOWN, as its menu's Quit) instead of destroying the window under it, which stopped the main loop with the
+    // renderer and the path tracer still holding the window, and the process did not end. A second click closes it as
+    // before, should the game not answer.
+    static void (*s_closeRequestHandler)() = nullptr;
+    static int s_closeRequests = 0;
+
     // 0x00C0ED50
     // Alt+Enter (SC_KEYMENU with the Enter key) is counted for updateBase, which toggles the window mode; the window
     // keeps its GameFrameworkSystem in its window long 0. Closing the window quits (WM_QUIT through handleMessages).
@@ -215,6 +222,11 @@ namespace keen
                 }
                 return 0;
             }
+        }
+        else if (uMsg == WM_CLOSE && s_closeRequestHandler != nullptr && s_closeRequests++ == 0)
+        {
+            s_closeRequestHandler();
+            return 0;
         }
         else if (uMsg == WM_DESTROY)
         {
@@ -613,6 +625,13 @@ namespace keen
         void quitGame(GameFrameworkSystem* pFramework)
         {
             pFramework->quit = true;
+        }
+
+        // OpenRFG64: see s_closeRequestHandler.
+        void setCloseRequestHandler(void (*pHandler)())
+        {
+            s_closeRequestHandler = pHandler;
+            s_closeRequests = 0;
         }
 
         // 0x00C0F570

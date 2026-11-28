@@ -26,6 +26,8 @@ int64_t frame_rendering();
 // The main scene's rl_scene_renderer, once a seam has seen it (null before). The scene thread records its passes with
 // an rl_renderer of its own, not the one render() is given: the scene renderer is what tells the main scene's passes.
 uint8_t* main_scene_renderer();
+// OpenRFG64 timing: the game's Present (render thread): the GPU split of the frame it ends (seam.cpp GpuClock)
+void gpu_frame_end();
 // The core's volumetric fog (rgb what it scatters toward the camera, a what of the surface's light gets through; a 0
 // where the fog is not the core's) blended over the lit scene in `target` (w x h): the scene's colour times a plus rgb.
 // Recorded on `ctx` (the scene thread's), its state put back after.

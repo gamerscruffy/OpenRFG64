@@ -124,7 +124,15 @@ private:
 public:
     ~gfm_orders_manager(); // 0x0078BD00
 
-    object_pool<gfm_orders,128,1> master_orders_pool; // 0x00
+    // OpenRFG (x64): 1024 orders, as the squad pool is raised for the wider streamed world (OPENRFG_ZONE_POOL); with
+    // rfg.exe's 128 the orders ran out, new ones failed and the clean-up freed live ones, so squads lost their orders
+    // (despawned by evaluate_orders, or never told to attack).
+#ifdef OPENRFG_X64
+    static const int OPENRFG_ORDERS_POOL_SIZE = 1024;
+#else
+    static const int OPENRFG_ORDERS_POOL_SIZE = 128;
+#endif
+    object_pool<gfm_orders,OPENRFG_ORDERS_POOL_SIZE,1> master_orders_pool; // 0x00
 private:
     struct
     {

@@ -69,6 +69,7 @@ if(RFGRT_X64)
     dxc_shader(CORE_SHADERS gi_atrous_cs cs_6_0 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/gi_atrous.hlsl)
     dxc_shader(CORE_SHADERS light_shadow_cs cs_6_5 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/light_shadow.hlsl)
     dxc_shader(CORE_SHADERS reflect_trace_cs cs_6_5 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/reflect_trace.hlsl)
+    dxc_shader(CORE_SHADERS refl_temporal_cs cs_6_0 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/refl_temporal.hlsl)
     dxc_shader(CORE_SHADERS cache_update_cs cs_6_5 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/cache_update.hlsl)
     dxc_shader(CORE_SHADERS cache_resolve_cs cs_6_5 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/cache_resolve.hlsl)
     dxc_shader(CORE_SHADERS sky_update_cs cs_6_5 ${CMAKE_CURRENT_SOURCE_DIR}/src/rtcore/shaders/sky_update.hlsl)
@@ -97,6 +98,9 @@ if(RFGRT_X64)
     # DLSS Ray Reconstruction (GI.Denoiser=2): NVIDIA's DLSS SDK in third_party/dlss, fetched by tools/fetch_dlss.ps1
     # (out of git). Without it the core builds without Ray Reconstruction and the GI keeps its own denoiser.
     set(RFGRT_DLSS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/dlss")
+    if(DEFINED OPENRFG_DLSS_SDK_RESOLVED)  # inside OpenRFG64: its cmake/openrfg_sdks.cmake found the SDK (maybe outside the tree)
+        set(RFGRT_DLSS_DIR "${OPENRFG_DLSS_SDK_RESOLVED}")
+    endif()
     set(RFGRT_DLSS_RUNTIME "${RFGRT_DLSS_DIR}/lib/Windows_x86_64/rel/nvngx_dlssd.dll")
     if(EXISTS "${RFGRT_DLSS_DIR}/include/nvsdk_ngx.h" AND EXISTS "${RFGRT_DLSS_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_s.lib"
        AND EXISTS "${RFGRT_DLSS_RUNTIME}")
@@ -159,6 +163,7 @@ add_library(rfgrt SHARED
     src/rfgrt/render/gi.cpp
     src/rfgrt/render/lights.cpp
     src/rfgrt/render/sky_particles.cpp
+    src/rfgrt/render/emitters.cpp
     src/rfgrt/menu/display_rows.cpp
     src/rfgrt/rt/link.cpp
     src/rfgrt/mirror/geometry.cpp
@@ -175,6 +180,7 @@ add_library(rfgrt SHARED
     src/rfgrt/patch/rim_light.cpp
     src/rfgrt/patch/fog.cpp
     src/rfgrt/patch/eye_adaption.cpp
+    src/rfgrt/patch/filmic.cpp
     src/rfgrt/present/presenter.cpp
     src/rfgrt/present/remote.cpp
     src/rfgrt/present/framegen.cpp
@@ -194,6 +200,9 @@ endif()
 # third_party/streamline, out of git, fetched by tools/fetch_streamline.ps1. Its runtime DLLs go next to the plugin,
 # which loads them from there; without them the plugin builds with frame generation unavailable.
 set(RFGRT_STREAMLINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/streamline")
+if(DEFINED OPENRFG_STREAMLINE_SDK_RESOLVED)  # inside OpenRFG64: its cmake/openrfg_sdks.cmake found the SDK (maybe outside the tree)
+    set(RFGRT_STREAMLINE_DIR "${OPENRFG_STREAMLINE_SDK_RESOLVED}")
+endif()
 set(RFGRT_STREAMLINE_RUNTIMES sl.interposer.dll sl.common.dll sl.dlss_g.dll sl.reflex.dll sl.pcl.dll nvngx_dlssg.dll)
 set(RFGRT_STREAMLINE_FOUND ${RFGRT_X64})
 if(NOT EXISTS "${RFGRT_STREAMLINE_DIR}/include/sl.h")

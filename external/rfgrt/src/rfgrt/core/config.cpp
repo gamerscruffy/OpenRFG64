@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cwctype>
@@ -113,11 +114,23 @@ Config load_config(const std::wstring& ini) {
     c.gi_frosted_glass = get_int(ini, L"GI", L"FrostedGlass", 1) != 0;
     c.gi_window_tint = get_int(ini, L"GI", L"WindowTint", 1) != 0;
     c.gi_rim_light = get_double(ini, L"GI", L"RimLight", 0.0);
+    c.gi_emissive = get_double(ini, L"GI", L"Emissive", 6.0);
+    c.gi_glow = get_double(ini, L"GI", L"Glow", 0.0);
+    c.gi_clamp = get_double(ini, L"GI", L"Clamp", 16.0);
+    c.gi_emitters = get_int(ini, L"GI", L"Emitters", 1) != 0;
+    c.gi_emitter_light = get_double(ini, L"GI", L"EmitterLight", 1.0);
+    c.gi_emitter_mesh = get_double(ini, L"GI", L"EmitterMesh", 1.0);
+    c.gi_emitter_saturation = std::clamp(get_double(ini, L"GI", L"EmitterSaturation", 0.5), 0.0, 1.0);
+    c.gi_emitter_min_radius = std::clamp(get_double(ini, L"GI", L"EmitterMinRadius", 0.3), 0.0, 2.0);
+    c.gi_self_lit = get_double(ini, L"GI", L"SelfLit", 0.5);
+    c.gi_screens = narrow(get_string(ini, L"GI", L"Screens", L"screen,monitor,display,metal_wksgj001,metal_wkjhy001"));
     c.gi_cloud_shadows = get_int(ini, L"GI", L"CloudShadows", 1) != 0;
     c.gi_terrain_albedo = get_list(ini, L"GI", L"TerrainAlbedo");
     c.fog_enabled = get_int(ini, L"Fog", L"Enabled", 1) != 0;
     c.tonemap_bloom = get_double(ini, L"Tonemap", L"Bloom", 0.0);
     c.tonemap_eye_adaptation_dark = get_double(ini, L"Tonemap", L"EyeAdaptationDark", 1.0);
+    c.tonemap_filmic = std::clamp(get_double(ini, L"Tonemap", L"Filmic", 0.5), 0.0, 1.0);
+    c.tonemap_filmic_exposure = std::clamp(get_double(ini, L"Tonemap", L"FilmicExposure", 1.0), 0.25, 4.0);
     c.particles_always_on_top_with_sky = get_int(ini, L"Particles", L"AlwaysOnTopWithSky", 1) != 0;
     c.particles_with_sky_effects = narrow(get_string(ini, L"Particles", L"WithSkyEffects", L"env_gust,env_dust_camera"));
     c.fog_sun_share = get_double(ini, L"Fog", L"SunShare", 0.65);
@@ -140,7 +153,10 @@ Config load_config(const std::wstring& ini) {
     c.refl_length = get_double(ini, L"Reflections", L"Length", 500.0);
     c.refl_gloss = get_double(ini, L"Reflections", L"Gloss", 32.0);
     c.refl_glass = get_int(ini, L"Reflections", L"Glass", 1) != 0;
-    c.refl_glass_f0 = get_double(ini, L"Reflections", L"GlassReflectance", 0.2);
+    c.refl_glass_f0 = get_double(ini, L"Reflections", L"GlassReflectance", 0.08);
+    c.refl_glass_opacity = get_double(ini, L"Reflections", L"GlassOpacity", 0.8);
+    if (!(c.refl_glass_opacity >= 0.0)) c.refl_glass_opacity = 0.0;
+    if (c.refl_glass_opacity > 1.0) c.refl_glass_opacity = 1.0;
     c.refl_history = get_int(ini, L"Reflections", L"History", 6);
     c.refl_filter_radius = get_int(ini, L"Reflections", L"FilterRadius", 1);
     c.lights_enabled = get_int(ini, L"Lights", L"Enabled", 0) != 0;
@@ -160,7 +176,7 @@ Config load_config(const std::wstring& ini) {
     c.test_display_rows = narrow(get_string(ini, L"Test", L"DisplayRows", L""));
     c.test_miss_every = get_int(ini, L"Test", L"MissEvery", 0);
     c.test_fog_density = get_double(ini, L"Test", L"FogDensity", 1.0);
-    c.probe_key = get_int(ini, L"Test", L"ProbeKey", 0x79);
+    c.probe_key = get_int(ini, L"Test", L"ProbeKey", 0x2D);
     c.probe_at_s = get_double(ini, L"Test", L"ProbeAt", 0);
     c.probe_at_frame = get_int(ini, L"Test", L"ProbeAtFrame", -1);
     c.probe_pixel = get_list(ini, L"Test", L"ProbePixel");
@@ -183,10 +199,10 @@ std::string describe(const Config& c) {
     }
     snprintf(buf, sizeof(buf),
              "Enabled=%d KeepSessions=%d | Render: ClbPattern=%d PatternFromSeconds=%g SkipCascades=%d DebugView=%d | Host: Enabled=%d "
-             "Mode=%d Path=%s RingMB=%d WaitMs=%g | Mirror: Enabled=%d MaxInstances=%d Skinning=%d Glass=%d TerrainChunks=%d TlasFastTrace=%d | Shadows: Rays=%d SunAngle=%g FilterRadius=%d History=%d Specular=%g | AO: Enabled=%d Rays=%d Radius=%g WithGI=%d | GI: Enabled=%d Debug=%d Rays=%d Length=%g Albedo=%g Textures=%d History=%d FilterRadius=%d Bounce=%g SunBounceAlbedo=%g ShadeBounceAlbedo=%g Sky=%g SkyDrawn=%g Cache=%d Glass=%d FrostedGlass=%d WindowTint=%d RimLight=%g CloudShadows=%d Denoiser=%d | DLSS: Mode=%d | FrameGeneration: Enabled=%d Presenter=%d TestFocus=%d | Menu: Rows=%d | Fog: Enabled=%d SunShare=%g Anisotropy=%g Near=%g History=%d Rays=%d Filter=%d Walls=%d Glass=%d (Test.FogDensity %g) | Tonemap: Bloom=%g EyeAdaptationDark=%g | Particles: AlwaysOnTopWithSky=%d WithSkyEffects=%s | Reflections: Enabled=%d Length=%g Gloss=%g History=%d FilterRadius=%d Glass=%d GlassReflectance=%g | Lights: Enabled=%d Max=%d Fixture=%g | Telemetry: GeometryCensus=%d | Test: AutoLoadSave=%d BlockSaveWrites=%d GodMode=%d IgnoreFocus=%d "
+             "Mode=%d Path=%s RingMB=%d WaitMs=%g | Mirror: Enabled=%d MaxInstances=%d Skinning=%d Glass=%d TerrainChunks=%d TlasFastTrace=%d | Shadows: Rays=%d SunAngle=%g FilterRadius=%d History=%d Specular=%g | AO: Enabled=%d Rays=%d Radius=%g WithGI=%d | GI: Enabled=%d Debug=%d Rays=%d Length=%g Albedo=%g Textures=%d History=%d FilterRadius=%d Bounce=%g SunBounceAlbedo=%g ShadeBounceAlbedo=%g Sky=%g SkyDrawn=%g Cache=%d Glass=%d FrostedGlass=%d WindowTint=%d RimLight=%g CloudShadows=%d Emissive=%g Glow=%g SelfLit=%g Clamp=%g Emitters=%d EmitterLight=%g EmitterMesh=%g Denoiser=%d | DLSS: Mode=%d | FrameGeneration: Enabled=%d Presenter=%d TestFocus=%d | Menu: Rows=%d | Fog: Enabled=%d SunShare=%g Anisotropy=%g Near=%g History=%d Rays=%d Filter=%d Walls=%d Glass=%d (Test.FogDensity %g) | Tonemap: Bloom=%g EyeAdaptationDark=%g Filmic=%g FilmicExposure=%g | Particles: AlwaysOnTopWithSky=%d WithSkyEffects=%s | Reflections: Enabled=%d Length=%g Gloss=%g History=%d FilterRadius=%d Glass=%d GlassReflectance=%g GlassOpacity=%g | Lights: Enabled=%d Max=%d Fixture=%g | Telemetry: GeometryCensus=%d | Test: AutoLoadSave=%d BlockSaveWrites=%d GodMode=%d IgnoreFocus=%d "
              "ExitAfterMainMenuSeconds=%d ExitAfterGameplaySeconds=%d ExitAfterSeconds=%d ShotsAt=%s KillHostAtSeconds=%g InputScript=%s TimeOfDay=%d DisplayRows=%s MissEvery=%d ProbeKey=0x%X ProbeAt=%g VanillaKey=0x%X WreckingCrew=%s",
              c.enabled, c.keep_sessions, c.clb_pattern, c.pattern_from_s, c.skip_cascades, c.debug_view, c.host_enabled, c.host_mode,
-             c.host_path.empty() ? "(default)" : narrow(c.host_path).c_str(), c.ring_mb, c.host_wait_ms, c.mirror_enabled, c.max_instances, c.skinning, c.glass, c.terrain_chunks, c.tlas_fast_trace, c.shadow_rays, c.shadow_sun_angle, c.shadow_filter_radius, c.shadow_history, c.shadow_specular, c.ao_enabled, c.ao_rays, c.ao_radius, c.ao_with_gi, c.gi_enabled, c.gi_debug, c.gi_rays, c.gi_length, c.gi_albedo, c.gi_textures, c.gi_history, c.gi_filter_radius, c.gi_bounce, c.gi_sun_bounce_albedo, c.gi_shade_bounce_albedo, c.gi_sky, c.gi_sky_drawn, c.gi_cache, c.gi_glass, c.gi_frosted_glass, c.gi_window_tint, c.gi_rim_light, int(c.gi_cloud_shadows), c.gi_denoiser, c.dlss_mode, int(c.fg_enabled), int(c.fg_presenter), int(c.fg_test_focus), int(c.menu_rows), c.fog_enabled, c.fog_sun_share, c.fog_anisotropy, c.fog_near, c.fog_history, c.fog_rays, int(c.fog_filter), int(c.fog_walls), int(c.fog_glass), c.test_fog_density, c.tonemap_bloom, c.tonemap_eye_adaptation_dark, int(c.particles_always_on_top_with_sky), c.particles_with_sky_effects.c_str(), c.refl_enabled, c.refl_length, c.refl_gloss, c.refl_history, c.refl_filter_radius, c.refl_glass, c.refl_glass_f0, c.lights_enabled, c.lights_max, c.lights_fixture, c.geometry_census, c.auto_load_save, c.block_save_writes,
+             c.host_path.empty() ? "(default)" : narrow(c.host_path).c_str(), c.ring_mb, c.host_wait_ms, c.mirror_enabled, c.max_instances, c.skinning, c.glass, c.terrain_chunks, c.tlas_fast_trace, c.shadow_rays, c.shadow_sun_angle, c.shadow_filter_radius, c.shadow_history, c.shadow_specular, c.ao_enabled, c.ao_rays, c.ao_radius, c.ao_with_gi, c.gi_enabled, c.gi_debug, c.gi_rays, c.gi_length, c.gi_albedo, c.gi_textures, c.gi_history, c.gi_filter_radius, c.gi_bounce, c.gi_sun_bounce_albedo, c.gi_shade_bounce_albedo, c.gi_sky, c.gi_sky_drawn, c.gi_cache, c.gi_glass, c.gi_frosted_glass, c.gi_window_tint, c.gi_rim_light, int(c.gi_cloud_shadows), c.gi_emissive, c.gi_glow, c.gi_self_lit, c.gi_clamp, int(c.gi_emitters), c.gi_emitter_light, c.gi_emitter_mesh, c.gi_denoiser, c.dlss_mode, int(c.fg_enabled), int(c.fg_presenter), int(c.fg_test_focus), int(c.menu_rows), c.fog_enabled, c.fog_sun_share, c.fog_anisotropy, c.fog_near, c.fog_history, c.fog_rays, int(c.fog_filter), int(c.fog_walls), int(c.fog_glass), c.test_fog_density, c.tonemap_bloom, c.tonemap_eye_adaptation_dark, c.tonemap_filmic, c.tonemap_filmic_exposure, int(c.particles_always_on_top_with_sky), c.particles_with_sky_effects.c_str(), c.refl_enabled, c.refl_length, c.refl_gloss, c.refl_history, c.refl_filter_radius, c.refl_glass, c.refl_glass_f0, c.refl_glass_opacity, c.lights_enabled, c.lights_max, c.lights_fixture, c.geometry_census, c.auto_load_save, c.block_save_writes,
              c.god_mode, c.ignore_focus, c.exit_after_main_menu_s, c.exit_after_gameplay_s, c.exit_after_s, shots.c_str(),
              c.kill_host_at_s, c.input_script.empty() ? "(none)" : narrow(c.input_script).c_str(), c.time_of_day,
              c.test_display_rows.empty() ? "(none)" : c.test_display_rows.c_str(),

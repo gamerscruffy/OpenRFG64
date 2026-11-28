@@ -33,7 +33,8 @@ public:
     void release();
 
     struct Stats {
-        uint64_t frames = 0, instances = 0, missing_mesh = 0, missing_blas = 0, submesh_beyond = 0, posed = 0;
+        uint64_t frames = 0, instances = 0, missing_mesh = 0, missing_blas = 0, submesh_beyond = 0, posed = 0,
+                 unposed = 0;  // skinned instances left out: no posed BLAS this frame (not drawn in their bind pose)
         uint64_t glass_whole = 0, glass_partial = 0;  // instances all transparent (non-opaque panes), some (non-opaque)
         uint64_t glass_whole_out = 0;                 // of the first, with more than 23 geometries (out of the rays' mask)
         uint64_t glass_translucent = 0;               // with translucent glass (non-opaque: a share of the rays through)

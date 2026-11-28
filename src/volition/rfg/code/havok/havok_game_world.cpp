@@ -19,6 +19,10 @@
 #include "volition/rfg/code/objects/object.h"
 #include "backends/seams.h" // OpenRFG (backends): seams (rfgphys attaches its hooks to them)
 
+#include <stdio.h>
+
+void openrfg_log(const char* text); // crash_early.cpp
+
 // 0x0081C0D0 (:21)
 // Deletes the object and its children; players and zones are kept.
 // OpenRFG (backends): a seam (backends/seams.h); rfgphys's PhysX backend attaches its hook here.
@@ -117,6 +121,28 @@ void game_aabb_phantom::addOverlappingCollidable(hkpCollidable* collidable)
     // A player (sub type 3) is put back on the terrain (havok_terrain_height, update_pos_and_orient, character
     // controller velocity cleared) or killed without terrain below: not implemented (see Partial); the delete below
     // keeps players.
+    // OpenRFG: a human is only deleted if it is really under the volume's top (10 m below the cell's lowest terrain).
+    // Living NPCs on the ground (couriers, EDF, drivers, leaving their cars empty) were deleted here; each case is
+    // told in openrfg_crash.txt as "KILLVOL ...", with the volume's bounds, to show which side is wrong.
+    if (objp->get_obj_type() == OT_HUMAN && objp->get_sub_type() != OT_SUB_HUMAN_PLAYER)
+    {
+        const float top = m_aabb.m_max(1);
+        const bool below = objp->pos.y <= top;
+        static int Logged = 0;
+        if (Logged < 200)
+        {
+            Logged++;
+            char text[256];
+            snprintf(text, sizeof(text), "KILLVOL human %08X at (%.1f, %.1f, %.1f), volume (%.1f, %.1f, %.1f)-(%.1f, %.1f, %.1f): %s",
+                objp->get_handle(), objp->pos.x, objp->pos.y, objp->pos.z, m_aabb.m_min(0), m_aabb.m_min(1), m_aabb.m_min(2),
+                m_aabb.m_max(0), top, m_aabb.m_max(2), below ? "deleted" : "kept (above the volume)");
+            openrfg_log(text);
+        }
+        if (!below)
+        {
+            return;
+        }
+    }
     delete_object_outside_bpo(objp);
 }
 

@@ -59,6 +59,7 @@
 #include "volition/vlib/code/os/frametime.h"
 #include "volition/vlib/code/os/vconsole.h"
 #include "volition/vlib/code/parse/xml_table_tools.h"
+#include "volition/rfg/code/spawn/ambient_spawn_manager.h" // OpenRFG: amb_spawn_npc_threshold
 
 #include <math.h>
 #include <stdio.h>
@@ -70,6 +71,37 @@ extern float VEHICLE_MAX_SPEED; // automobile.cpp
 // automobiles, 8 flyers and 4 walkers; an initial spawn lasts 8 s; a fodder squad waits 5 s after a member died.
 static object_pool<object_squad,OPENRFG_ZONE_POOL(100),1> object_squadpool; // 0x03396AC0
 static const int MAX_NPCS_FOR_SQUAD_SPAWN = 90;
+
+// OpenRFG: a courier's squad despawned for want of orders, told in openrfg_crash.txt (see activity_courier_chase.cpp).
+void openrfg_log(const char* text); // crash_early.cpp
+unsigned int activity_cc_get_courier_squad_handle(); // activity_courier_chase.cpp
+static void openrfg_log_courier_squad_despawn(unsigned int squad_handle, const char* why)
+{
+    if (squad_handle == 0xFFFFFFFF || squad_handle != activity_cc_get_courier_squad_handle())
+    {
+        return;
+    }
+    char text[160];
+    snprintf(text, sizeof(text), "COURIER squad %08X despawned, %s", squad_handle, why);
+    openrfg_log(text);
+}
+// OpenRFG: how a courier squad loses a member (killed or despawned), and its vehicle's state at the time.
+static void openrfg_log_courier_member_removed(const object_squad* squad, unsigned int npc_handle, int members_left)
+{
+    if (squad == nullptr || squad->get_handle() != activity_cc_get_courier_squad_handle())
+    {
+        return;
+    }
+    const npc* np = World.object_from_handle<npc>(npc_handle);
+    const vehicle* vp = squad->get_vehicle();
+    char text[256];
+    snprintf(text, sizeof(text), "COURIER member %08X removed (%d left): npc %s hp %d/%d; vehicle %s hp %u/%u%s", npc_handle,
+        members_left, np == nullptr ? "gone" : (np->is_killed() ? "killed" : "alive"), np != nullptr ? (int)np->hit_points : -1,
+        np != nullptr ? (int)np->max_hit_points : -1, vp == nullptr ? "none" : (vp->is_killed() ? "wrecked" : "ok"),
+        vp != nullptr ? vehicle_get_hit_points(vp) : 0u, vp != nullptr ? vehicle_get_max_hit_points(vp) : 0u,
+        squad->simulated() ? ", squad simulated" : "");
+    openrfg_log(text);
+}
 static const int MAX_SQUAD_AUTOMOBILES = 32;
 static const int MAX_SQUAD_FLYERS = 8;
 static const int MAX_SQUAD_WALKERS = 4;
@@ -1481,6 +1513,7 @@ void object_squad::despawn_vehicle()
 // 0x00A94BB0 (:2069)
 void object_squad::free_this()
 {
+    openrfg_log_courier_squad_despawn(get_handle(), member_array.size() == 0 ? "freed (no members)" : "freed with members still in it");
     if (base_orders_handle != 0xFFFFFFFF)
     {
         clear_orders(base_orders_handle);
@@ -1832,7 +1865,10 @@ bool object_squad::despawn_members()
 // 0x00A94C20 (:2632)
 bool object_squad::spawn_members(bool force_spawn, const object_spawn_region* osrp)
 {
-    if (World.get_num_objects<npc>() > MAX_NPCS_FOR_SQUAD_SPAWN)
+    // OpenRFG: scaled as the ambient NPC limits are. Unscaled, with the ambient spawn multiplier the world sat over 90
+    // NPCs and every squad spawned without members: a courier's squad, empty, counted as killed at once (its vehicle
+    // blown up, the data dropped and the alert raised to red, wherever the player was).
+    if (World.get_num_objects<npc>() > amb_spawn_npc_threshold(MAX_NPCS_FOR_SQUAD_SPAWN))
     {
         return false;
     }
@@ -2346,6 +2382,7 @@ void object_squad::evaluate_orders()
     }
     if (base == nullptr && assigned == nullptr)
     {
+        openrfg_log_courier_squad_despawn(get_handle(), "evaluate_orders: its orders are gone");
         request_despawn_all_members(NPC_DESPAWN_TYPE_LOW, nullptr, false);
     }
 }
@@ -2368,6 +2405,7 @@ void object_squad::clear_orders(unsigned int old_orders)
     }
     if (get_squad_orders() == nullptr)
     {
+        openrfg_log_courier_squad_despawn(get_handle(), "clear_orders: no orders left");
         request_despawn_all_members(NPC_DESPAWN_TYPE_LOW, nullptr, false);
         return;
     }
@@ -2580,6 +2618,7 @@ void object_squad::remove_member(unsigned int npc_handle)
     }
     member_array[index] = member_array[member_array.size() - 1];
     member_array.resize(member_array.size() - 1);
+    openrfg_log_courier_member_removed(this, npc_handle, member_array.size());
     if (squad_map_icon != MAP_ELEMENT_INVALID)
     {
         if (squad_map_objective == -1)

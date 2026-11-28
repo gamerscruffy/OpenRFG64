@@ -9,6 +9,7 @@ extern bool Os_app_active; // 0x01519591, the game window is the active one (tru
 unsigned long os_get_window_style(const bool fullscreen); // 0x0058B000 (:116)
 bool os_get_client_to_screen_coords(int* screen_x, int* screen_y, const int client_x, const int client_y); // 0x005AD7D0 (:138)
 bool os_should_close(); // 0x0058B020 (:169)
+void os_request_close(); // OpenRFG64: the window's close button (keen GameFramework::setCloseRequestHandler)
 void os_set_fullscreen(const bool fullscreen); // 0x0058B030 (:174)
 void os_received_input(); // 0x0058B150 (:209)
 void os_set_focus_change_callback(void (*callback)(bool, bool)); // 0x0058B160 (:215)
