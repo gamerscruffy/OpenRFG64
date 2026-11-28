@@ -287,9 +287,16 @@ rl_handle rl_scene::add_light(rl_light* light_p)
         return result;
     }
     rl_partition_system* partition_system_p = m_light_partition_system_p;
-    if (partition_system_p != nullptr && light_p->get_is_visible())
+    // OpenRFG: a hidden light gets the partition system too, without being inserted (as remove_light treats one), so
+    // that showing it later (rl_light::visible_update) inserts it. A light made and hidden while the renderer was
+    // locked (its add deferred: the effects' synthetic lights) was added hidden and so never got one: it stayed out of
+    // the partition, never drawn, whatever its effect did.
+    if (partition_system_p != nullptr)
     {
-        partition_system_p->insert(light_p);
+        if (light_p->get_is_visible())
+        {
+            partition_system_p->insert(light_p);
+        }
         light_p->set_partition_system(partition_system_p);
     }
     m_light_count++;
